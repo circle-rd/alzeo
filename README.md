@@ -114,6 +114,7 @@ The README is the entry point. Everything longer lives next to it, one subject p
 | If you want | Read |
 |---|---|
 | Every number this repo publishes, how it was measured, and the failed experiments | [BENCHMARKS.md](BENCHMARKS.md) |
+| Which model to run, one page per model with its command and its measured numbers | [docs/models/](docs/models/README.md) |
 | The 1M context mode: what it serves, what it costs, how limits are fitted to your boot | [docs/context-1m.md](docs/context-1m.md) |
 | The flash lane in full: how a 176B fits, the three tiers, what each one measured | [docs/flash-lane.md](docs/flash-lane.md) |
 | The image lane: every number, every refusal and how the runtime is pinned | [docs/image-lane.md](docs/image-lane.md) |
