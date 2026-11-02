@@ -11,6 +11,7 @@ key never reaches a journal. And a box without pair.json behaves exactly as befo
 """
 import http.client
 import http.server
+import importlib.util
 import json
 import os
 import pathlib
@@ -101,6 +102,10 @@ class Engine(socketserver.ThreadingMixIn, http.server.HTTPServer):
 
 
 class TwoBoxesBehindOneEndpoint(unittest.TestCase):
+    # The entry runs as a process of its own here, and in this test's process in the subclass at the end,
+    # where the coverage gate of CI sees its lines (as test_proxy_hold.py does for role 6)
+    INPROC = False
+
     @classmethod
     def setUpClass(cls):
         cls.E1, cls.E2 = fake_engine("spark1", "qwen3.8-27b"), fake_engine("spark2", "qwen3.8-flash-next-fp4")
@@ -117,7 +122,33 @@ class TwoBoxesBehindOneEndpoint(unittest.TestCase):
             {"name": "spark2", "proxy": f"http://127.0.0.1:{cls.port2}", "key_file": "pair/spark2.key"}]})
         (cls.home1 / ".config/qwen38/pair").mkdir()
         (cls.home1 / ".config/qwen38/pair/spark2.key").write_text(KEY_2 + "\n")
-        cls.port1 = cls.start_proxy(cls.home1, cls.engines[0], "spark1", PAIR_TTL_S=str(PAIR_TTL))
+        if cls.INPROC:
+            cls.port1 = cls.start_inproc(cls.home1, cls.engines[0])
+        else:
+            cls.port1 = cls.start_proxy(cls.home1, cls.engines[0], "spark1", PAIR_TTL_S=str(PAIR_TTL))
+
+    @classmethod
+    def start_inproc(cls, home, engine):
+        cls.saved_env = dict(os.environ)
+        os.environ.update({"HOME": str(home), "PROXY_BIND": "127.0.0.1", "PAIR_TTL_S": str(PAIR_TTL),
+                           "UPSTREAM": f"http://127.0.0.1:{engine.server_address[1]}",
+                           "PROMPT_CEILING_TOKENS": "0", "FLASH_PROMPT_CEILING_TOKENS": "0"})
+        for k in ("QWEN38_CLIENT_KEYS_FILE", "QWEN38_UPSTREAM_API_KEY", "PROXY_HOLD_UNITS", "QWEN38_PAIR_FILE",
+                  "http_proxy", "HTTP_PROXY"):
+            os.environ.pop(k, None)
+        spec = importlib.util.spec_from_file_location(f"kp_pair_{time.time_ns()}", REPO / "keepalive-proxy.py")
+        cls.mod = importlib.util.module_from_spec(spec)
+        saved_argv, sys.argv = sys.argv, ["keepalive-proxy.py"]
+        try:
+            spec.loader.exec_module(cls.mod)
+        finally:
+            sys.argv = saved_argv
+        cls.lines = []
+        cls.mod.log = lambda msg: cls.lines.append(f"[proxy] {msg}")
+        cls.mod.pair_conf()
+        cls.inproc = cls.mod.Server(("127.0.0.1", 0), cls.mod.H)
+        threading.Thread(target=cls.inproc.serve_forever, daemon=True).start()
+        return cls.inproc.server_address[1]
 
     @staticmethod
     def home(path, key, pair):
@@ -142,6 +173,9 @@ class TwoBoxesBehindOneEndpoint(unittest.TestCase):
 
     @classmethod
     def tearDownClass(cls):
+        if cls.INPROC:
+            cls.inproc.shutdown(); cls.inproc.server_close()
+            os.environ.clear(); os.environ.update(cls.saved_env)
         for p in cls.procs:
             if p.poll() is None:
                 p.terminate()
@@ -170,6 +204,9 @@ class TwoBoxesBehindOneEndpoint(unittest.TestCase):
         return {"model": model, "max_tokens": 8, "messages": [{"role": "user", "content": "hi"}], **kw}
 
     def journal(self, label):
+        if label == "spark1" and self.INPROC:
+            time.sleep(0.2)                 # the outcome line is written after the answer's last byte
+            return "\n".join(self.lines)
         return (self.tmp / f"{label}.journal").read_text(errors="replace")
 
     # ---- routing --------------------------------------------------------------------------------
@@ -277,11 +314,38 @@ class TwoBoxesBehindOneEndpoint(unittest.TestCase):
             time.sleep(2.5)
 
     # ---- the list, the key, a box alone ---------------------------------------------------------
+    def models_once_known(self, port=None):
+        """GET /v1/models until the peer's list, read in the background, is in it (3 s at most)."""
+        deadline = time.monotonic() + 3
+        while True:
+            st, out, _ = self.call("/v1/models", port=port, method="GET")
+            rows = {r["id"]: r.get("box") for r in json.loads(out)["data"]} if st == 200 else {}
+            if len(rows) > 1 or time.monotonic() > deadline:
+                return st, rows
+            time.sleep(0.2)
+
     def test_the_models_list_names_both_boxes(self):
-        st, out, _ = self.call("/v1/models", method="GET")
-        self.assertEqual(st, 200, out[:300])
-        rows = {r["id"]: r.get("box") for r in json.loads(out)["data"]}
+        st, rows = self.models_once_known()
+        self.assertEqual(st, 200)
         self.assertEqual(rows, {"qwen3.8-27b": "spark1", "qwen3.8-flash-next-fp4": "spark2"})
+
+    def test_the_models_list_never_waits_for_a_peer(self):
+        class Frozen(http.server.BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+
+            def do_GET(self):
+                time.sleep(20)
+        port = localports.held(self)
+        frozen = localports.serve(port, Engine, Frozen)
+        threading.Thread(target=frozen.serve_forever, daemon=True).start()
+        self.addCleanup(frozen.server_close); self.addCleanup(frozen.shutdown)
+        entry = self.spare_proxy("frozen-list", KEY_1, self.entry_pair(port))
+        for _ in range(3):
+            t0 = time.monotonic()
+            st, out, _ = self.call("/v1/models", port=entry, method="GET")
+            self.assertLess(time.monotonic() - t0, 2, "needle.sh and bench-matrix.sh give it 5 s")
+            self.assertEqual(st, 200)
 
     def test_the_peers_key_reaches_no_journal(self):
         self.call("/v1/chat/completions", self.chat("qwen3.8-flash-next-fp4"))
@@ -417,12 +481,14 @@ class TwoBoxesBehindOneEndpoint(unittest.TestCase):
             (home / ".config/qwen38/pair.json").write_text(json.dumps({"name": me, "peers": [
                 {"name": peer, "proxy": f"http://127.0.0.1:{port}", "key_file": f"pair/{peer}.key"}]}))
         time.sleep(2.5)
-        st, out, _ = self.call("/v1/models", port=pa, method="GET")
-        self.assertEqual(st, 200, out[:300])
-        self.assertEqual({r["id"]: r["box"] for r in json.loads(out)["data"]},
-                         {"qwen3.8-27b": "spark1", "qwen3.8-flash-next-fp4": "spark2"})
-        lines = self.journal("sym-a").count("GET /v1/models ok get") + self.journal("sym-b").count("GET /v1/models ok get")
-        self.assertLessEqual(lines, 2, "one GET from the client, one from the entry to its peer: no loop")
+        st, rows = self.models_once_known(port=pa)
+        self.assertEqual(st, 200)
+        self.assertEqual(rows, {"qwen3.8-27b": "spark1", "qwen3.8-flash-next-fp4": "spark2"})
+        count = lambda label: self.journal(label).count("GET /v1/models ok get")
+        before = (count("sym-a"), count("sym-b"))
+        time.sleep(2)                       # a loop would go on asking with nobody calling
+        self.assertEqual((count("sym-a"), count("sym-b")), before, "no GET goes on once the client stopped")
+        self.assertLessEqual(before[1], before[0], "each GET of the client reads the peer's own list once at most")
         st, out, _ = self.call("/v1/chat/completions", self.chat("kolibri-1"), port=pa)
         self.assertEqual(st, 404, out[:300])
         self.assertEqual(json.loads(out)["error"]["served"],
@@ -581,10 +647,150 @@ class TwoBoxesBehindOneEndpoint(unittest.TestCase):
             self.addCleanup(e.server_close); self.addCleanup(e.shutdown)
             e.serve_forever()
         threading.Thread(target=come_back, daemon=True).start()
-        st, out, _ = self.call("/v1/chat/completions", self.chat("qwen3.8-flash-next-fp4"), port=port, key=KEY_2)
-        self.assertEqual(st, 404, out[:300])
-        self.assertEqual(json.loads(out)["error"]["type"], "model_not_found")
+        st, out, hdrs = self.call("/v1/chat/completions", self.chat("qwen3.8-flash-next-fp4"), port=port, key=KEY_2)
+        self.assertEqual(st, 503, out[:300])             # to try again: sent again, it goes where Flash is served
+        self.assertEqual(hdrs.get("Retry-After"), "30")
+        self.assertIn("came back serving ornith-1.5-122b", json.loads(out)["error"]["message"])
         self.assertEqual(Ornith.seen, [], "Ornith is never asked a request for Flash")
+
+
+class TwoBoxesBehindOneEndpointInProcess(TwoBoxesBehindOneEndpoint):
+    INPROC = True
+
+
+class ThePairsPieces(unittest.TestCase):
+    """The pair's functions one by one, in this process: what pair.json may say, how a peer's list is read and
+    kept, the hop header, the union of /v1/models."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = pathlib.Path(tempfile.mkdtemp(prefix="kp-pair-pieces-"))
+        (cls.tmp / ".config/qwen38").mkdir(parents=True)
+        cls.pair_file = cls.tmp / ".config/qwen38/pair.json"
+        saved = dict(os.environ)
+        os.environ.update({"HOME": str(cls.tmp), "QWEN38_PAIR_FILE": str(cls.pair_file), "PAIR_TTL_S": "30"})
+        try:
+            spec = importlib.util.spec_from_file_location(f"kp_pair_pieces_{time.time_ns()}", REPO / "keepalive-proxy.py")
+            cls.mod = importlib.util.module_from_spec(spec)
+            saved_argv, sys.argv = sys.argv, ["keepalive-proxy.py"]
+            try:
+                spec.loader.exec_module(cls.mod)
+            finally:
+                sys.argv = saved_argv
+        finally:
+            os.environ.clear(); os.environ.update(saved)
+        cls.lines = []
+        cls.mod.log = lambda msg: cls.lines.append(msg)
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.tmp, ignore_errors=True)
+
+    def parse(self, conf):
+        return self.mod._pair_parse(json.dumps(conf))
+
+    def peer(self, name="spark2", proxy="http://127.0.0.1:30001"):
+        return {"name": name, "proxy": proxy, "key_file": "pair/k"}
+
+    def test_what_pair_json_may_say(self):
+        ok = self.parse({"name": "Spark-1", "peers": [self.peer(), self.peer("b", "http://[fe80::1]:30001"),
+                                                       self.peer("c", "HTTP://spark2.local:30001/")]})
+        self.assertEqual([p["proxy"] for p in ok["peers"]],
+                         ["http://127.0.0.1:30001", "http://[fe80::1]:30001", "http://spark2.local:30001"])
+        self.assertTrue(ok["peers"][0]["key_file"].endswith("/.config/qwen38/pair/k"))
+        self.assertTrue(self.mod.PAIR_NAME.fullmatch(self.parse({"peers": []})["name"]), "the host's name, made safe")
+
+    def test_what_pair_json_may_not_say(self):
+        for conf in ([], {"peers": {}}, {"peers": [{"name": "x"}]}, {"peers": [self.peer("two words")]},
+                     {"peers": [self.peer(proxy="https://127.0.0.1:30001")]}, {"peers": [self.peer(proxy="http://127.0.0.1:3000l")]},
+                     {"peers": [self.peer(proxy="http://127.0.0.1")]}, {"peers": [self.peer(proxy="http://127.0.0.1:30001/v1")]},
+                     {"peers": [self.peer(proxy="http://u:p@127.0.0.1:30001")]}, {"peers": [self.peer(proxy="http://127.0.0.1:30001?a")]},
+                     {"name": "", "peers": []}, {"name": "Spark \u2460", "peers": []}, {"name": "x" * 41, "peers": []},
+                     {"peers": [self.peer("a"), self.peer("a")]}, {"name": "a", "peers": [self.peer("a")]}):
+            with self.subTest(conf=conf), self.assertRaises(ValueError):
+                self.parse(conf)
+
+    def test_pair_json_is_read_again_when_it_changes_and_a_bad_one_leaves_the_box_alone(self):
+        self.mod._PAIR.update(seen=0.0, stamp=None)
+        self.pair_file.write_text(json.dumps({"name": "one", "peers": []}))
+        self.assertEqual(self.mod.pair_conf()["name"], "one")
+        self.assertEqual(self.mod.pair_conf()["name"], "one", "kept between two looks")
+        self.pair_file.write_text("{not json")
+        self.mod._PAIR["seen"] = 0.0
+        self.assertIsNone(self.mod.pair_conf())
+        self.assertTrue(any("is not used" in ln for ln in self.lines))
+        self.pair_file.unlink()
+        self.mod._PAIR["seen"] = 0.0
+        self.assertIsNone(self.mod.pair_conf())
+
+    def test_the_hop_header_and_the_model(self):
+        hop = self.mod.pair_hop
+        self.assertIsNone(hop({}))
+        self.assertIsNone(hop({"X-Alzeo-Pair-Hop": "  "}))
+        self.assertEqual(hop({"X-Alzeo-Pair-Hop": "spark1"}), "spark1")
+        self.assertEqual(hop({"X-Alzeo-Pair-Hop": "spark1\nGET /fake"}), "a peer")
+        bm = self.mod.body_model
+        self.assertEqual(bm(b'{"model": "kolibri-1"}'), "kolibri-1")
+        for body in (b"not json", b"[1]", b'{"model": 3}', b"{}"):
+            self.assertIsNone(bm(body))
+
+    def test_a_peers_list_is_read_kept_and_read_again(self):
+        class Lists(http.server.BaseHTTPRequestHandler):
+            protocol_version = "HTTP/1.1"
+            answer, gets = (200, {"data": [{"id": "kolibri-1"}, {"id": 3}, "x"]}), []
+
+            def log_message(self, *a):
+                pass
+
+            def do_GET(self):
+                Lists.gets.append(self.headers.get("X-Alzeo-Pair-Hop"))
+                code, obj = Lists.answer
+                out = json.dumps(obj).encode()
+                self.send_response(code); self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(out))); self.end_headers(); self.wfile.write(out)
+        port = localports.held(self)
+        srv = localports.serve(port, Engine, Lists)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        self.addCleanup(srv.server_close); self.addCleanup(srv.shutdown)
+        key = self.tmp / "peer.key"
+        key.write_text("k-peer\n")
+        peer = {"name": "lists", "proxy": f"http://127.0.0.1:{port}", "key_file": str(key)}
+        pm = self.mod.peer_models
+        self.assertEqual(pm(peer), ("kolibri-1",))
+        self.assertEqual(pm(peer), ("kolibri-1",), "kept")
+        self.assertEqual(len(Lists.gets), 1)
+        self.assertTrue(Lists.gets[0], "a peer's list is asked as a hop: its own, never its union")
+        t = time.monotonic()
+        self.assertEqual(pm(peer, fresh=True, since=t - 60), ("kolibri-1",), "read after `since`: kept")
+        self.assertEqual(len(Lists.gets), 1)
+        Lists.answer = (200, [1, 2])
+        self.assertEqual(pm(peer, fresh=True), ())
+        self.assertIn("not a list", self.mod._PAIR_MODELS["lists"]["error"])
+        Lists.answer = (503, {"error": "loading"})
+        self.assertEqual(pm(peer, fresh=True), ())
+        self.assertEqual(self.mod._PAIR_MODELS["lists"]["error"], "HTTP 503 on /v1/models")
+        gone = {"name": "gone", "proxy": f"http://127.0.0.1:{localports.held(self)}", "key_file": str(key)}
+        self.assertEqual(pm(gone), ())
+        self.assertTrue(self.mod._PAIR_MODELS["gone"]["error"])
+        nokey = {"name": "nokey", "proxy": f"http://127.0.0.1:{port}", "key_file": str(self.tmp / "missing.key")}
+        self.assertEqual(pm(nokey), ())
+
+    def test_the_union_and_the_served_map(self):
+        self.mod._PAIR.update(seen=0.0, stamp=None)
+        self.pair_file.write_text(json.dumps({"name": "spark1", "peers": [self.peer()]}))
+        conf = self.mod.pair_conf()
+        self.mod._PAIR_MODELS["spark2"] = {"ts": time.monotonic(), "models": ("kolibri-1",), "error": None,
+                                           "rows": [{"id": "kolibri-1", "object": "model"}, {"id": "qwen3.8-27b"}]}
+        out = json.loads(self.mod.pair_models_body(b'{"object": "list", "data": [{"id": "qwen3.8-27b"}]}'))
+        self.assertEqual([(r["id"], r["box"]) for r in out["data"]], [("qwen3.8-27b", "spark1"), ("kolibri-1", "spark2")])
+        self.assertIsNone(self.mod.pair_models_body(b"not json"))
+        self.assertIsNone(self.mod.pair_models_body(b'{"data": "x"}'))
+        self.assertEqual(self.mod.pair_served_map(conf, None), {"spark1": "does not answer", "spark2": ["kolibri-1"]})
+        self.mod._PAIR_MODELS["spark2"].update(models=(), error="timed out")
+        self.assertEqual(self.mod.pair_served_map(conf, ("qwen3.8-27b",))["spark2"], "does not answer (timed out)")
+        self.pair_file.unlink()
+        self.mod._PAIR["seen"] = 0.0
+        self.assertIsNone(self.mod.pair_models_body(b'{"data": []}'), "a box alone: its list as it came")
 
 
 class TheLaneNamesAreThoseTheUnitsServe(unittest.TestCase):

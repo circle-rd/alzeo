@@ -3165,6 +3165,9 @@ def _pair_parse(text):
     name = j.get("name") if j.get("name") is not None else re.sub(r"[^A-Za-z0-9._-]", "-", socket.gethostname())[:40]
     if not isinstance(name, str) or not PAIR_NAME.fullmatch(name):
         raise ValueError("name is 1 to 40 letters, digits, dots, dashes or underscores")
+    names = [p["name"] for p in peers]
+    if len(set(names)) != len(names) or name in names:
+        raise ValueError("each peer has a name of its own, none the name of this box")
     return {"name": name, "peers": peers}
 
 
@@ -3206,7 +3209,7 @@ def _peer_key(peer):
 _PAIR_READING: dict = {}
 
 
-def peer_models(peer, fresh=False):
+def peer_models(peer, fresh=False, since=None):
     """The model ids a peer's proxy lists on /v1/models, kept PAIR_TTL_S seconds from the end of the read;
     () when it does not answer, with the reason kept for the refusal's message. One read at a time per
     peer: the callers that find it under way take its result (found in review, 2026-11-02: 8 callers
@@ -3216,9 +3219,25 @@ def peer_models(peer, fresh=False):
         lock = _PAIR_READING.setdefault(peer["name"], threading.Lock())
     with lock:
         row = _PAIR_MODELS.get(peer["name"])
+        if row and since is not None and row["ts"] >= since:
+            return row["models"]            # read after `since`: fresh enough for this caller
         if row and (row["ts"] >= asked or (not fresh and time.monotonic() - row["ts"] < PAIR_TTL_S)):
             return row["models"]
         return _peer_models_read(peer)
+
+
+def _peer_models_soon(peer):
+    """A peer's list read in the background when it is stale, never waited for: GET /v1/models answers
+    from what is kept (found in review, 2026-11-02: a frozen peer made it wait 5 s, past the 5 s of
+    needle.sh and bench-matrix.sh)."""
+    row = _PAIR_MODELS.get(peer["name"])
+    if row and time.monotonic() - row["ts"] < PAIR_TTL_S:
+        return
+    with _PAIR_LOCK:
+        lock = _PAIR_READING.setdefault(peer["name"], threading.Lock())
+    if lock.locked():
+        return                              # a read is under way
+    threading.Thread(target=peer_models, args=(peer,), daemon=True).start()
 
 
 def _peer_models_read(peer):
@@ -3263,11 +3282,20 @@ def pair_models_body(data):
         if isinstance(r, dict):
             r.setdefault("box", conf["name"]); have.add(r.get("id"))
     for p in conf["peers"]:
-        peer_models(p)
+        _peer_models_soon(p)
         for r in (_PAIR_MODELS.get(p["name"]) or {}).get("rows") or []:
             if r["id"] not in have:
                 rows.append(dict(r, box=p["name"])); have.add(r["id"])
     return rewritten(j)
+
+
+def pair_hop(headers):
+    """The box an entry names on X-Alzeo-Pair-Hop, None when there is none or it is empty; any value that is
+    no box name reads as "a peer", so a client's value is never journaled."""
+    hop = (headers.get(PAIR_HOP) or "").strip()
+    if not hop:
+        return None
+    return hop if PAIR_NAME.fullmatch(hop) else "a peer"
 
 
 def body_model(body):
@@ -5432,6 +5460,7 @@ class H(BaseHTTPRequestHandler):
             log(f"{self._peer} the caller left before its body arrived whole ({len(body)} of {n} bytes)")
             self.close_connection = True
             self._done("CLIENT GONE before its body"); return
+        self._t_pair = time.monotonic()
         if self._pair_routed(body, route):     # role 10: another box, or a refusal of the pair
             return
         self._prompt_fp = prompt_fingerprint(body, route)       # role 9
@@ -5531,9 +5560,7 @@ class H(BaseHTTPRequestHandler):
         """Role 10: True when the pair answered this request (sent to a peer, or refused), False
         when it goes on to this box's own engine as it always did."""
         conf = pair_conf()
-        hop = self.headers.get(PAIR_HOP)
-        if hop is not None:
-            hop = hop if PAIR_NAME.fullmatch(hop.strip()) else "a peer"   # a value of the client's is not journaled
+        hop = pair_hop(self.headers)
         # A request an entry sent on is judged here even on a box without pair.json, the peer of a
         # one-entry pair: without that, a peer that had switched served it with its new model (found in
         # review, 2026-11-02)
@@ -5548,7 +5575,7 @@ class H(BaseHTTPRequestHandler):
             local = None
         if local is not None and name in local:
             return False
-        me = (conf or {}).get("name") or socket.gethostname()[:40]
+        me = (conf or {}).get("name") or "this box"
         if hop:
             # sent on by an entry for a model this box served moments ago: an engine that does not
             # answer now is a switch under way, whose model is not known, so the entry is told to try
@@ -5564,24 +5591,38 @@ class H(BaseHTTPRequestHandler):
                               f"{', '.join(local) or 'no model'}, not {name}", {me: list(local)})
             self._done("409 pair another model here")
             return True
-        if not CLIENT_KEYS and not _door_key():
-            # this box admitted the request without checking a key (its own is unreadable: the engine's check
-            # was left to do it, and a request sent on never reaches it), so nothing goes to another box on
-            # its say: the peer's key would sign it (found in review, 2026-11-02)
-            log(f"{self._peer} REFUSED {name}: this box cannot read its own key, so it sends nothing on to a peer")
-            self._pair_refuse(503, "engine_unavailable", "this box cannot read its own key "
-                              "(~/.config/qwen38/api-key), so it sends no request on to another box", {})
-            self._done("503 pair own key unreadable")
-            return True
-        for fresh in (False, True):
-            peer = next((p for p in conf["peers"] if name in peer_models(p, fresh=fresh)), None)
+        # (1) the lists as kept, (2) when the name is in none, the ones not read during this request read again,
+        # (3) after a peer's 409, every list read again from that moment (found in review, 2026-11-02: a name
+        # in no list had each peer read twice, a frozen one doubling the wait)
+        since = None
+        for attempt in (0, 1, 2):
+            peer = next((p for p in conf["peers"] if name in peer_models(p, fresh=attempt > 0, since=since)), None)
             if peer is None:
-                continue                    # in no list as kept: every list is read again once before a refusal
-            if self._forward_peer(body, peer, name, conf, local) != "moved":
+                if attempt == 0:
+                    since = self._t_pair
+                    continue
+                break
+            if not CLIENT_KEYS and not _door_key():
+                # this box admitted the request without checking a key (its own is unreadable: the engine's check
+                # was left to do it, and a request sent on never reaches it), so nothing goes to another box on
+                # its say: the peer's key would sign it (found in review, 2026-11-02). Its own lane is still
+                # served as before: this is checked only when a peer would get the request.
+                log(f"{self._peer} REFUSED {name}: this box cannot read its own key, so it sends nothing on to a peer")
+                self._pair_refuse(503, "engine_unavailable", "this box cannot read its own key "
+                                  "(~/.config/qwen38/api-key), so it sends no request on to another box", {})
+                self._done("503 pair own key unreadable")
                 return True
-            # the peer serves another model since its list was read: every list is read again
+            if attempt == 2 or self._forward_peer(body, peer, name, conf, local) != "moved":
+                if attempt == 2:
+                    return False if local is None else self._pair_refused_nowhere(name, conf, local)
+                return True
+            since = time.monotonic()        # the peer serves another model since its list was read
         if local is None:
             return False                    # this box's engine does not answer: its own path holds or says 503
+        return self._pair_refused_nowhere(name, conf, local)
+
+    def _pair_refused_nowhere(self, name, conf, local):
+        """No box of the pair lists name: 503 to try again when a peer's list cannot be read, 404 otherwise."""
         served = pair_served_map(conf, local)
         said = "; ".join(f"{b}: {v if isinstance(v, str) else (', '.join(v) or 'nothing')}" for b, v in served.items())
         unread = [p["name"] for p in conf["peers"] if (_PAIR_MODELS.get(p["name"]) or {}).get("error")]
@@ -5605,7 +5646,7 @@ class H(BaseHTTPRequestHandler):
         otherwise), never answered by that other lane (found in review, 2026-11-02: a peer in the middle of
         a switch held a request for Flash, and Ornith answered it)."""
         conf = pair_conf()
-        hop = self.headers.get(PAIR_HOP)
+        hop = pair_hop(self.headers)
         if (conf is None and not hop) or route not in PAIR_ROUTES or not body:
             return False
         name = body_model(body)
@@ -5616,18 +5657,20 @@ class H(BaseHTTPRequestHandler):
             local = served_models() or None
         except EngineUnreachable:
             local = None
-        if local is None or name in local:
+        if name in (local or ()) or (local is None and not hop):
             return False
         me = (conf or {}).get("name") or "this box"
-        log(f"{self._peer} REFUSED {name} after a hold: the lane that came back serves {', '.join(local)}")
-        if hop:
-            self._pair_refuse(409, "model_not_served", f"this box ({me}) serves {', '.join(local)} now, not {name}",
-                              {me: list(local)})
+        now = ", ".join(local) if local else "a lane whose name it does not give yet"
+        log(f"{self._peer} REFUSED {name} after a hold: the lane that came back serves {now}")
+        if hop and local:
+            self._pair_refuse(409, "model_not_served", f"this box ({me}) serves {now}, not {name}", {me: list(local)})
             self._done("409 pair another model here")
         else:
-            self._pair_refuse(404, "model_not_found", f"this box ({me}) serves {', '.join(local)} now, not {name}: "
-                              f"send it again and it goes to the box of the pair that serves it", {me: list(local)})
-            self._done("404 pair model served nowhere")
+            # a 503 the client tries again (a 404 it would take as final): sent again, it goes to the box that
+            # serves it, or is told that none does (found in review, 2026-11-02)
+            self._pair_refuse(503, "engine_unavailable", f"this box ({me}) came back serving {now}, not {name}: "
+                              f"try again", {me: list(local) if local else "does not answer"})
+            self._done("503 engine unreachable")
         return True
 
     def _forward_peer(self, body, peer, name, conf, local):
@@ -6247,7 +6290,7 @@ class H(BaseHTTPRequestHandler):
         finally:
             try: resp.close()
             except Exception: pass
-        if resp.status == 200 and models_route and not self.headers.get(PAIR_HOP):
+        if resp.status == 200 and models_route and not pair_hop(self.headers):
             data = pair_models_body(data) or data      # role 10: every box's models; a peer asking gets ours
         # 2026-10-16: whatever trailing slash the caller wrote, which the engine may serve too
         if resp.status == 200 and self.path.split("?")[0].rstrip("/") in SERVER_INFO_ROUTES:

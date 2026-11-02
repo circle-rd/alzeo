@@ -1426,7 +1426,7 @@ jobs:
                    tests/test_proxy_rejudge_after_hold.py tests/test_proxy_score_guard.py \
                    tests/test_proxy_uncountable_shapes.py tests/test_proxy_unknown_vocab.py \
                    tests/test_proxy_video_guard.py tests/test_proxy_override_headers.py \
-                   tests/test_proxy_floor_stop.py tests/test_proxy_tool_targets.py \
+                   tests/test_proxy_floor_stop.py tests/test_proxy_tool_targets.py tests/test_proxy_pair.py \
                    tests/test_tools.py tests/test_oc_fit_limits.py tests/test_oc_merge_limits.py; do
             "$PY" -m coverage run --branch --parallel-mode --source=. \
               --omit="dashboard/*,tests/*,.venv-test/*" "$f" >/dev/null 2>&1 || true
@@ -1449,6 +1449,8 @@ jobs:
           # (run only as a process, it took the module down to 81%): the floor follows.
           # 2026-10-17: 87% again with the nine suites of v6.41's guards in the list above;
           # without them its new code read as untested, 81%.
+          # 2026-11-02: role 10 (v6.50, the pair) read as untested, 80%, until test_proxy_pair.py ran its
+          # entry in-process too and joined the list.
           FLOORS = {"keepalive-proxy.py": 85, "patch-yarn.py": 90,
                     "oc-fit-limits.py": 37, "build-token-map.py": 35}
           got, bad = {}, []
