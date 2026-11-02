@@ -3127,6 +3127,12 @@ PAIR_ROUTES = frozenset({"/v1/chat/completions", "/v1/completions", "/v1/message
 PAIR_HOP = "X-Alzeo-Pair-Hop"
 PAIR_TTL_S = float(os.environ.get("PAIR_TTL_S", "5") or 5)
 PAIR_CONNECT_S = float(os.environ.get("PAIR_CONNECT_S", "10") or 10)
+PAIR_CONNECT_S = PAIR_CONNECT_S if PAIR_CONNECT_S > 0 else 10.0    # 0 made the connect non-blocking: every forward failed
+# A stream from a peer's proxy carries a byte at least every KEEPALIVE_S (role 1 on its side): this much
+# silence is a box that went (a power cut sends no FIN), and the client's stream is cut instead of waiting
+# MAX_SILENCE_S with nothing (found in review, 2026-11-02)
+PAIR_STREAM_SILENCE_S = float(os.environ.get("PAIR_STREAM_SILENCE_S") or 0) or max(4 * KEEPALIVE_S, 60.0)
+PAIR_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,39}")
 _PAIR = {"stamp": None, "conf": None, "error": None, "seen": 0.0}
 _PAIR_MODELS: dict = {}
 _PAIR_LOCK = threading.Lock()
@@ -3144,13 +3150,22 @@ def _pair_parse(text):
     for i, p in enumerate(j.get("peers", [])):
         if not isinstance(p, dict) or not all(isinstance(p.get(k), str) and p.get(k) for k in ("name", "proxy", "key_file")):
             raise ValueError(f"peer {i} needs a name, a proxy and a key_file, each a string")
+        if not PAIR_NAME.fullmatch(p["name"]):
+            raise ValueError(f"peer {i}: a name is 1 to 40 letters, digits, dots, dashes or underscores")
         u = urllib.parse.urlsplit(p["proxy"])
-        if u.scheme != "http" or not u.hostname or u.path not in ("", "/") or u.query or u.fragment or u.username:
+        try:
+            port = u.port
+        except ValueError:
+            port = None
+        if (u.scheme != "http" or not u.hostname or port is None or u.path not in ("", "/") or u.query
+                or u.fragment or u.username is not None or u.password is not None):
             raise ValueError(f"peer {p['name']}: proxy is http://host:port, got {p['proxy'][:80]!r}")
         key_file = os.path.join(os.path.dirname(PAIR_FILE), os.path.expanduser(p["key_file"]))
-        peers.append({"name": p["name"][:40], "proxy": f"http://{u.netloc}", "key_file": key_file})
-    name = j.get("name") if isinstance(j.get("name"), str) and j.get("name") else socket.gethostname()
-    return {"name": name[:40], "peers": peers}
+        peers.append({"name": p["name"], "proxy": f"http://{u.netloc}", "key_file": key_file})
+    name = j.get("name") if j.get("name") is not None else re.sub(r"[^A-Za-z0-9._-]", "-", socket.gethostname())[:40]
+    if not isinstance(name, str) or not PAIR_NAME.fullmatch(name):
+        raise ValueError("name is 1 to 40 letters, digits, dots, dashes or underscores")
+    return {"name": name, "peers": peers}
 
 
 def pair_conf():
@@ -3188,13 +3203,25 @@ def _peer_key(peer):
         return f.read().split("\n")[0].strip()
 
 
+_PAIR_READING: dict = {}
+
+
 def peer_models(peer, fresh=False):
-    """The model ids a peer's proxy lists on /v1/models, kept PAIR_TTL_S seconds; () when it
-    does not answer, with the reason kept for the refusal's message."""
-    now = time.monotonic()
-    row = _PAIR_MODELS.get(peer["name"])
-    if row and not fresh and now - row["ts"] < PAIR_TTL_S:
-        return row["models"]
+    """The model ids a peer's proxy lists on /v1/models, kept PAIR_TTL_S seconds from the end of the read;
+    () when it does not answer, with the reason kept for the refusal's message. One read at a time per
+    peer: the callers that find it under way take its result (found in review, 2026-11-02: 8 callers
+    after the TTL made 8 reads, and a read as long as the TTL was stored already stale)."""
+    asked = time.monotonic()
+    with _PAIR_LOCK:
+        lock = _PAIR_READING.setdefault(peer["name"], threading.Lock())
+    with lock:
+        row = _PAIR_MODELS.get(peer["name"])
+        if row and (row["ts"] >= asked or (not fresh and time.monotonic() - row["ts"] < PAIR_TTL_S)):
+            return row["models"]
+        return _peer_models_read(peer)
+
+
+def _peer_models_read(peer):
     models, rows, err = (), [], None
     try:
         # marked as a hop: the peer answers with its own engine's list, never the union it shows its
@@ -3205,13 +3232,15 @@ def peer_models(peer, fresh=False):
                                               PAIR_HOP: (pair_conf() or {}).get("name") or "pair"})
         with _PAIR_LIST_OPENER.open(req, timeout=5) as r:
             data = json.loads(r.read(1 << 20).decode())
-        rows = [m for m in (data.get("data") or []) if isinstance(m, dict) and isinstance(m.get("id"), str)]
+        if not isinstance(data, dict) or not isinstance(data.get("data"), list):
+            raise ValueError("its /v1/models is not a list of models")
+        rows = [m for m in data["data"] if isinstance(m, dict) and isinstance(m.get("id"), str)]
         models = tuple(m["id"] for m in rows)
     except urllib.error.HTTPError as e:
         err = f"HTTP {e.code} on /v1/models"
-    except (urllib.error.URLError, OSError, ValueError) as e:
-        err = str(getattr(e, "reason", None) or e)[:160]
-    _PAIR_MODELS[peer["name"]] = {"ts": now, "models": models, "rows": rows, "error": err}
+    except Exception as e:      # an address that is no HTTP server, a broken answer: the peer does not answer
+        err = str(getattr(e, "reason", None) or e)[:160] or type(e).__name__
+    _PAIR_MODELS[peer["name"]] = {"ts": time.monotonic(), "models": models, "rows": rows, "error": err}
     return models
 
 
@@ -3608,9 +3637,11 @@ class _PeerHTTP(urllib.request.HTTPHandler):
         return self.do_open(connection, req)
 
 
-_PAIR_OPENER = urllib.request.build_opener(_PeerHTTP, _NoUpstreamRedirect)
+# Both straight to the peer, never through an http_proxy of the environment, which would get the peer's
+# key in clear (found in review, 2026-11-02; claude-local.py does the same since 2026-10-24).
+_PAIR_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}), _PeerHTTP, _NoUpstreamRedirect)
 # A peer's list: urllib's own handler, whose timeout bounds the connection and every read (5 s).
-_PAIR_LIST_OPENER = urllib.request.build_opener(_NoUpstreamRedirect)
+_PAIR_LIST_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoUpstreamRedirect)
 
 # Abort contract (v6.14). SGLang only aborts a request it can still FIND: abort_request()
 # returns early when the rid is no longer in TokenizerManager.rid_to_state, and a client
@@ -5465,6 +5496,8 @@ class H(BaseHTTPRequestHandler):
                     _VOCAB.update(size=0, ts=0.0)
                 if self._sampling_refused(asked):
                     return
+                if self._pair_held_refused(asked, route):      # role 10: the lane that came back may serve another
+                    return
                 # the request goes now, named for the engine that answers (held through
                 # Kolibri's boot, it went with its old name, and a 404)
                 body = self._served_name(asked)
@@ -5481,18 +5514,26 @@ class H(BaseHTTPRequestHandler):
 
     # ---- role 10: the pair ---------------------------------------------------
     def _pair_refuse(self, status, kind, msg, served):
-        """A refusal of the pair's own, in the caller's dialect, with what each box serves."""
+        """A refusal of the pair's own, in the caller's dialect, with what each box serves; a 503 says when
+        to try again, as every other 503 of this proxy does (v6.9). Through _answer: a stream this proxy
+        opened while it held the request gets it as an error event."""
         if self.path.startswith("/v1/messages"):
             err = {"type": "error", "error": {"type": kind, "message": "keepalive-proxy: " + msg, "served": served}}
         else:
             err = {"error": {"type": kind, "message": "keepalive-proxy: " + msg, "served": served}}
-        self._plain(status, {"Content-Type": "application/json"}, json.dumps(err).encode())
+        headers = {"Content-Type": "application/json"}
+        if status == 503:
+            headers["Retry-After"] = "30"
+        try: self._answer(status, headers, json.dumps(err).encode())
+        except Exception: pass
 
     def _pair_routed(self, body, route):
         """Role 10: True when the pair answered this request (sent to a peer, or refused), False
         when it goes on to this box's own engine as it always did."""
         conf = pair_conf()
         hop = self.headers.get(PAIR_HOP)
+        if hop is not None:
+            hop = hop if PAIR_NAME.fullmatch(hop.strip()) else "a peer"   # a value of the client's is not journaled
         # A request an entry sent on is judged here even on a box without pair.json, the peer of a
         # one-entry pair: without that, a peer that had switched served it with its new model (found in
         # review, 2026-11-02)
@@ -5523,11 +5564,20 @@ class H(BaseHTTPRequestHandler):
                               f"{', '.join(local) or 'no model'}, not {name}", {me: list(local)})
             self._done("409 pair another model here")
             return True
+        if not CLIENT_KEYS and not _door_key():
+            # this box admitted the request without checking a key (its own is unreadable: the engine's check
+            # was left to do it, and a request sent on never reaches it), so nothing goes to another box on
+            # its say: the peer's key would sign it (found in review, 2026-11-02)
+            log(f"{self._peer} REFUSED {name}: this box cannot read its own key, so it sends nothing on to a peer")
+            self._pair_refuse(503, "engine_unavailable", "this box cannot read its own key "
+                              "(~/.config/qwen38/api-key), so it sends no request on to another box", {})
+            self._done("503 pair own key unreadable")
+            return True
         for fresh in (False, True):
             peer = next((p for p in conf["peers"] if name in peer_models(p, fresh=fresh)), None)
             if peer is None:
                 continue                    # in no list as kept: every list is read again once before a refusal
-            if self._forward_peer(body, peer, name, conf) != "moved":
+            if self._forward_peer(body, peer, name, conf, local) != "moved":
                 return True
             # the peer serves another model since its list was read: every list is read again
         if local is None:
@@ -5549,7 +5599,38 @@ class H(BaseHTTPRequestHandler):
         self._done("404 pair model served nowhere")
         return True
 
-    def _forward_peer(self, body, peer, name, conf):
+    def _pair_held_refused(self, body, route):
+        """Role 10, after a hold: the lane that came back may serve another model than the one this request
+        names. On a box of a pair, or for a request an entry sent on, it is refused then (409 sent on, 404
+        otherwise), never answered by that other lane (found in review, 2026-11-02: a peer in the middle of
+        a switch held a request for Flash, and Ornith answered it)."""
+        conf = pair_conf()
+        hop = self.headers.get(PAIR_HOP)
+        if (conf is None and not hop) or route not in PAIR_ROUTES or not body:
+            return False
+        name = body_model(body)
+        if name not in LANE_NAMES:
+            return False
+        _SERVED.update(ts=0.0)              # the names of the lane that came back, not the ones kept from before
+        try:
+            local = served_models() or None
+        except EngineUnreachable:
+            local = None
+        if local is None or name in local:
+            return False
+        me = (conf or {}).get("name") or "this box"
+        log(f"{self._peer} REFUSED {name} after a hold: the lane that came back serves {', '.join(local)}")
+        if hop:
+            self._pair_refuse(409, "model_not_served", f"this box ({me}) serves {', '.join(local)} now, not {name}",
+                              {me: list(local)})
+            self._done("409 pair another model here")
+        else:
+            self._pair_refuse(404, "model_not_found", f"this box ({me}) serves {', '.join(local)} now, not {name}: "
+                              f"send it again and it goes to the box of the pair that serves it", {me: list(local)})
+            self._done("404 pair model served nowhere")
+        return True
+
+    def _forward_peer(self, body, peer, name, conf, local):
         """Role 10: the request to the peer's proxy as the client wrote it, with the peer's key
         and PAIR_HOP; its answer relayed as it comes. "moved" when the peer answers that it serves
         another model now (409 model_not_served), None once the caller has its answer."""
@@ -5558,7 +5639,7 @@ class H(BaseHTTPRequestHandler):
         except OSError as e:
             log(f"{self._peer} pair: the key file of {peer['name']} cannot be read ({e.strerror or e})")
             self._pair_refuse(503, "engine_unavailable", f"the key file of box {peer['name']} cannot be "
-                              f"read on this box", pair_served_map(conf, None))
+                              f"read on this box", pair_served_map(conf, local))
             self._done("503 pair peer key unreadable")
             return None
         h = {k: v for k, v in self.headers.items()
@@ -5572,15 +5653,17 @@ class H(BaseHTTPRequestHandler):
 
         def watch():
             # the caller of an answer that is not streamed yet hears nothing: when it leaves,
-            # the connection to the peer is ended, and the peer's proxy drops the request there
+            # the connection to the peer is ended, and the peer's proxy drops the request there;
+            # one that leaves before that connection exists has it ended as soon as it does
+            # (found in review, 2026-11-02: the request was sent anyway and ran for nobody)
             while not done.wait(1.0):
-                if self._client_left():
+                if left.is_set() or self._client_left():
                     left.set()
                     sock = getattr(getattr(req, "upstream", None), "kept_sock", None)
                     if sock is not None:
                         try: sock.shutdown(socket.SHUT_RDWR)
                         except OSError: pass
-                    return
+                        return
         threading.Thread(target=watch, daemon=True).start()
         try:
             try:
@@ -5595,16 +5678,17 @@ class H(BaseHTTPRequestHandler):
                 self._plain(e.code, dict(e.headers), data)
                 self._done(f"{e.code} pair upstream")
                 return None
-            except (urllib.error.URLError, OSError) as e:
+            except (urllib.error.URLError, OSError, http.client.HTTPException) as e:
                 if left.is_set():
                     self._done("CLIENT GONE during pair"); return None
-                _PAIR_MODELS.pop(peer["name"], None)
-                why = str(getattr(e, "reason", None) or e)[:160]
+                why = str(getattr(e, "reason", None) or e)[:160] or type(e).__name__
                 log(f"{self._peer} pair: {peer['name']} does not answer ({why})")
                 self._pair_refuse(503, "engine_unavailable", f"box {peer['name']} ({peer['proxy']}), which "
-                                  f"serves {name}, does not answer: {why}", pair_served_map(conf, None))
+                                  f"serves {name}, does not answer: {why}", pair_served_map(conf, local))
                 self._done("503 pair peer unreachable")
                 return None
+            if left.is_set():
+                self._done("CLIENT GONE during pair"); return None
             headers = {k: v for k, v in resp.headers.items() if k.lower() != "x-accel-buffering"}
             try:
                 if "text/event-stream" not in (resp.headers.get("Content-Type") or ""):
@@ -5615,7 +5699,7 @@ class H(BaseHTTPRequestHandler):
                             self._done("CLIENT GONE during pair"); return None
                         log(f"{self._peer} pair: {peer['name']} cut its answer short ({type(e).__name__})")
                         self._pair_refuse(502, "upstream_cut", f"box {peer['name']} cut its answer short",
-                                          pair_served_map(conf, None))
+                                          pair_served_map(conf, local))
                         self._done("UPSTREAM CUT pair"); return None
                     self._plain(resp.status, headers, data)
                     self._bytes = len(data)
@@ -5625,6 +5709,10 @@ class H(BaseHTTPRequestHandler):
                     self._begin(resp.status, headers)
                 except OSError:
                     self._done("CLIENT GONE during pair"); return None
+                sock = getattr(getattr(req, "upstream", None), "kept_sock", None)
+                if sock is not None:
+                    try: sock.settimeout(PAIR_STREAM_SILENCE_S)
+                    except OSError: pass
                 while True:
                     try:
                         b = resp.read1(65536)
@@ -6153,9 +6241,6 @@ class H(BaseHTTPRequestHandler):
         models_route = self.path.split("?")[0].rstrip("/") == "/v1/models"
         if cerr is not None:
             invalidate_pool()           # same: the next pool must be read fresh
-            both = pair_models_body(None) if models_route and not self.headers.get(PAIR_HOP) else None   # role 10
-            if both is not None:
-                self._plain(200, {"Content-Type": "application/json"}, both); self._done("ok get"); return
             self._unavailable(cerr); self._done("503 engine unreachable"); return
         if herr is not None: self._upstream_error(herr); return
         try: data = resp.read()

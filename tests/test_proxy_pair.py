@@ -264,9 +264,10 @@ class TwoBoxesBehindOneEndpoint(unittest.TestCase):
             (self.home1 / ".config/qwen38/pair.json").write_text(json.dumps(pair))
             time.sleep(2.5)
             t0 = time.monotonic()
-            st, out, _ = self.call("/v1/chat/completions", self.chat("qwen3.8-flash-next-fp4"))
+            st, out, _hdrs = self.call("/v1/chat/completions", self.chat("qwen3.8-flash-next-fp4"))
             self.assertLess(time.monotonic() - t0, 15)
             self.assertEqual(st, 503, out[:300])        # the box that may serve it does not answer: try again
+            self.assertEqual(_hdrs.get("Retry-After"), "30", "every 503 of this proxy says when to try again")
             err = json.loads(out)["error"]
             self.assertEqual(err["type"], "engine_unavailable")
             self.assertIn("does not answer", err["served"]["spark2"])
@@ -427,6 +428,163 @@ class TwoBoxesBehindOneEndpoint(unittest.TestCase):
         self.assertEqual(json.loads(out)["error"]["served"],
                          {"spark1": ["qwen3.8-27b"], "spark2": ["qwen3.8-flash-next-fp4"]},
                          "each box says what it serves itself, not the union it shows its clients")
+
+
+    # ---- what the code review of 2026-11-02 found -------------------------------------------------
+    def spare_proxy(self, label, key, pair, upstream=None, extra=None, keyfile=True):
+        home = self.home(self.tmp / label, key, pair)
+        if not keyfile:
+            (home / ".config/qwen38/api-key").unlink()
+        if pair and pair.get("peers"):
+            (home / ".config/qwen38/pair").mkdir()
+            (home / ".config/qwen38/pair/spark2.key").write_text(KEY_2 + "\n")
+        env = {"PATH": os.environ["PATH"], "HOME": str(home), "PROXY_BIND": "127.0.0.1",
+               "UPSTREAM": upstream or f"http://127.0.0.1:{self.engines[0].server_address[1]}",
+               "PROMPT_CEILING_TOKENS": "0", "FLASH_PROMPT_CEILING_TOKENS": "0", **(extra or {})}
+        with open(self.tmp / f"{label}.journal", "ab") as journal:
+            proc, port = localports.spawn(lambda port: subprocess.Popen(
+                [sys.executable, str(REPO / "keepalive-proxy.py"), str(port)], env=env,
+                stdout=subprocess.DEVNULL, stderr=journal))
+        self.procs.append(proc)
+        return port
+
+    def entry_pair(self, peer_port):
+        return {"name": "spark1", "peers": [{"name": "spark2", "proxy": f"http://127.0.0.1:{peer_port}",
+                                             "key_file": "pair/spark2.key"}]}
+
+    def test_a_box_that_cannot_read_its_own_key_sends_nothing_on(self):
+        port = self.spare_proxy("no-key", KEY_1, self.entry_pair(self.port2), keyfile=False)
+        st, out, _ = self.call("/v1/chat/completions", self.chat("qwen3.8-flash-next-fp4"), port=port, key="anything")
+        self.assertEqual(st, 503, out[:300])
+        self.assertEqual(self.E2.seen, [], "the peer is never sent a request this box could not check")
+
+    def test_a_pair_json_with_a_bad_port_or_name_leaves_the_box_alone(self):
+        for label, pair in (("bad-port", {"name": "spark1", "peers": [{"name": "spark2", "proxy": "http://127.0.0.1:3000l",
+                                                                        "key_file": "pair/spark2.key"}]}),
+                            ("bad-name", {"name": "Spark \u2460 bureau", "peers": []})):
+            port = self.spare_proxy(label, KEY_1, pair)
+            st, out, _ = self.call("/v1/models", port=port, method="GET")
+            self.assertEqual(st, 200, out[:300])
+            self.assertEqual([r.get("box") for r in json.loads(out)["data"]], [None], "a box alone")
+            self.assertIn("pair.json is not used", self.journal(label))
+
+    def test_an_entry_whose_engine_does_not_answer_says_so_on_v1_models(self):
+        port = self.spare_proxy("entry-down", KEY_1, self.entry_pair(self.port2),
+                                upstream=f"http://127.0.0.1:{localports.held(self)}")
+        st, out, _ = self.call("/v1/models", port=port, method="GET")
+        self.assertEqual(st, 503, "as a box alone: no peer's model stands in for this box's engine")
+
+    def test_no_http_proxy_of_the_environment_gets_the_peers_key(self):
+        dead = localports.held(self)
+        port = self.spare_proxy("with-proxy-env", KEY_1, self.entry_pair(self.port2),
+                                extra={"http_proxy": f"http://127.0.0.1:{dead}", "HTTP_PROXY": f"http://127.0.0.1:{dead}"})
+        st, out, _ = self.call("/v1/chat/completions", self.chat("qwen3.8-flash-next-fp4"), port=port)
+        self.assertEqual(st, 200, out[:300])           # through the dead proxy it would have failed
+        self.assertIn(b"from spark2", out)
+
+    def test_a_peer_that_answers_409_has_every_list_read_again(self):
+        class Switched(http.server.BaseHTTPRequestHandler):
+            protocol_version = "HTTP/1.1"
+            models = ["qwen3.8-flash-next-fp4"]
+            posts: list = []
+
+            def log_message(self, *a):
+                pass
+
+            def reply(self, obj, code=200):
+                out = json.dumps(obj).encode()
+                self.send_response(code); self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(out))); self.end_headers(); self.wfile.write(out)
+
+            def do_GET(self):
+                self.reply({"object": "list", "data": [{"id": m, "object": "model"} for m in Switched.models]})
+
+            def do_POST(self):
+                body = json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)))
+                Switched.posts.append(body.get("model"))
+                if body.get("model") not in Switched.models:
+                    return self.reply({"error": {"type": "model_not_served", "message": "another model here"}}, 409)
+                self.reply({"id": "c", "choices": [{"message": {"content": "from the switched peer"}}]})
+        held = localports.held(self)
+        fake = localports.serve(held, Engine, Switched)
+        threading.Thread(target=fake.serve_forever, daemon=True).start()
+        self.addCleanup(fake.server_close); self.addCleanup(fake.shutdown)
+        port = self.spare_proxy("switch-409", KEY_1, self.entry_pair(held), extra={"PAIR_TTL_S": "300"})
+        st, out, _ = self.call("/v1/chat/completions", self.chat("qwen3.8-flash-next-fp4"), port=port)
+        self.assertEqual(st, 200, out[:300])          # its list is read and kept 300 s
+        Switched.models = ["ornith-1.5-122b"]         # the peer switches; the entry's list is the old one
+        st, out, _ = self.call("/v1/chat/completions", self.chat("qwen3.8-flash-next-fp4"), port=port)
+        self.assertEqual(st, 404, out[:300])          # its 409 had every list read again: served nowhere now
+        self.assertEqual(json.loads(out)["error"]["served"]["spark2"], ["ornith-1.5-122b"])
+        self.assertEqual(Switched.posts, ["qwen3.8-flash-next-fp4", "qwen3.8-flash-next-fp4"])
+        self.assertIn("serves another model now; the lists are read again", self.journal("switch-409"))
+        st, out, _ = self.call("/v1/chat/completions", self.chat("ornith-1.5-122b"), port=port)
+        self.assertEqual(st, 200, out[:300])
+
+    def test_a_silent_peer_stream_reaches_the_client_cut(self):
+        class Silent(http.server.BaseHTTPRequestHandler):
+            protocol_version = "HTTP/1.1"
+
+            def log_message(self, *a):
+                pass
+
+            def do_GET(self):
+                out = json.dumps({"object": "list", "data": [{"id": "qwen3.8-flash-next-fp4"}]}).encode()
+                self.send_response(200); self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(out))); self.end_headers(); self.wfile.write(out)
+
+            def do_POST(self):
+                self.rfile.read(int(self.headers.get("Content-Length") or 0))
+                self.send_response(200); self.send_header("Content-Type", "text/event-stream")
+                self.send_header("Transfer-Encoding", "chunked"); self.end_headers()
+                part = b'data: {"choices": [{"delta": {"content": "x"}}]}\n\n'
+                self.wfile.write(b"%x\r\n%s\r\n" % (len(part), part)); self.wfile.flush()
+                time.sleep(30)                      # the box went: no byte, no FIN
+        held = localports.held(self)
+        fake = localports.serve(held, Engine, Silent)
+        threading.Thread(target=fake.serve_forever, daemon=True).start()
+        self.addCleanup(fake.server_close); self.addCleanup(fake.shutdown)
+        port = self.spare_proxy("silent", KEY_1, self.entry_pair(held), extra={"PAIR_STREAM_SILENCE_S": "2"})
+        c = http.client.HTTPConnection("127.0.0.1", port, timeout=20)
+        try:
+            t0 = time.monotonic()
+            c.request("POST", "/v1/chat/completions", json.dumps(self.chat("qwen3.8-flash-next-fp4", stream=True)).encode(),
+                      {"Content-Type": "application/json", "Authorization": f"Bearer {KEY_1}"})
+            r = c.getresponse()
+            with self.assertRaises(http.client.IncompleteRead):
+                r.read()
+            self.assertLess(time.monotonic() - t0, 10)
+        finally:
+            c.close()
+
+    def test_a_request_held_through_a_restart_is_never_answered_by_another_lane(self):
+        t = self.tmp / "held"
+        (t / "bin").mkdir(parents=True)
+        state = t / "state"
+        state.write_text("activating\n")
+        (t / "bin/systemctl").write_text(
+            "#!/bin/sh\n"
+            'case "$*" in *InvocationID*) echo inv-1; echo; exit 0;; esac\n'
+            f'if [ "$1" = show ]; then cat "{state}"; exit 0; fi\n'
+            'if [ "$1" = list-jobs ]; then exit 0; fi\n'
+            "exit 3\n")
+        (t / "bin/systemctl").chmod(0o755)
+        engine_port = localports.held(self)
+        port = self.spare_proxy("held-box", KEY_2, {"name": "spark2", "peers": []},
+                                upstream=f"http://127.0.0.1:{engine_port}",
+                                extra={"PATH": f"{t / 'bin'}:{os.environ['PATH']}", "PROXY_HOLD_UNITS": "qwen38-x.service",
+                                       "PROXY_HOLD_MAX_S": "30", "PROXY_HOLD_POLL_S": "0.2"})
+        Ornith = fake_engine("ornith-box", "ornith-1.5-122b")
+        def come_back():
+            time.sleep(1.5)
+            e = localports.serve(engine_port, Engine, Ornith)    # the lane that comes back serves Ornith
+            self.addCleanup(e.server_close); self.addCleanup(e.shutdown)
+            e.serve_forever()
+        threading.Thread(target=come_back, daemon=True).start()
+        st, out, _ = self.call("/v1/chat/completions", self.chat("qwen3.8-flash-next-fp4"), port=port, key=KEY_2)
+        self.assertEqual(st, 404, out[:300])
+        self.assertEqual(json.loads(out)["error"]["type"], "model_not_found")
+        self.assertEqual(Ornith.seen, [], "Ornith is never asked a request for Flash")
 
 
 class TheLaneNamesAreThoseTheUnitsServe(unittest.TestCase):

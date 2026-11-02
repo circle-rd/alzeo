@@ -781,6 +781,7 @@ class FeedOutcomes(unittest.TestCase):
         "CLIENT GONE during pair": "gone",
         "503 pair peer unreachable": "fail",
         "503 pair peer key unreadable": "fail",
+        "503 pair own key unreadable": "fail",   # this box cannot check a key, so it sends nothing on (review, 2026-11-02)
         "404 pair model served nowhere": "fail",
         "409 pair another model here": "fail",
         "502 pair upstream": "fail",
