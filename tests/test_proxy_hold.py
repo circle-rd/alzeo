@@ -558,15 +558,25 @@ class TheTwoQuestionsItAsks(unittest.TestCase):
         self.assertFalse(mod.engine_answers(), "nobody listening")
 
     def test_a_caller_seen_through_tls_or_a_closed_socket(self):
+        """Under TLS the socket under TLS is peeked at (the pair port, 2026-11-02): a caller still there is not
+        gone, bytes it sent are no goodbye, and the end of its side is one, as on a plain socket. No peek was
+        made through TLS before: a peer never saw an entry's client leave."""
         import ssl
         mod = self.load()
         class Fake:
             pass
         f = Fake()
-        f.connection = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT).wrap_socket(socket.socket(), do_handshake_on_connect=False,
+        here, there = socket.socketpair()
+        self.addCleanup(there.close)
+        f.connection = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT).wrap_socket(here, do_handshake_on_connect=False,
                                                                              server_hostname="x")
         self.addCleanup(f.connection.close)
-        self.assertFalse(mod.H._client_left(f), "a peek through TLS is not made")
+        self.assertFalse(mod.H._client_left(f), "a caller still there, silent")
+        there.sendall(b"\x15\x03\x03")                 # the start of a TLS record: bytes, not a goodbye
+        self.assertFalse(mod.H._client_left(f))
+        socket.socket.recv(f.connection, 3)
+        there.close()
+        self.assertTrue(mod.H._client_left(f), "a caller that ended its side is gone, under TLS too")
         f.connection = socket.socket(); f.connection.close()
         self.assertTrue(mod.H._client_left(f), "a socket that is gone is a caller gone")
 

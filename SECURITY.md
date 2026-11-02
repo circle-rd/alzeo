@@ -150,6 +150,22 @@ forwards over HTTP with Basic credentials that never leave the machine
 (opencode binds 127.0.0.1). Its boundary properties (origin gate, cookie
 names, header hygiene) are property-tested.
 
+**The pair port (`keepalive-proxy.py`, :30002, only while the box is paired)**
+is the proxy itself, for the other box of a pair (`pair.py`, docs/pair.md). It
+speaks TLS 1.3 only and demands a client certificate: the chain must end at a
+certificate pinned in `pair.json`, and the certificate itself must have a pinned
+SHA-256, or the connection ends at the handshake, before a byte of a request is
+read. A request that gets past it is a hop from the box of that certificate:
+served there or refused, never sent on, and it still meets the API key check and
+every guard of :30001. The port opens within 2 s of `pair.json` naming a peer and
+closes once it names none; a box taken out of the pair is refused at its next
+request, even on a connection already open. Each box's certificate is self-signed
+(EC P-256), made once by `pair.py`, its key mode 600 in a directory mode 700, the
+model of NVIDIA PAIR's nodes; the boxes swap certificates and API keys over SSH,
+never on a command line. Outbound, a box sends to a peer's pair port only, with
+its own certificate, once the peer's is the pinned one, and never through a proxy
+of its environment.
+
 **The installer (`install.sh`, `dashboard/install-*.sh`)** runs things you
 sudo. Every pinned byte is hash-verified: images by digest, checkpoints by
 pinned revision, the opencode release by its sha256. The image and video lanes

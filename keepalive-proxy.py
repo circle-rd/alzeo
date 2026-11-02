@@ -53,7 +53,8 @@ Ten roles, nothing else:
    cockpit turns the line into a banner (docs/clients.md);
 10. on a box with pair.json (discussion #45), send each generation that names one of this
    repo's lanes' models to the box of the pair that serves it, a peer's own proxy with that
-   peer's key, and refuse, in the client's dialect, a lane name no box serves, with what each
+   peer's key over TLS both ways (each box's certificate pinned by the other, PAIR_PORT), and
+   refuse, in the client's dialect, a lane name no box serves, with what each
    box serves, instead of answering it with another model. Any other name stays on this box, as
    on a box alone. GET /v1/models lists every box's models (see "Two boxes behind one endpoint" below).
 
@@ -62,7 +63,13 @@ config directory holds pair.json reads its peers' /v1/models (every PAIR_TTL_S s
 when a peer answers 409 that it serves another model now), sends a generation that names a model
 of one of this repo's lanes to the box that serves it, and refuses a lane name no box serves (404,
 with what each box serves). A request a peer sends on carries X-Alzeo-Pair-Hop and is served
-where it lands or refused (409), never sent on again. Nothing changes on a box without pair.json.
+where it lands or refused (409), never sent on again. The boxes talk over TLS both ways
+(decisions 971-974, as NVIDIA PAIR's nodes do): each has a certificate of its own, made by
+pair.py, which the other pins in its pair.json, and a box of a pair listens on PAIR_PORT (30002)
+for its peers only, a connection without a pinned certificate refused at the handshake; a
+request that comes in there is a hop from the box of its certificate, whatever its headers say.
+The port is opened within 2 s of pair.json naming a peer and closed once it names none: nothing
+restarts. Nothing changes on a box without pair.json.
 
 v6.49: a long prompt sent again after its client gave up on it is said in the journal (role 9).
 On the Ornith lane a prompt of 494,089 tokens the prefix cache could not serve took 19 min
@@ -3119,9 +3126,23 @@ def route_model_name(body, path):
 # PAIR_HOP: it is served here or refused (409), never sent on again, so two boxes that name each
 # other cannot bounce it. The peer runs every guard of its own on it (sizes, tools, efforts, holds),
 # so it goes there as the client wrote it. pair.json is read again when it changes: no restart.
+# The boxes talk over TLS both ways (decisions 971-974, the model of NVIDIA PAIR's nodes: a
+# certificate of its own per box, pinned by the other, a client certificate demanded). pair.py makes
+# this box's certificate once (PAIR_IDENTITY, 100 years: a pair must not break on a date) and swaps
+# certificates and keys with the other box over SSH; pair.json pins each peer's certificate by its
+# SHA-256. A box of a pair listens on PAIR_PORT for its peers only (PairServer): TLS 1.3, its own
+# certificate, the peer's demanded and checked against the pinned ones, by the chain and then by the
+# fingerprint itself; and it sends to a peer's PAIR_PORT with its own certificate, the peer's checked
+# the same way. No host name is checked: the pin is the certificate, and the address can be an IP of
+# the ConnectX-7 cable. The peer's key still goes with each request, as before: a second lock, checked
+# by other code than the TLS check.
 LANE_NAMES = frozenset({"qwen3.8-27b", "qwen3.8-flash-next", "qwen3.8-flash-next-fp4", "ornith-1.5-122b",
                         "nemotron-3.5-bolt", "nemotron-3.5-super-vl", "kolibri-1"})
 PAIR_FILE = os.path.expanduser(os.environ.get("QWEN38_PAIR_FILE") or "~/.config/qwen38/pair.json")
+PAIR_DIR = os.path.join(os.path.dirname(PAIR_FILE), "pair")
+# made by pair.py, a directory renamed into place whole: a certificate never meets another key
+PAIR_IDENTITY = (os.path.join(PAIR_DIR, "identity", "cert.pem"), os.path.join(PAIR_DIR, "identity", "key.pem"))
+PAIR_PORT = int(os.environ.get("PAIR_PORT") or 30002)     # 0: one the kernel chooses (the tests)
 PAIR_ROUTES = frozenset({"/v1/chat/completions", "/v1/completions", "/v1/messages",
                          "/v1/messages/count_tokens", "/v1/responses"})
 PAIR_HOP = "X-Alzeo-Pair-Hop"
@@ -3139,17 +3160,21 @@ _PAIR_LOCK = threading.Lock()
 
 
 def _pair_parse(text):
-    """pair.json as this proxy uses it: {"name": "<this box>", "peers": [{"name", "proxy",
-    "key_file"}]}. A proxy address is http://host:port with nothing after it (the peers'
-    proxies on a link of their own, docs); a key file is read when a request goes to that peer,
-    never logged. Raises ValueError with what is wrong."""
+    """pair.json as this proxy uses it: {"name": "<this box>", "peers": [{"name", "proxy", "key_file",
+    "cert_file", "sha256"}]}. A proxy address is https://host:port with nothing after it (the peer's
+    PAIR_PORT); cert_file is the peer's certificate and sha256 its fingerprint, 64 hex digits, with or
+    without openssl's colons; a key file is read when a request goes to that peer, never logged.
+    Files are named from the directory of pair.json. Other fields (pair.py's "ssh") are not used here.
+    Raises ValueError with what is wrong."""
     j = json.loads(text)
     if not isinstance(j, dict) or not isinstance(j.get("peers", []), list):
         raise ValueError("pair.json is an object whose \"peers\" is a list")
     peers = []
+    base = os.path.dirname(PAIR_FILE)
     for i, p in enumerate(j.get("peers", [])):
-        if not isinstance(p, dict) or not all(isinstance(p.get(k), str) and p.get(k) for k in ("name", "proxy", "key_file")):
-            raise ValueError(f"peer {i} needs a name, a proxy and a key_file, each a string")
+        if not isinstance(p, dict) or not all(isinstance(p.get(k), str) and p.get(k)
+                                              for k in ("name", "proxy", "key_file", "cert_file", "sha256")):
+            raise ValueError(f"peer {i} needs a name, a proxy, a key_file, a cert_file and a sha256, each a string")
         if not PAIR_NAME.fullmatch(p["name"]):
             raise ValueError(f"peer {i}: a name is 1 to 40 letters, digits, dots, dashes or underscores")
         u = urllib.parse.urlsplit(p["proxy"])
@@ -3157,18 +3182,88 @@ def _pair_parse(text):
             port = u.port
         except ValueError:
             port = None
-        if (u.scheme != "http" or not u.hostname or port is None or u.path not in ("", "/") or u.query
+        if (u.scheme != "https" or not u.hostname or not port or u.path not in ("", "/") or u.query
                 or u.fragment or u.username is not None or u.password is not None):
-            raise ValueError(f"peer {p['name']}: proxy is http://host:port, got {p['proxy'][:80]!r}")
-        key_file = os.path.join(os.path.dirname(PAIR_FILE), os.path.expanduser(p["key_file"]))
-        peers.append({"name": p["name"], "proxy": f"http://{u.netloc}", "key_file": key_file})
+            raise ValueError(f"peer {p['name']}: proxy is https://host:port, the other box's pair port, "
+                             f"got {p['proxy'][:80]!r}")
+        pin = p["sha256"].replace(":", "").lower()
+        if not re.fullmatch(r"[0-9a-f]{64}", pin):
+            raise ValueError(f"peer {p['name']}: sha256 is the 64 hex digits of its certificate's fingerprint")
+        peers.append({"name": p["name"], "proxy": f"https://{u.netloc}", "sha256": pin,
+                      "key_file": os.path.join(base, os.path.expanduser(p["key_file"])),
+                      "cert_file": os.path.join(base, os.path.expanduser(p["cert_file"]))})
     name = j.get("name") if j.get("name") is not None else re.sub(r"[^A-Za-z0-9._-]", "-", socket.gethostname())[:40]
     if not isinstance(name, str) or not PAIR_NAME.fullmatch(name):
         raise ValueError("name is 1 to 40 letters, digits, dots, dashes or underscores")
     names = [p["name"] for p in peers]
     if len(set(names)) != len(names) or name in names:
         raise ValueError("each peer has a name of its own, none the name of this box")
+    if len({p["sha256"] for p in peers}) != len(peers):
+        raise ValueError("each peer has a certificate of its own: two peers pin the same one")
     return {"name": name, "peers": peers}
+
+
+_PEM_CERT = re.compile(r"-----BEGIN CERTIFICATE-----[A-Za-z0-9+/=\s]+?-----END CERTIFICATE-----")
+
+
+def _pem_der(text, where):
+    """The DER bytes of the one certificate a PEM text holds; ValueError naming `where` otherwise."""
+    blocks = _PEM_CERT.findall(text or "")
+    if len(blocks) != 1:
+        raise ValueError(f"{where} holds {len(blocks)} certificates, not one")
+    try:
+        return ssl.PEM_cert_to_DER_cert(blocks[0])
+    except ValueError as e:                     # binascii.Error is one
+        raise ValueError(f"{where} is no certificate ({e})")
+
+
+def _pair_tls(conf):
+    """The TLS of a pair (decision 971), into conf and its peers: this box's certificate, each peer's
+    checked against its pin, the server's context for PairServer ("tls") and each peer's openers
+    ("opener" to send a request on, "list_opener" to read its list). Raises ValueError (or OSError,
+    ssl.SSLError) with what is wrong: the pair is then not used, as a pair.json that does not parse."""
+    cert, key = PAIR_IDENTITY
+    try:
+        with open(cert, encoding="ascii") as f:
+            mine = hashlib.sha256(_pem_der(f.read(), cert)).hexdigest()
+    except FileNotFoundError:
+        raise ValueError(f"this box has no certificate of its own ({cert}): pair.py makes it when it pairs the boxes")
+    pems, pins = [], {}
+    for p in conf["peers"]:
+        try:
+            with open(p["cert_file"], encoding="ascii") as f:
+                der = _pem_der(f.read(), p["cert_file"])
+        except OSError as e:
+            raise ValueError(f"peer {p['name']}: its certificate {p['cert_file']} cannot be read ({e.strerror or e})")
+        fp = hashlib.sha256(der).hexdigest()
+        if fp != p["sha256"]:
+            raise ValueError(f"peer {p['name']}: {p['cert_file']} is not the certificate pair.json pins")
+        if fp == mine:
+            raise ValueError(f"peer {p['name']}: its certificate is this box's own")
+        pins[fp] = p["name"]
+        pem = ssl.DER_cert_to_PEM_cert(der)
+        pems.append(pem)
+        c = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        c.minimum_version = ssl.TLSVersion.TLSv1_3
+        c.check_hostname = False        # the pin is the certificate: the address may be the cable's own IP
+        c.verify_mode = ssl.CERT_REQUIRED
+        c.load_verify_locations(cadata=pem)     # that one certificate, and nothing else, is trusted
+        c.load_cert_chain(cert, key)
+        p["opener"] = _pair_opener(c, fp, MAX_SILENCE_S if MAX_SILENCE_S > 0 else None)
+        p["list_opener"] = _pair_opener(c, fp, 5.0)
+    s = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    s.minimum_version = ssl.TLSVersion.TLSv1_3
+    s.load_cert_chain(cert, key)
+    s.verify_mode = ssl.CERT_REQUIRED           # a connection without a peer's certificate ends at the handshake
+    if pems:
+        s.load_verify_locations(cadata="".join(pems))
+    conf["tls"] = {"server": s, "pins": pins, "mine": mine}
+
+
+def _pair_box_of(pin):
+    """The peer of this box's pair whose certificate has this SHA-256 now, or None."""
+    conf = pair_conf()
+    return (((conf or {}).get("tls") or {}).get("pins") or {}).get(pin) if pin else None
 
 
 def pair_conf():
@@ -3192,12 +3287,16 @@ def pair_conf():
         try:
             with open(PAIR_FILE, encoding="utf-8") as f:
                 conf = _pair_parse(f.read())
+            if conf["peers"]:
+                _pair_tls(conf)
             _PAIR.update(conf=conf, error=None)
             _PAIR_MODELS.clear()
-            log(f"pair: {conf['name']} with {', '.join(p['name'] + ' (' + p['proxy'] + ')' for p in conf['peers']) or 'no peer'} ({PAIR_FILE})")
-        except (OSError, ValueError) as e:
+            tls = f", over TLS, this box's certificate sha256 {conf['tls']['mine'][:16]}..." if conf["peers"] else ""
+            log(f"pair: {conf['name']} with {', '.join(p['name'] + ' (' + p['proxy'] + ')' for p in conf['peers']) or 'no peer'}"
+                f"{tls} ({PAIR_FILE})")
+        except Exception as e:          # whatever is wrong with it (a file, a certificate), the box stays alone
             _PAIR.update(conf=None, error=str(e))
-            log(f"pair: {PAIR_FILE} is not used: {str(e)[:200]}")
+            log(f"pair: {PAIR_FILE} is not used: {str(e)[:200] or type(e).__name__}")
         return _PAIR["conf"]
 
 
@@ -3249,7 +3348,7 @@ def _peer_models_read(peer):
         req = urllib.request.Request(peer["proxy"] + "/v1/models",
                                      headers={"Authorization": f"Bearer {_peer_key(peer)}",
                                               PAIR_HOP: (pair_conf() or {}).get("name") or "pair"})
-        with _PAIR_LIST_OPENER.open(req, timeout=5) as r:
+        with peer["list_opener"].open(req, timeout=5) as r:
             data = json.loads(r.read(1 << 20).decode())
         if not isinstance(data, dict) or not isinstance(data.get("data"), list):
             raise ValueError("its /v1/models is not a list of models")
@@ -3258,9 +3357,26 @@ def _peer_models_read(peer):
     except urllib.error.HTTPError as e:
         err = f"HTTP {e.code} on /v1/models"
     except Exception as e:      # an address that is no HTTP server, a broken answer: the peer does not answer
-        err = str(getattr(e, "reason", None) or e)[:160] or type(e).__name__
+        err = _pair_why(e)
     _PAIR_MODELS[peer["name"]] = {"ts": time.monotonic(), "models": models, "rows": rows, "error": err}
     return models
+
+
+def _pair_why(e):
+    """Why a peer did not answer, in words that say what to do: the TLS of a pair fails in ways an
+    operator must tell apart (found while pairing two proxies, 2026-11-02)."""
+    r = getattr(e, "reason", None) or e
+    s = str(r)
+    if isinstance(r, ssl.SSLCertVerificationError) or "CERTIFICATE_VERIFY_FAILED" in s:
+        return ("it answers with another certificate than the one pinned here: another box at that address, "
+                "or that box was paired again since (pair.py add)")
+    if any(a in s for a in ("UNKNOWN_CA", "CERTIFICATE_REQUIRED", "BAD_CERTIFICATE", "CERTIFICATE_UNKNOWN")):
+        return "it refuses this box's certificate: this box is not paired there now (pair.py add)"
+    if isinstance(r, ConnectionRefusedError):
+        return "nothing listens on its pair port: its proxy is stopped, or older than this pair"
+    if isinstance(r, (socket.timeout, TimeoutError)):
+        return "no answer in time"
+    return s[:160] or type(r).__name__
 
 
 def pair_models_body(data):
@@ -3644,32 +3760,49 @@ class _NoUpstreamRedirect(urllib.request.HTTPRedirectHandler):
 _UPSTREAM_OPENER = urllib.request.build_opener(_UpstreamHTTP, _NoUpstreamRedirect)
 
 
-class _PeerHTTPConnection(http.client.HTTPConnection):
-    """A connection to a peer's proxy that gives up connecting after PAIR_CONNECT_S, then waits for
-    each read up to MAX_SILENCE_S, as the relay does for this box's own engine (role 3): a long
-    prefill there is minutes before the first byte, and the peer's own proxy fills a stream's
-    silences, but a peer that took the connection and never answers holds nobody forever (found in
-    review, 2026-11-02: a frozen peer held every request and thread that went to it)."""
+class _PeerHTTPSConnection(http.client.HTTPSConnection):
+    """A connection to a peer's pair port: connected, TCP and TLS, within PAIR_CONNECT_S; the peer's
+    certificate the one pair.json pins, by the chain (its context trusts that one certificate alone)
+    and then by its fingerprint; then each read waits up to pair_read_s: MAX_SILENCE_S for a request
+    sent on, as the relay does for this box's own engine (role 3: a long prefill there is minutes
+    before the first byte, and the peer's own proxy fills a stream's silences), 5 s for a list. A peer
+    that took the connection and never answers holds nobody forever (found in review, 2026-11-02: a
+    frozen peer held every request and thread that went to it)."""
+    pair_pin = None
+    pair_read_s = None
+
     def connect(self):
         super().connect()
-        self.sock.settimeout(MAX_SILENCE_S if MAX_SILENCE_S > 0 else None)
+        der = self.sock.getpeercert(binary_form=True)
+        if not der or hashlib.sha256(der).hexdigest() != self.pair_pin:
+            try: self.sock.close()
+            except OSError: pass
+            raise ssl.SSLCertVerificationError("the other box's certificate is not the one pair.json pins")
+        self.sock.settimeout(self.pair_read_s)
         self.kept_sock = self.sock
 
 
-class _PeerHTTP(urllib.request.HTTPHandler):
-    def http_open(self, req):
+class _PeerHTTPS(urllib.request.HTTPSHandler):
+    def __init__(self, context, pin, read_s):
+        super().__init__(context=context)
+        self._pin, self._read_s = pin, read_s
+
+    def https_open(self, req):
         def connection(host, **kw):
             kw["timeout"] = PAIR_CONNECT_S if kw.get("timeout") in (None, socket._GLOBAL_DEFAULT_TIMEOUT) else kw["timeout"]
-            req.upstream = _PeerHTTPConnection(host, **kw)
-            return req.upstream
-        return self.do_open(connection, req)
+            conn = _PeerHTTPSConnection(host, **kw)
+            conn.pair_pin, conn.pair_read_s = self._pin, self._read_s
+            req.upstream = conn
+            return conn
+        return self.do_open(connection, req, context=self._context)
 
 
-# Both straight to the peer, never through an http_proxy of the environment, which would get the peer's
-# key in clear (found in review, 2026-11-02; claude-local.py does the same since 2026-10-24).
-_PAIR_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}), _PeerHTTP, _NoUpstreamRedirect)
-# A peer's list: urllib's own handler, whose timeout bounds the connection and every read (5 s).
-_PAIR_LIST_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoUpstreamRedirect)
+def _pair_opener(context, pin, read_s):
+    """An opener to one peer's pair port. Straight to it, never through an https_proxy of the
+    environment (found in review, 2026-11-02; claude-local.py does the same since 2026-10-24), and a
+    redirect relayed, never followed."""
+    return urllib.request.build_opener(urllib.request.ProxyHandler({}), _PeerHTTPS(context, pin, read_s),
+                                       _NoUpstreamRedirect)
 
 # Abort contract (v6.14). SGLang only aborts a request it can still FIND: abort_request()
 # returns early when the rid is no longer in TokenizerManager.rid_to_state, and a client
@@ -4212,11 +4345,91 @@ class Server(ThreadingHTTPServer):
             return
         super().handle_error(request, client_address)
 
+
+class PairServer(Server):
+    """The pair port (role 10, decision 971): this proxy, for the boxes of its pair only. Each
+    connection is wrapped with the pair as it is now, so a box taken out of pair.json is refused at its
+    next connection, and its handshake runs in H.setup, on the connection's own thread (S6): a box that
+    connects and says nothing costs one thread for TLS_HANDSHAKE_S, not the accept loop."""
+    pair_port = True
+
+    def get_request(self):
+        conn, addr = self.socket.accept()
+        tls = (pair_conf() or {}).get("tls")
+        if not tls:
+            conn.close()
+            raise OSError("no pair now: the pair port admits nobody")     # serve_forever takes it and goes on
+        try:
+            return tls["server"].wrap_socket(conn, server_side=True, do_handshake_on_connect=False), addr
+        except Exception as e:
+            conn.close()
+            raise OSError(f"pair port: {e}") from e
+
+
+class PairPort:
+    """Opens the pair port while this box has a pair (pair.json naming a peer, its certificates in
+    order) and closes it once it has none, looking every 2 s, as the requests look at pair.json:
+    pairing and unpairing restart nothing. It listens where the proxy does (PROXY_BIND)."""
+
+    def __init__(self):
+        self.srv, self.said = None, None
+        self.stopped = threading.Event()
+
+    def check(self):
+        conf = pair_conf()
+        if conf and conf.get("tls") and self.srv is None:
+            try:
+                srv = PairServer((BIND, PAIR_PORT), H)
+            except OSError as e:
+                if self.said != str(e):
+                    self.said = str(e)
+                    log(f"pair: the pair port {BIND}:{PAIR_PORT} cannot be opened ({e}): the other box's requests "
+                        f"do not reach this one; tried again every 2 s")
+                return
+            self.said = None
+            threading.Thread(target=srv.serve_forever, daemon=True, name="pair-port").start()
+            self.srv = srv
+            log(f"pair: port {BIND}:{srv.server_address[1]} open over TLS, to the certificates of "
+                f"{', '.join(p['name'] for p in conf['peers'])} only")
+        elif not (conf and conf.get("tls")) and self.srv is not None:
+            srv, self.srv = self.srv, None
+            srv.shutdown()
+            srv.server_close()
+            log(f"pair: port {srv.server_address[1]} closed: this box has no pair now")
+
+    def run(self):
+        while not self.stopped.is_set():
+            try:
+                self.check()
+            except Exception as e:      # never the keeper's end: the next look tries again
+                log(f"pair: the pair port's keeper failed ({type(e).__name__}: {str(e)[:160]})")
+            self.stopped.wait(2)
+
+    def stop(self):
+        """The keeper's end, and its port's (a proxy run inside a test's process)."""
+        self.stopped.set()
+        srv, self.srv = self.srv, None
+        if srv is not None:
+            srv.shutdown()
+            srv.server_close()
+
+
+PAIR_PORT_KEEPER = PairPort()
+
+
 class H(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     def log_message(self, *a): pass
 
     def handle_one_request(self):
+        if self._refused:
+            self.close_connection = True                # refused in setup: not a byte of it is read
+            return
+        if self._pair_box is not None and _pair_box_of(self._pair_pin) != self._pair_box:
+            # a box taken out of pair.json since this connection opened is refused at its next request
+            log(f"pair port: {self._pair_box} ({self.client_address[0]}) REFUSED: no peer of this box's pair now")
+            self.close_connection = True
+            return
         if getattr(self, "_header_clock", False):
             self._headers_until = time.monotonic() + min(CLIENT_HEADER_S, CLIENT_IO_S)
         if getattr(self, "_header_budget", False):
@@ -4257,7 +4470,10 @@ class H(BaseHTTPRequestHandler):
     def setup(self):
         self._headers_until = None
         self._header_bytes = None
+        self._refused = False
+        self._pair_box = self._pair_pin = None
         BaseHTTPRequestHandler.setup(self)
+        pair_port = getattr(self.server, "pair_port", False)
         if isinstance(self.connection, ssl.SSLSocket):
             # S6: the listening socket is wrapped with do_handshake_on_connect=False, so
             # the accept loop never waits on a handshake; it happens here, in this
@@ -4270,9 +4486,25 @@ class H(BaseHTTPRequestHandler):
             except OSError as e:
                 # log(), not log_error(): this class mutes log_message, so the base
                 # logger would print nothing to a journal that is the only witness.
-                log(f"TLS handshake from {self.client_address[0]} failed: {type(e).__name__}")
+                if pair_port:
+                    # why, for whoever pairs the boxes (no certificate, not the pinned one): no secret in it
+                    log(f"pair port: TLS handshake from {self.client_address[0]} failed ({str(e)[:160]})")
+                    self._refused = True
+                else:
+                    log(f"TLS handshake from {self.client_address[0]} failed: {type(e).__name__}")
                 self.close_connection = True
                 return
+            if pair_port:
+                # past the chain, which ends at a pinned certificate: the certificate itself must be one of
+                # them, and its box is the one every request of this connection comes from
+                der = self.connection.getpeercert(binary_form=True)
+                self._pair_pin = hashlib.sha256(der).hexdigest() if der else None
+                self._pair_box = _pair_box_of(self._pair_pin)
+                if self._pair_box is None:
+                    log(f"pair port: {self.client_address[0]} REFUSED: its certificate is no peer's of this box's pair")
+                    self._refused = True
+                    self.close_connection = True
+                    return
         # a write blocked for CLIENT_IO_S (frozen client, laptop asleep) raises
         # socket.timeout instead of parking the thread forever
         self.connection.settimeout(CLIENT_IO_S)
@@ -4905,12 +5137,17 @@ class H(BaseHTTPRequestHandler):
         """Whether the caller closed its side, asked without waiting: the peek _watch_client
         makes, for a non-streamed request that waits in silence while the engine is away."""
         sock = self.connection
-        if isinstance(sock, ssl.SSLSocket):
-            return False                 # a peek through TLS is not this simple
         try:
             readable, _, _ = select.select([sock], [], [], 0)
             if not readable:
                 return False
+            if isinstance(sock, ssl.SSLSocket):
+                # under TLS, the bytes waiting may be a record of the client's (an alert, a next request),
+                # and only the end of its TCP side says it left: an entry box whose client left ends its
+                # connection to the pair port so (Python sends no close_notify), and the socket under TLS,
+                # peeked at, reads as ended. A peek through TLS returned False here before the pair:
+                # a peer never saw an entry's client leave, and its engine served nobody.
+                return not socket.socket.recv(sock, 1, socket.MSG_PEEK | socket.MSG_DONTWAIT)
             return not sock.recv(1, socket.MSG_PEEK | socket.MSG_DONTWAIT)
         except BlockingIOError:
             return False
@@ -4990,8 +5227,15 @@ class H(BaseHTTPRequestHandler):
         an EOF is read as the caller leaving: a client that half-closes after its request
         would be taken for gone."""
         sock = self.connection
+        # Under TLS (the pair port, QWEN38_TLS_CERT) the socket under TLS is peeked at: an entry box
+        # whose client left ends its connection to the pair port with no close_notify (Python sends
+        # none), and the end of the TCP side is the same goodbye as on a plain socket. This keeper
+        # returned at once on TLS before the pair: a peer's engine then generated to the end for an
+        # entry's client that was gone, and a stop of the cockpit went unseen while it waited.
         if isinstance(sock, ssl.SSLSocket):
-            return                       # a peek through TLS is not this simple
+            peek = lambda: socket.socket.recv(sock, 1, socket.MSG_PEEK | socket.MSG_DONTWAIT)
+        else:
+            peek = lambda: sock.recv(1, socket.MSG_PEEK | socket.MSG_DONTWAIT)
         while not done.is_set():
             if self._stopped_while_routed(done):
                 return
@@ -5002,8 +5246,8 @@ class H(BaseHTTPRequestHandler):
             if not readable:
                 continue
             try:
-                if sock.recv(1, socket.MSG_PEEK | socket.MSG_DONTWAIT):
-                    return               # the client sent bytes: pipelining, not a goodbye
+                if peek():
+                    return               # the client sent bytes: pipelining (or a TLS record), not a goodbye
             except BlockingIOError:
                 continue
             except OSError:
@@ -5556,15 +5800,21 @@ class H(BaseHTTPRequestHandler):
         try: self._answer(status, headers, json.dumps(err).encode())
         except Exception: pass
 
+    def _pair_hop(self):
+        """The box that sent this request on: on the pair port, the box of the certificate that opened
+        the connection, whatever its headers say; elsewhere, the one X-Alzeo-Pair-Hop names, or None."""
+        return self._pair_box or pair_hop(self.headers)
+
     def _pair_routed(self, body, route):
         """Role 10: True when the pair answered this request (sent to a peer, or refused), False
         when it goes on to this box's own engine as it always did."""
         conf = pair_conf()
-        hop = pair_hop(self.headers)
+        hop = self._pair_hop()
         # A request an entry sent on is judged here even on a box without pair.json, the peer of a
         # one-entry pair: without that, a peer that had switched served it with its new model (found in
-        # review, 2026-11-02)
-        if (conf is None and not hop) or route not in PAIR_ROUTES or not body:
+        # review, 2026-11-02). A pair.json that names no peer is a box alone (found in review, 2026-11-02:
+        # `pair.py name` alone made a lane name this box does not serve a 404)
+        if (not (conf and conf["peers"]) and not hop) or route not in PAIR_ROUTES or not body:
             return False
         name = body_model(body)
         if name not in LANE_NAMES:
@@ -5646,8 +5896,8 @@ class H(BaseHTTPRequestHandler):
         otherwise), never answered by that other lane (found in review, 2026-11-02: a peer in the middle of
         a switch held a request for Flash, and Ornith answered it)."""
         conf = pair_conf()
-        hop = pair_hop(self.headers)
-        if (conf is None and not hop) or route not in PAIR_ROUTES or not body:
+        hop = self._pair_hop()
+        if (not (conf and conf["peers"]) and not hop) or route not in PAIR_ROUTES or not body:
             return False
         name = body_model(body)
         if name not in LANE_NAMES:
@@ -5704,13 +5954,15 @@ class H(BaseHTTPRequestHandler):
                     left.set()
                     sock = getattr(getattr(req, "upstream", None), "kept_sock", None)
                     if sock is not None:
-                        try: sock.shutdown(socket.SHUT_RDWR)
+                        # the TCP side under TLS: SSLSocket.shutdown takes TLS off the socket under the reading
+                        # thread's feet, whose read then fails with a ValueError no except here takes
+                        try: socket.socket.shutdown(sock, socket.SHUT_RDWR)
                         except OSError: pass
                         return
         threading.Thread(target=watch, daemon=True).start()
         try:
             try:
-                resp = _PAIR_OPENER.open(req)
+                resp = peer["opener"].open(req)
             except urllib.error.HTTPError as e:
                 data = e.read(1 << 20)
                 try: e.close()
@@ -5724,7 +5976,7 @@ class H(BaseHTTPRequestHandler):
             except (urllib.error.URLError, OSError, http.client.HTTPException) as e:
                 if left.is_set():
                     self._done("CLIENT GONE during pair"); return None
-                why = str(getattr(e, "reason", None) or e)[:160] or type(e).__name__
+                why = _pair_why(e)
                 log(f"{self._peer} pair: {peer['name']} does not answer ({why})")
                 self._pair_refuse(503, "engine_unavailable", f"box {peer['name']} ({peer['proxy']}), which "
                                   f"serves {name}, does not answer: {why}", pair_served_map(conf, local))
@@ -6290,7 +6542,7 @@ class H(BaseHTTPRequestHandler):
         finally:
             try: resp.close()
             except Exception: pass
-        if resp.status == 200 and models_route and not pair_hop(self.headers):
+        if resp.status == 200 and models_route and not self._pair_hop():
             data = pair_models_body(data) or data      # role 10: every box's models; a peer asking gets ours
         # 2026-10-16: whatever trailing slash the caller wrote, which the engine may serve too
         if resp.status == 200 and self.path.split("?")[0].rstrip("/") in SERVER_INFO_ROUTES:
@@ -6412,6 +6664,8 @@ if __name__ == "__main__":
             log("WARNING: no QWEN38_UPSTREAM_API_KEY: named clients meet the engine's own key check verbatim")
     pair_conf()                         # role 10: says the pair in the journal, or nothing on a box alone
     httpd = Server((BIND, port), H)
+    # role 10: the pair port, opened while this box has a pair, in a thread of its own
+    threading.Thread(target=PAIR_PORT_KEEPER.run, daemon=True, name="pair-keeper").start()
     if TLS_CERT:
         ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         ctx.minimum_version = ssl.TLSVersion.TLSv1_2
