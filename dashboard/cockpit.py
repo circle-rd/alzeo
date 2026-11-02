@@ -1361,6 +1361,38 @@ def serving_text_key(units=None):
 
 
 @guard
+def collect_pair():
+    """5 s tier, a thread of its own: the other boxes of this box's pair (docs/pair.md), each summed up by its own
+    proxy and read through this box's proxy over the pair's TLS (decision 975); no box on a box alone. Each box's
+    reading is its own: one that does not answer is said on its row, the others still read."""
+    try:
+        conf = json.loads((CONFIG_DIR / "pair.json").read_text())
+        peers = conf.get("peers") if isinstance(conf, dict) else None
+    except (OSError, ValueError):
+        peers = None
+    names = [p["name"] for p in (peers or []) if isinstance(p, dict) and isinstance(p.get("name"), str)
+             and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,39}", p["name"])]
+    boxes = {}
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))   # this machine's proxy, straight
+    for name in names[:4]:
+        req = urllib.request.Request(f"{PROXY_BASE}/proxy/pair/{name}/state",
+                                     headers={"Authorization": f"Bearer {api_key()}"})
+        try:
+            with opener.open(req, timeout=8) as r:
+                state = json.loads(r.read(1 << 20))
+            boxes[name] = {"state": state if isinstance(state, dict) else {}}
+        except urllib.error.HTTPError as e:
+            try:
+                msg = json.loads(e.read(1 << 16)).get("error", {}).get("message", "")
+            except Exception:  # noqa: BLE001 (its status says enough)
+                msg = ""
+            boxes[name] = {"error": str(msg or f"HTTP {e.code}").removeprefix("keepalive-proxy: ")[:300]}
+        except Exception as e:  # noqa: BLE001 (said on its row)
+            boxes[name] = {"error": f"{type(e).__name__}: {e}"[:300]}
+    return {"node_id": "local", "boxes": boxes}
+
+
+@guard
 def collect_engine_metrics():
     """5 s tier: the serving engine's counters over the last 5 minutes."""
     # the vLLM lanes' too: engine_metrics.py reads their names, and a key taken among the SGLang
@@ -2903,6 +2935,8 @@ TIERS = [
     # its own thread: a /metrics read can wait its whole 4 s on an engine slow to answer,
     # and the units, the feed and the agent must not wait with it
     (5.0, {"metrics": collect_engine_metrics}),
+    # the other box of a pair (decision 975), its own thread too: a box that went holds its read 8 s
+    (5.0, {"pair": collect_pair}),
     (30.0, {"engine_info": collect_engine_info, "repo": collect_repo, "kernel": collect_kernel,
             "lanes_ready": collect_lanes_ready, "lanes_startable": collect_lanes_startable,
             "opencode": collect_opencode, "reqguard": collect_guard,

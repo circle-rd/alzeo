@@ -158,7 +158,11 @@ SHA-256, or the connection ends right after its handshake, before a byte of a
 request is read. The certificate is the pair's only credential: no box holds the
 other's API key, which is also its cockpit's login (root on a box, as above), and
 the pair port takes the generation routes and `GET /v1/models` only (403 for any
-other), admitted to the engine with this box's own key. A request that gets past
+other), admitted to the engine with this box's own key, and `GET /pair/cockpit/state`:
+a summary of this box (what serves, memory, GPU, the job under way, the version),
+which the proxy reads from its own cockpit with its own key, never relayed whole.
+This box's cockpit reads the other's through `/proxy/pair/<box>/state`, a route of
+this machine only, as `/proxy/stop`. A request that gets past
 it is a hop from the box of that certificate: served there or refused, never sent
 on, and it meets every guard of :30001 but the client keys. No exemption this
 machine's own tools get on loopback reaches it, whatever its address. The port

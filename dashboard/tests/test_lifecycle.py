@@ -788,6 +788,14 @@ class FeedOutcomes(unittest.TestCase):
         "UPSTREAM CUT pair": "fail",
         "403 pair route refused": "fail",
         "502 pair answer too large": "fail",
+        # the other box's tile (decision 975): this box summed up for the other box, on the pair port, or its
+        # cockpit silent; the other box's summary relayed to this box's cockpit, or that route refused
+        "ok pair cockpit": "ok",
+        "503 pair cockpit unreachable": "fail",
+        "ok pair state": "ok",
+        "401 pair state refused": "fail",
+        "403 pair state refused": "fail",
+        "404 pair state refused": "fail",
     }
 
     @classmethod

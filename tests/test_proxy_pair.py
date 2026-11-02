@@ -218,6 +218,53 @@ class Engine(socketserver.ThreadingMixIn, http.server.HTTPServer):
     daemon_threads = True
 
 
+GIB = 1 << 30
+COCKPIT_STATE = {"machine": {"data": {"mem": {"MemTotal": 121 * GIB, "MemAvailable": 100 * GIB}, "cpu_pct": {"cpu": 12.5},
+                                      "disks": {"home": {"total": 4 << 40, "free": 2 << 40}}}},
+                 "gpu": {"data": {"temp_c": 51.0, "power_w": 40.5, "procs": []}},
+                 "units": {"data": {"units": {"qwen38-flash-local.service": {"active": "active"},
+                                              "qwen38-sglang.service": {"active": "inactive"}}}},
+                 "job": {"data": {"current": {"action": "switch", "status": "running", "elapsed": 12.0,
+                                              "argv": ["sudo", "-n", "/usr/bin/systemctl"], "lines": ["secret log"]}}},
+                 "config": {"data": {"version": "1.41.0", "repo_dir": "/home/someone/alzeo"}},
+                 "feed": {"data": {"rows": [{"peer": "10.0.0.9:5555", "path": "/v1/messages"}]}}}
+
+
+class FakeCockpit(http.server.BaseHTTPRequestHandler):
+    """A cockpit as the proxy meets it: /api/login with a box's key sets a session cookie, /api/state needs it."""
+    protocol_version = "HTTP/1.1"
+    keys = {KEY_1, KEY_2}
+    logins: list = []
+    sessions: set = set()
+
+    def log_message(self, *a):
+        pass
+
+    def reply(self, code, obj, cookie=None):
+        out = json.dumps(obj).encode()
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        if cookie:
+            self.send_header("Set-Cookie", cookie)
+        self.send_header("Content-Length", str(len(out)))
+        self.end_headers()
+        self.wfile.write(out)
+
+    def do_POST(self):
+        body = json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)) or b"{}")
+        if self.path == "/api/login" and body.get("key") in FakeCockpit.keys:
+            tok = f"tok{len(FakeCockpit.logins)}"
+            FakeCockpit.logins.append(body["key"])
+            FakeCockpit.sessions.add(tok)
+            return self.reply(200, {"ok": True}, cookie=f"cockpit={tok}; HttpOnly; SameSite=Strict; Path=/")
+        self.reply(403, {"error": "bad key"})
+
+    def do_GET(self):
+        if (self.headers.get("Cookie") or "").removeprefix("cockpit=") not in FakeCockpit.sessions:
+            return self.reply(401, {"error": "auth"})
+        self.reply(200, COCKPIT_STATE) if self.path == "/api/state" else self.reply(404, {"error": "not found"})
+
+
 def tls_peer(test, handler, me="spark2", trusts=("spark1",)):
     """A fake peer's pair port, on a held port: `handler` behind TLS both ways (the handshake in its accept,
     a test's server), `me`'s certificate shown and one of `trusts`' demanded."""
@@ -244,6 +291,10 @@ class TwoBoxesBehindOneEndpoint(unittest.TestCase):
             threading.Thread(target=e.serve_forever, daemon=True).start()
             cls.engines.append(e)
         cls.tmp = pathlib.Path(tempfile.mkdtemp(prefix="kp-pair-"))
+        cockpit = Engine(("127.0.0.1", 0), FakeCockpit)
+        threading.Thread(target=cockpit.serve_forever, daemon=True).start()
+        cls.engines.append(cockpit)
+        cls.cockpit_url = f"http://127.0.0.1:{cockpit.server_address[1]}"
         try:
             # each alone at its start (one port each), then paired as pair.py pairs them
             cls.home2 = cls.home(cls.tmp / "spark2", KEY_2, None, who="spark2")
@@ -262,6 +313,7 @@ class TwoBoxesBehindOneEndpoint(unittest.TestCase):
     def start_inproc(cls, home, engine):
         cls.saved_env = dict(os.environ)
         os.environ.update({"HOME": str(home), "PROXY_BIND": "127.0.0.1", "PAIR_TTL_S": str(PAIR_TTL), "PAIR_PORT": "0",
+                           "QWEN38_COCKPIT_URL": cls.cockpit_url,
                            "UPSTREAM": f"http://127.0.0.1:{engine.server_address[1]}",
                            "PROMPT_CEILING_TOKENS": "0", "FLASH_PROMPT_CEILING_TOKENS": "0"})
         for k in ("QWEN38_CLIENT_KEYS_FILE", "QWEN38_UPSTREAM_API_KEY", "PROXY_HOLD_UNITS", "QWEN38_PAIR_FILE",
@@ -296,7 +348,7 @@ class TwoBoxesBehindOneEndpoint(unittest.TestCase):
     @classmethod
     def start_proxy(cls, home, engine, label, **extra):
         env = {"PATH": os.environ["PATH"], "HOME": str(home), "PROXY_BIND": "127.0.0.1", "PAIR_PORT": "0",
-               "UPSTREAM": f"http://127.0.0.1:{engine.server_address[1]}",
+               "QWEN38_COCKPIT_URL": cls.cockpit_url, "UPSTREAM": f"http://127.0.0.1:{engine.server_address[1]}",
                "PROMPT_CEILING_TOKENS": "0", "FLASH_PROMPT_CEILING_TOKENS": "0", **extra}
         with open(cls.tmp / f"{label}.journal", "ab") as journal:     # the child keeps its own copy
             proc, port = localports.spawn(lambda port: subprocess.Popen(
@@ -873,6 +925,34 @@ class TwoBoxesBehindOneEndpoint(unittest.TestCase):
             st, out, _ = self.call("/v1/models", port=port, method="GET")
         self.assertIn(b"qwen3.8-flash-next-fp4", out, "the other box's list read: its certificate taken")
 
+    def test_the_tile_reads_the_other_box_through_the_pair(self):
+        # decision 975: this box's cockpit asks its own proxy; the other box's proxy sums its own cockpit up, logged
+        # in with its own key, never relayed whole
+        FakeCockpit.logins.clear()
+        for _ in range(2):
+            st, out, _ = self.call("/proxy/pair/spark2/state", method="GET")
+            self.assertEqual(st, 200, out[:300])
+        s = json.loads(out)
+        self.assertEqual(s["name"], "spark2")
+        self.assertEqual(s["models"], ["qwen3.8-flash-next-fp4"])
+        self.assertEqual((s["mem_total"], s["mem_available"], s["cpu_pct"]), (121 * GIB, 100 * GIB, 12.5))
+        self.assertEqual((s["gpu_temp_c"], s["gpu_power_w"], s["version"]), (51.0, 40.5, "1.41.0"))
+        self.assertEqual(s["job"], {"action": "switch", "status": "running", "elapsed": 12.0})
+        for kept_home in ("feed", "repo_dir", "argv", "secret log", "10.0.0.9", "disks"):
+            self.assertNotIn(kept_home, out.decode(), "its feed, paths and logs stay on the other box")
+        self.assertEqual(FakeCockpit.logins, [KEY_2], "logged in once, with that box's own key, its session kept")
+
+    def test_the_tiles_route_is_this_machines_alone(self):
+        st, out, _ = self.tls_call(self.pport1, "/proxy/pair/spark2/state", method="GET")
+        self.assertEqual(st, 403, "never from the other box: " + out[:200].decode(errors="replace"))
+        st, out, _ = self.call("/proxy/pair/spark2/state", method="GET", key="not-this-box")
+        self.assertEqual(st, 401, out[:300])
+        st, out, _ = self.call("/proxy/pair/spark9/state", method="GET")
+        self.assertEqual(st, 404, out[:300])
+        self.assertIn("names no box of this box's pair", json.loads(out)["error"]["message"])
+        st, out, _ = self.tls_call(self.pport1, "/pair/cockpit/state", method="GET")
+        self.assertEqual(st, 200, "the summary itself is the other box's to read")
+
     def test_a_peer_whose_engine_restarts_gets_a_503_to_try_again_not_a_404(self):
         self.E2.mode = "down"
         try:
@@ -1206,6 +1286,12 @@ class TwoBoxesBehindOneEndpointInProcess(TwoBoxesBehindOneEndpoint):
     def test_a_certificate_whose_dates_this_clock_does_not_hold_still_pairs(self):
         super().test_a_certificate_whose_dates_this_clock_does_not_hold_still_pairs()
 
+    def test_the_tile_reads_the_other_box_through_the_pair(self):
+        super().test_the_tile_reads_the_other_box_through_the_pair()
+
+    def test_the_tiles_route_is_this_machines_alone(self):
+        super().test_the_tiles_route_is_this_machines_alone()
+
     def test_a_peer_whose_engine_restarts_gets_a_503_to_try_again_not_a_404(self):
         super().test_a_peer_whose_engine_restarts_gets_a_503_to_try_again_not_a_404()
 
@@ -1527,6 +1613,56 @@ class ThePairsPieces(unittest.TestCase):
         self.mod._SAID["test-kind"] = (t - 61, quiet)
         say("test-kind", "fourth")
         self.assertEqual(lines, ["first", "fourth (2 more such since the last line)"])
+
+    def test_the_summary_of_this_box_logs_in_once_and_again_after_a_restart(self):
+        srv = Engine(("127.0.0.1", 0), FakeCockpit)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        self.addCleanup(srv.server_close)
+        self.addCleanup(srv.shutdown)
+        saved = (self.mod.UPSTREAM_API_KEY, self.mod.served_models, self.mod.HOLD_UNITS)
+        url = os.environ.get("QWEN38_COCKPIT_URL")
+        def back():
+            self.mod.UPSTREAM_API_KEY, self.mod.served_models, self.mod.HOLD_UNITS = saved
+            os.environ.pop("QWEN38_COCKPIT_URL", None)
+            if url is not None:
+                os.environ["QWEN38_COCKPIT_URL"] = url
+            self.mod._COCKPIT["cookie"] = None
+        self.addCleanup(back)
+        self.mod.UPSTREAM_API_KEY = KEY_1                # never this machine's real key file
+        self.mod.served_models = lambda: ("qwen3.8-27b",)  # never this machine's engine
+        self.mod.HOLD_UNITS = ("qwen38-flash-local.service", "qwen38-sglang.service")
+        self.mod._COCKPIT["cookie"] = None
+        os.environ["QWEN38_COCKPIT_URL"] = f"http://127.0.0.1:{srv.server_address[1]}"
+        FakeCockpit.logins.clear()
+        first = self.mod.cockpit_summary()
+        self.assertEqual((first["models"], first["lanes"]), (["qwen3.8-27b"], {"qwen38-flash-local.service": "active"}))
+        self.mod.cockpit_summary()
+        self.assertEqual(FakeCockpit.logins, [KEY_1], "one login, its session kept")
+        FakeCockpit.sessions.clear()                     # the cockpit restarted: its sessions went with it
+        self.mod.cockpit_summary()
+        self.assertEqual(FakeCockpit.logins, [KEY_1, KEY_1], "logged in again, once")
+        os.environ["QWEN38_COCKPIT_URL"] = f"http://127.0.0.1:{localports.held(self)}"
+        self.mod._COCKPIT["cookie"] = None
+        with self.assertRaises(OSError):
+            self.mod.cockpit_summary()
+        self.assertEqual(len(FakeCockpit.logins), 2)
+
+    def test_the_cockpit_is_found_where_its_unit_binds_it(self):
+        unit = self.tmp / "dashboard.service"
+        saved, url = self.mod.COCKPIT_UNIT_FILE, os.environ.pop("QWEN38_COCKPIT_URL", None)
+        def back():
+            self.mod.COCKPIT_UNIT_FILE = saved
+            if url is not None:
+                os.environ["QWEN38_COCKPIT_URL"] = url
+        self.addCleanup(back)
+        self.mod.COCKPIT_UNIT_FILE = str(unit)
+        for text, base in (("", "http://127.0.0.1:30090"),
+                           ("Environment=COCKPIT_BIND=0.0.0.0\nEnvironment=COCKPIT_PORT=30091\n", "http://127.0.0.1:30091"),
+                           ("Environment=COCKPIT_BIND=100.114.54.60\n", "http://100.114.54.60:30090"),
+                           ('Environment="COCKPIT_BIND=fd7a::1"\n', "http://[fd7a::1]:30090")):
+            with self.subTest(unit=text):
+                unit.write_text(text)
+                self.assertEqual(self.mod._cockpit_base(), base)
 
     def test_a_connection_refused_in_setup_reads_nothing_and_a_box_taken_out_is_refused(self):
         class Fake:

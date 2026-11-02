@@ -3161,6 +3161,12 @@ _NO_CHECK_TIME = 0x200000
 # what of a peer's /v1/models this box keeps and says: printable, no space, no control character that
 # could forge a journal line or a terminal's escape (found in review, 2026-11-03)
 _PAIR_SAFE_ID = re.compile(r"[\x21-\x7e]{1,200}")
+# The other box's tile in this box's cockpit (decision 975): the other box's cockpit summed up by its own
+# proxy (PAIR_COCKPIT_STATE, on its pair port), asked by this box's cockpit through this proxy
+# (PAIR_PEER_STATE, from this machine only, with the key the engine checks, as /proxy/stop).
+PAIR_COCKPIT_STATE = "/pair/cockpit/state"
+PAIR_PEER_STATE = re.compile(r"/proxy/pair/([A-Za-z0-9][A-Za-z0-9._-]{0,39})/state")
+COCKPIT_UNIT_FILE = "/etc/systemd/system/qwen38-dashboard.service"
 PAIR_ROUTES = frozenset({"/v1/chat/completions", "/v1/completions", "/v1/messages",
                          "/v1/messages/count_tokens", "/v1/responses"})
 PAIR_HOP = "X-Alzeo-Pair-Hop"
@@ -3390,6 +3396,102 @@ def _pair_why(e):
         return "no answer in time"
     # what the other box wrote (a status line, a reason) may hold a CR or an escape: never a forged journal line
     return re.sub(r"[\x00-\x1f\x7f]", "?", s)[:160] or type(r).__name__
+
+
+def _cockpit_base():
+    """Where this box's cockpit answers: its unit's COCKPIT_BIND and COCKPIT_PORT, 127.0.0.1 for a bind on every
+    interface (QWEN38_COCKPIT_URL names it outright, the tests)."""
+    url = os.environ.get("QWEN38_COCKPIT_URL")
+    if url:
+        return url.rstrip("/")
+    bind, port = "127.0.0.1", "30090"
+    try:
+        with open(COCKPIT_UNIT_FILE, encoding="utf-8") as f:
+            for line in f:
+                m = re.match(r'\s*Environment="?COCKPIT_(BIND|PORT)=([^"\s]+)', line)
+                if m and m.group(1) == "BIND":
+                    bind = m.group(2)
+                elif m:
+                    port = m.group(2)
+    except OSError:
+        pass
+    if bind in ("0.0.0.0", "::", "*", ""):
+        bind = "127.0.0.1"
+    return f"http://{'[' + bind + ']' if ':' in bind else bind}:{port}"
+
+
+_COCKPIT = {"cookie": None}
+_COCKPIT_LOCK = threading.Lock()
+
+
+def _cockpit_opener():
+    # straight to this box's cockpit, never through a proxy of the environment, a redirect never followed
+    return urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoUpstreamRedirect)
+
+
+def _cockpit_get(path):
+    """GET a route of this box's cockpit with the session this proxy holds, logged in once with this box's own key
+    (the cockpit's login) and again when the cockpit no longer knows it. A failed login is said, never tried in a
+    loop: the cockpit counts five failures a minute by address, and this machine's is everyone's here."""
+    base = _cockpit_base()
+    for attempt in (0, 1):
+        with _COCKPIT_LOCK:
+            cookie = _COCKPIT["cookie"]
+        if cookie is None:
+            key = _door_key()
+            if not key:
+                raise OSError("this box cannot read its own key")
+            req = urllib.request.Request(base + "/api/login", data=json.dumps({"key": key}).encode(),
+                                         headers={"Content-Type": "application/json"}, method="POST")
+            with _cockpit_opener().open(req, timeout=5) as r:
+                tok = next((c.split(";", 1)[0] for c in (r.headers.get_all("Set-Cookie") or [])
+                            if c.startswith("cockpit=")), None)
+            if not tok:
+                raise OSError("the cockpit gave no session")
+            with _COCKPIT_LOCK:
+                _COCKPIT["cookie"] = cookie = tok
+        try:
+            with _cockpit_opener().open(urllib.request.Request(base + path, headers={"Cookie": cookie}), timeout=5) as r:
+                return json.loads(r.read(16 << 20).decode())
+        except urllib.error.HTTPError as e:
+            if e.code == 401 and attempt == 0:          # a cockpit restarted: its sessions went with it
+                with _COCKPIT_LOCK:
+                    _COCKPIT["cookie"] = None
+                continue
+            raise
+
+
+def cockpit_summary():
+    """This box as the other box's tile shows it: what serves, the memory, the GPU, the job under way, the
+    version; read from this box's cockpit, never relayed whole (its feed, its paths, its settings stay here)."""
+    st = _cockpit_get("/api/state")
+    def d(name):
+        v = st.get(name) if isinstance(st, dict) else None
+        v = v.get("data") if isinstance(v, dict) else None
+        return v if isinstance(v, dict) else {}
+    machine, gpu, units, job, config = d("machine"), d("gpu"), d("units"), d("job"), d("config")
+    mem = machine.get("mem") if isinstance(machine.get("mem"), dict) else {}
+    cur = job.get("current") if isinstance(job.get("current"), dict) else None
+    try:
+        models = list(served_models())
+    except EngineUnreachable:
+        models = []
+    lanes = {}
+    for u, row in (units.get("units") or {}).items() if isinstance(units.get("units"), dict) else ():
+        if u in HOLD_UNITS and isinstance(row, dict) and row.get("active") in ("active", "activating", "deactivating"):
+            lanes[u] = row.get("active")
+    num = lambda v: v if isinstance(v, (int, float)) and not isinstance(v, bool) else None
+    word = lambda v: v[:200] if isinstance(v, str) else None
+    cpu = machine.get("cpu_pct")
+    cpu = cpu.get("cpu") if isinstance(cpu, dict) else cpu          # the cockpit's CPU reading is {"cpu": %}
+    return {"name": (pair_conf() or {}).get("name"), "version": word(config.get("version")),
+            "models": [m for m in models if isinstance(m, str) and _PAIR_SAFE_ID.fullmatch(m)], "lanes": lanes,
+            "mem_total": num(mem.get("MemTotal")), "mem_available": num(mem.get("MemAvailable")),
+            "cpu_pct": num(cpu), "gpu_temp_c": num(gpu.get("temp_c")),
+            "gpu_power_w": num(gpu.get("power_w")),
+            "job": ({"action": word(cur.get("action")), "status": word(cur.get("status")),
+                     "elapsed": num(cur.get("elapsed"))} if cur else None),
+            "ts": time.time()}
 
 
 def pair_models_body(data):
@@ -5853,14 +5955,74 @@ class H(BaseHTTPRequestHandler):
         if self._pair_box is None:
             return False
         route = self.path.split("?")[0]
-        if (self.command == "POST" and route in PAIR_ROUTES) or (self.command == "GET" and route.rstrip("/") == "/v1/models"):
+        if (self.command == "POST" and route in PAIR_ROUTES) or (self.command == "GET" and route.rstrip("/") in
+                                                                ("/v1/models", PAIR_COCKPIT_STATE)):
             return False
         log(f"{self._peer} REFUSED {self.command} {route} from {self._pair_box}: the pair port takes the pair's routes only")
         self._plain(403, {"Content-Type": "application/json"},
                     json.dumps({"error": {"type": "forbidden", "message": "keepalive-proxy: the pair port takes "
-                                          "the generation routes and GET /v1/models only"}}).encode())
+                                          "the generation routes and GET /v1/models only (and the summary of "
+                                          "this box's cockpit)"}}).encode())
         self._done("403 pair route refused")
         return True
+
+    def _pair_cockpit_state(self):
+        """GET PAIR_COCKPIT_STATE on the pair port: this box summed up for the other box's tile (decision 975)."""
+        try:
+            summary = cockpit_summary()
+        except Exception as e:
+            why = re.sub(r"[\x00-\x1f\x7f]", "?", str(getattr(e, "reason", None) or e))[:160] or type(e).__name__
+            log(f"{self._peer} pair: this box's cockpit does not answer for the other box's tile ({why})")
+            self._plain(503, {"Content-Type": "application/json", "Retry-After": "30"},
+                        json.dumps({"error": {"type": "engine_unavailable", "message":
+                                              f"keepalive-proxy: the cockpit of this box does not answer ({why})"}}).encode())
+            self._done("503 pair cockpit unreachable")
+            return
+        self._plain(200, {"Content-Type": "application/json"}, json.dumps(summary).encode())
+        self._done("ok pair cockpit")
+
+    def _pair_peer_state(self, name):
+        """GET /proxy/pair/<box>/state: the other box summed up by its own proxy, for this box's cockpit's tile
+        (decision 975). This machine's route: from loopback, never from the pair port, with the key the engine
+        checks, as POST /proxy/stop; read over the pair's TLS, its answer bounded and relayed as it came."""
+        refuse = None
+        if getattr(self.server, "from_network", False) or str(self.client_address[0]) not in STOP_PEERS:
+            refuse = (403, "is reached from this machine only")
+        else:
+            key = _door_key()
+            if not key or not engine_admits(self.headers.get("Authorization"), key):
+                refuse = (401, "needs the key the engine checks")
+        peer = next((p for p in ((pair_conf() or {}).get("peers") or []) if p["name"] == name), None)
+        if refuse is None and peer is None:
+            refuse = (404, "names no box of this box's pair")
+        if refuse is not None:
+            log(f"{self._peer} REFUSED /proxy/pair/{name}/state: it {refuse[1]}")
+            self._plain(refuse[0], {"Content-Type": "application/json"},
+                        json.dumps({"error": {"type": "invalid_request", "message":
+                                              f"keepalive-proxy: /proxy/pair/{name}/state {refuse[1]}"}}).encode())
+            # each outcome a literal, as the stop route's: the cockpit's vocabulary is read out of this file
+            self._done("403 pair state refused" if refuse[0] == 403 else "401 pair state refused" if refuse[0] == 401
+                       else "404 pair state refused")
+            return
+        why = None
+        try:
+            with peer["list_opener"].open(urllib.request.Request(peer["proxy"] + PAIR_COCKPIT_STATE), timeout=5) as r:
+                data = r.read((1 << 20) + 1)
+            if len(data) > 1 << 20 or not isinstance(json.loads(data), dict):
+                why = "its summary is no JSON object of 1 MiB at most"
+        except urllib.error.HTTPError as e:
+            why = f"HTTP {e.code}"
+        except Exception as e:
+            why = _pair_why(e)
+        if why is not None:
+            log(f"{self._peer} pair: {name} does not say its state ({why})")
+            self._plain(503, {"Content-Type": "application/json", "Retry-After": "30"},
+                        json.dumps({"error": {"type": "engine_unavailable", "message":
+                                              f"keepalive-proxy: box {name} does not answer: {why}"}}).encode())
+            self._done("503 pair peer unreachable")
+            return
+        self._plain(200, {"Content-Type": "application/json"}, data)
+        self._done("ok pair state")
 
     def _pair_hop(self):
         """The box that sent this request on, or None: on the pair port, the box of the certificate that
@@ -6605,6 +6767,11 @@ class H(BaseHTTPRequestHandler):
             return
         if self.path.split("?")[0] == STOP_PATH:
             self._stop_route(False); return     # v6.47: the proxy's own route, never the engine's
+        tile = PAIR_PEER_STATE.fullmatch(self.path.split("?")[0])
+        if tile:
+            self._pair_peer_state(tile.group(1)); return    # this machine's cockpit's: its own checks, as /proxy/stop
+        if self._pair_box is not None and self.path.split("?")[0].rstrip("/") == PAIR_COCKPIT_STATE:
+            self._pair_cockpit_state(); return
         if self._pair_box is None and (self._wall_refused() or self._door_refused()):
             return
         resp, herr, cerr = self._open(None)

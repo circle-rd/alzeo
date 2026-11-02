@@ -53,6 +53,14 @@ one its SSH server sees, give that one: `--back 192.168.100.1`.
 - A box never answers a request for one model with another. When the other box switched lanes since its
   list was read, it refuses the request and the entry reads every list again before it answers.
 
+## The other box in the cockpit
+
+The Now view of each box's cockpit shows the other box of its pair: the models it serves, its memory in
+use, its GPU's temperature and power, the job under way there, its version, or why it does not answer.
+The other box's proxy reads its own cockpit with its own key and sends only that summary, over the pair's
+TLS: its request log, its paths and its settings stay on it. To switch the other box's lane, use its own
+cockpit for now.
+
 ## Security
 
 - The two boxes talk over TLS 1.3 both ways, on port 30002. Each box has a certificate of its own, made
@@ -80,7 +88,7 @@ one its SSH server sees, give that one: `--back 192.168.100.1`.
   four of its keepalives (60 s at least) is cut, as a box that went sends nothing more.
 - When both boxes serve the same model, its requests stay on the box they were sent to for now.
 - `GET /v1/models/<id>` answers for the box's own models only.
-- To switch the other box's lane, use its own cockpit for now.
+- To switch the other box's lane, use its own cockpit for now: the tile only shows it.
 
 ## When `pair.py add` says no
 

@@ -17,12 +17,14 @@ a night because docker logs writes to stderr). Two things are asserted here:
 Nothing here touches the box: cockpit.run is replaced by a table, every path
 points at a temp directory, and no collector is allowed to reach the network.
 """
+import http.server
 import importlib.util
 import json
 import os
 import shutil
 import sys
 import tempfile
+import threading
 import time
 import unittest
 from pathlib import Path
@@ -467,6 +469,65 @@ class Parse(Base):
         # and every captured output in the table reached a collector: one no collector
         # asks for is a fixture that tests nothing (found in review, 2026-09-24)
         self.assertEqual([k for k, n in self.cp.run.hits.items() if not n], [])
+
+
+class TheOtherBoxOfAPair(Base):
+    """collect_pair (decision 975): each box of pair.json read through this box's own proxy, this box's key sent
+    there and nowhere else, a box that does not answer said on its row while the others still read, a name that is
+    no box's never put in a URL; nothing read on a box alone."""
+
+    def setUp(self):
+        class Proxy(http.server.BaseHTTPRequestHandler):
+            seen: list = []
+
+            def log_message(self, *a):
+                pass
+
+            def do_GET(self):
+                Proxy.seen.append((self.path, self.headers.get("Authorization")))
+                if self.path == "/proxy/pair/spark2/state":
+                    code, obj = 200, {"name": "spark2", "models": ["qwen3.8-flash-next-fp4"], "mem_total": 1 << 37}
+                elif self.path == "/proxy/pair/spark3/state":
+                    code, obj = 503, {"error": {"type": "engine_unavailable",
+                                                "message": "keepalive-proxy: box spark3 does not answer: no answer in time"}}
+                else:
+                    code, obj = 404, {"error": {"message": "keepalive-proxy: names no box of this box's pair"}}
+                out = json.dumps(obj).encode()
+                self.send_response(code)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(out)))
+                self.end_headers()
+                self.wfile.write(out)
+        self.Proxy = Proxy
+        srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Proxy)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        self.addCleanup(srv.server_close)
+        self.addCleanup(srv.shutdown)
+        saved = self.cp.PROXY_BASE
+        self.cp.PROXY_BASE = f"http://127.0.0.1:{srv.server_address[1]}"
+        self.addCleanup(setattr, self.cp, "PROXY_BASE", saved)
+        self.pair = self.tmp / "pair.json"
+        self.addCleanup(lambda: self.pair.unlink(missing_ok=True))
+
+    def test_each_box_of_the_pair_is_read_through_this_boxs_proxy(self):
+        self.pair.write_text(json.dumps({"name": "spark1", "peers": [
+            {"name": "spark2"}, {"name": "spark3"}, {"name": "../../etc"}, {"name": 7}, "x"]}))
+        out = self.cp.collect_pair()
+        boxes = out["boxes"]
+        self.assertEqual(sorted(boxes), ["spark2", "spark3"], "a name that is no box's is never put in a URL")
+        self.assertEqual(boxes["spark2"]["state"]["models"], ["qwen3.8-flash-next-fp4"])
+        self.assertEqual(boxes["spark3"]["error"], "box spark3 does not answer: no answer in time")
+        self.assertEqual({auth for _, auth in self.Proxy.seen}, {"Bearer k"}, "this box's key, to its own proxy only")
+
+    def test_a_box_alone_reads_nothing(self):
+        self.assertEqual(self.cp.collect_pair(), {"node_id": "local", "boxes": {}})
+        self.pair.write_text("{not json")
+        self.assertEqual(self.cp.collect_pair(), {"node_id": "local", "boxes": {}})
+        self.assertEqual(self.Proxy.seen, [])
+
+    def test_it_has_a_tier_of_its_own(self):
+        tiers = [cols for _, cols in self.cp.TIERS if "pair" in cols]
+        self.assertEqual(tiers, [{"pair": self.cp.collect_pair}], "a box that went holds its read: alone in its thread")
 
 
 class Survive(Base):

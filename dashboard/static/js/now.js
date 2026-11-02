@@ -349,12 +349,40 @@ function renderVitals(){
 }
 on('kernel', d => { F.kernel = d; });
 
+// ── the other box of a pair (docs/pair.md, decision 975): what its own proxy says of it, read through the
+// pair's TLS by this box's proxy. Its words are set as text, never as markup: they come from another box.
+on('pair', d => { F.pair = d; });
+function renderPair(){
+  const sec = $('now-pair'); if (!sec) return;
+  const boxes = (F.pair || {}).boxes || {}, names = Object.keys(boxes);
+  sec.hidden = !names.length;
+  if (!names.length) return;
+  setText('pair-title', names.length === 1 ? `The other box: ${names[0]}` : 'The other boxes');
+  const rows = [];
+  for (const n of names){
+    const b = boxes[n] || {}, s = b.state || {};
+    if (b.error){ rows.push([n, `does not answer: ${b.error}`]); continue; }
+    const models = (Array.isArray(s.models) ? s.models : []).join(', ');
+    rows.push([n, models ? `serves ${models}` : 'serves nothing now']);
+    if (s.mem_total) rows.push(['memory', `${fmtGiB(s.mem_total - (s.mem_available || 0))} of ${fmtGiB(s.mem_total, 0)} in use`]);
+    if (s.gpu_temp_c != null || s.gpu_power_w != null)
+      rows.push(['GPU', [s.gpu_temp_c != null ? `${Number(s.gpu_temp_c).toFixed(0)} °C` : '', s.gpu_power_w != null ? `${Number(s.gpu_power_w).toFixed(0)} W` : ''].filter(Boolean).join(', ')]);
+    if (s.job && s.job.action) rows.push(['job', `${s.job.action}${s.job.status ? ', ' + s.job.status : ''}${s.job.elapsed != null ? ', ' + fmtDur(s.job.elapsed) : ''}`]);
+    if (s.version) rows.push(['Alzeo', 'v' + s.version]);
+  }
+  $('pair-facts').replaceChildren(...rows.flatMap(([k, v]) => {
+    const dt = document.createElement('dt'), dd = document.createElement('dd');
+    dt.textContent = k; dd.textContent = v;
+    return [dt, dd];
+  }));
+}
+
 // the facts the spine and the video/image studios share, filled by their own views
 const VID_NOW = {label: '', run: null, port: 30022};
 const IMG_NOW = {label: ''};
 
 afterApply(() => {
-  renderServing(); renderPool(); renderRack(); renderActivity(); renderVitals();
+  renderServing(); renderPool(); renderRack(); renderActivity(); renderVitals(); renderPair();
   renderEvents($('now-timeline'), 8);
   const bad = Object.values(engines()).find(e => ['wedged', 'failed', 'degraded', 'orphan'].includes(e.state));
   const trans = Object.values(engines()).find(e => TRANSITIONAL.has(e.state) || e.state === 'stopping');
