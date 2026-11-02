@@ -198,9 +198,12 @@ class OnlyAClientThatLeftBeforeAnyAnswerCounts(unittest.TestCase):
     def test_every_way_a_client_goes_is_counted_or_not_on_purpose(self):
         import re
         written = set(re.findall(r'"(CLIENT GONE [^"{]*)"', (REPO / "keepalive-proxy.py").read_text()))
+        # v6.50: "CLIENT GONE during pair" is a client that left a request this box sent to its peer
+        # (role 10). Not counted here: the request went on before its prompt was fingerprinted, and the
+        # peer's own proxy, which computed the prompt, counts its caller leaving it
         self.assertEqual(written, {"CLIENT GONE before its body", "CLIENT GONE during hold", "CLIENT GONE during keepalive",
                                    "CLIENT GONE before the engine answered", "CLIENT GONE during non-sse wait",
-                                   "CLIENT GONE mid-systemone", "CLIENT GONE on write"},
+                                   "CLIENT GONE mid-systemone", "CLIENT GONE on write", "CLIENT GONE during pair"},
                          "a new way: say here whether it is a client that left before any answer")
         counted = {o for o in written if self.gave_up(o)}
         self.assertEqual(counted, {"CLIENT GONE during keepalive", "CLIENT GONE before the engine answered",
