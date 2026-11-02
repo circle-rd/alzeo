@@ -654,8 +654,95 @@ class TwoBoxesBehindOneEndpoint(unittest.TestCase):
         self.assertEqual(Ornith.seen, [], "Ornith is never asked a request for Flash")
 
 
+# The same cases with the entry in this process: what CI's coverage floor measures. Each is declared again
+# rather than only inherited, as in test_proxy_hold.py: CI counts the tests a file declares against the tests
+# that ran, and an inherited case runs without being declared.
 class TwoBoxesBehindOneEndpointInProcess(TwoBoxesBehindOneEndpoint):
     INPROC = True
+
+    def test_a_lane_this_box_serves_stays_here(self):
+        super().test_a_lane_this_box_serves_stays_here()
+
+    def test_a_lane_the_peer_serves_goes_there_with_the_peers_key(self):
+        super().test_a_lane_the_peer_serves_goes_there_with_the_peers_key()
+
+    def test_a_stream_from_the_peer_arrives_whole_and_in_order(self):
+        super().test_a_stream_from_the_peer_arrives_whole_and_in_order()
+
+    def test_the_anthropic_dialect_goes_to_the_peer_too(self):
+        super().test_the_anthropic_dialect_goes_to_the_peer_too()
+
+    def test_any_other_name_stays_on_this_box_as_on_a_box_alone(self):
+        super().test_any_other_name_stays_on_this_box_as_on_a_box_alone()
+
+    def test_a_lane_no_box_serves_is_refused_with_what_each_box_serves(self):
+        super().test_a_lane_no_box_serves_is_refused_with_what_each_box_serves()
+
+    def test_the_anthropic_refusal_is_in_its_own_shape(self):
+        super().test_the_anthropic_refusal_is_in_its_own_shape()
+
+    def test_a_peer_that_switched_since_its_list_was_read_never_serves_the_wrong_model(self):
+        super().test_a_peer_that_switched_since_its_list_was_read_never_serves_the_wrong_model()
+
+    def test_a_request_a_peer_sent_on_is_served_or_refused_never_sent_on(self):
+        super().test_a_request_a_peer_sent_on_is_served_or_refused_never_sent_on()
+
+    def test_a_peer_that_does_not_answer_is_said_at_once(self):
+        super().test_a_peer_that_does_not_answer_is_said_at_once()
+
+    def test_the_models_list_names_both_boxes(self):
+        super().test_the_models_list_names_both_boxes()
+
+    def test_the_models_list_never_waits_for_a_peer(self):
+        super().test_the_models_list_never_waits_for_a_peer()
+
+    def test_the_peers_key_reaches_no_journal(self):
+        super().test_the_peers_key_reaches_no_journal()
+
+    def test_a_box_without_pair_json_is_what_it_was(self):
+        super().test_a_box_without_pair_json_is_what_it_was()
+
+    def test_a_pair_json_that_does_not_parse_leaves_the_box_alone(self):
+        super().test_a_pair_json_that_does_not_parse_leaves_the_box_alone()
+
+    def test_a_peer_whose_engine_restarts_gets_a_503_to_try_again_not_a_404(self):
+        super().test_a_peer_whose_engine_restarts_gets_a_503_to_try_again_not_a_404()
+
+    def test_a_stream_the_peer_cuts_reaches_the_client_cut_never_ended(self):
+        super().test_a_stream_the_peer_cuts_reaches_the_client_cut_never_ended()
+
+    def test_a_peer_without_pair_json_refuses_a_request_sent_on_for_another_model(self):
+        super().test_a_peer_without_pair_json_refuses_a_request_sent_on_for_another_model()
+
+    def test_a_request_sent_on_to_a_box_whose_engine_restarts_is_told_to_try_again_not_held(self):
+        super().test_a_request_sent_on_to_a_box_whose_engine_restarts_is_told_to_try_again_not_held()
+
+    def test_a_peer_that_takes_the_connection_and_never_answers_holds_nobody(self):
+        super().test_a_peer_that_takes_the_connection_and_never_answers_holds_nobody()
+
+    def test_two_boxes_that_name_each_other_ask_each_other_once(self):
+        super().test_two_boxes_that_name_each_other_ask_each_other_once()
+
+    def test_a_box_that_cannot_read_its_own_key_sends_nothing_on(self):
+        super().test_a_box_that_cannot_read_its_own_key_sends_nothing_on()
+
+    def test_a_pair_json_with_a_bad_port_or_name_leaves_the_box_alone(self):
+        super().test_a_pair_json_with_a_bad_port_or_name_leaves_the_box_alone()
+
+    def test_an_entry_whose_engine_does_not_answer_says_so_on_v1_models(self):
+        super().test_an_entry_whose_engine_does_not_answer_says_so_on_v1_models()
+
+    def test_no_http_proxy_of_the_environment_gets_the_peers_key(self):
+        super().test_no_http_proxy_of_the_environment_gets_the_peers_key()
+
+    def test_a_peer_that_answers_409_has_every_list_read_again(self):
+        super().test_a_peer_that_answers_409_has_every_list_read_again()
+
+    def test_a_silent_peer_stream_reaches_the_client_cut(self):
+        super().test_a_silent_peer_stream_reaches_the_client_cut()
+
+    def test_a_request_held_through_a_restart_is_never_answered_by_another_lane(self):
+        super().test_a_request_held_through_a_restart_is_never_answered_by_another_lane()
 
 
 class ThePairsPieces(unittest.TestCase):
