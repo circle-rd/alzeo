@@ -16,6 +16,7 @@ import os
 import pathlib
 import re
 import shutil
+import socket
 import socketserver
 import subprocess
 import sys
@@ -29,6 +30,7 @@ import localports  # noqa: E402
 
 REPO = pathlib.Path(__file__).resolve().parents[1]
 KEY_1, KEY_2 = "k-entry-111", "k-peer-222"
+PAIR_TTL = 2                        # PAIR_TTL_S of the entry: its lists of the peer are read again after it
 
 
 def fake_engine(name, model):
@@ -39,6 +41,7 @@ def fake_engine(name, model):
         served = [model]
         seen: list = []
         delay = 0.0
+        mode = "ok"                 # "down": /v1/models answers 503 (a boot) ; "cut": a stream dies mid-way
 
         def log_message(self, *a):
             pass
@@ -52,6 +55,8 @@ def fake_engine(name, model):
             self.wfile.write(out)
 
         def do_GET(self):
+            if self.path.startswith("/v1/models") and Handler.mode == "down":
+                return self.reply({"error": "loading"}, 503)
             if self.path.startswith("/v1/models"):
                 return self.reply({"object": "list", "data": [{"id": m, "object": "model", "owned_by": "sglang",
                                                                "max_model_len": 262144} for m in Handler.served]})
@@ -81,6 +86,10 @@ def fake_engine(name, model):
                 part = f"data: {ev}\n\n".encode()
                 self.wfile.write(b"%x\r\n%s\r\n" % (len(part), part)); self.wfile.flush()
                 time.sleep(0.05)
+                if Handler.mode == "cut" and i == 1:
+                    self.connection.shutdown(socket.SHUT_RDWR)      # the engine dies mid-stream
+                    self.close_connection = True
+                    return
             part = b"data: [DONE]\n\n"
             self.wfile.write(b"%x\r\n%s\r\n0\r\n\r\n" % (len(part), part)); self.wfile.flush()
 
@@ -108,7 +117,7 @@ class TwoBoxesBehindOneEndpoint(unittest.TestCase):
             {"name": "spark2", "proxy": f"http://127.0.0.1:{cls.port2}", "key_file": "pair/spark2.key"}]})
         (cls.home1 / ".config/qwen38/pair").mkdir()
         (cls.home1 / ".config/qwen38/pair/spark2.key").write_text(KEY_2 + "\n")
-        cls.port1 = cls.start_proxy(cls.home1, cls.engines[0], "spark1")
+        cls.port1 = cls.start_proxy(cls.home1, cls.engines[0], "spark1", PAIR_TTL_S=str(PAIR_TTL))
 
     @staticmethod
     def home(path, key, pair):
@@ -145,6 +154,7 @@ class TwoBoxesBehindOneEndpoint(unittest.TestCase):
         self.E1.seen.clear(); self.E2.seen.clear()
         self.E1.served[:] = ["qwen3.8-27b"]; self.E2.served[:] = ["qwen3.8-flash-next-fp4"]
         self.E1.delay = self.E2.delay = 0.0
+        self.E1.mode = self.E2.mode = "ok"
 
     def call(self, path, body=None, port=None, key=KEY_1, headers=None, method="POST"):
         c = http.client.HTTPConnection("127.0.0.1", port or self.port1, timeout=60)
@@ -256,8 +266,10 @@ class TwoBoxesBehindOneEndpoint(unittest.TestCase):
             t0 = time.monotonic()
             st, out, _ = self.call("/v1/chat/completions", self.chat("qwen3.8-flash-next-fp4"))
             self.assertLess(time.monotonic() - t0, 15)
-            self.assertEqual(st, 404, out[:300])        # its list cannot be read: no box serves the name
-            self.assertIn("does not answer", json.loads(out)["error"]["served"]["spark2"])
+            self.assertEqual(st, 503, out[:300])        # the box that may serve it does not answer: try again
+            err = json.loads(out)["error"]
+            self.assertEqual(err["type"], "engine_unavailable")
+            self.assertIn("does not answer", err["served"]["spark2"])
         finally:
             pair["peers"][0]["proxy"] = f"http://127.0.0.1:{self.port2}"
             (self.home1 / ".config/qwen38/pair.json").write_text(json.dumps(pair))
@@ -291,6 +303,130 @@ class TwoBoxesBehindOneEndpoint(unittest.TestCase):
         st, out, _ = self.call("/v1/chat/completions", self.chat("kolibri-1"), port=port)
         self.assertEqual(st, 200, out[:300])
         self.assertRegex(self.journal("broken"), r"pair: .*pair\.json is not used: peer 0 needs")
+
+
+    # ---- what the review of 2026-11-02 found ----------------------------------------------------
+    def test_a_peer_whose_engine_restarts_gets_a_503_to_try_again_not_a_404(self):
+        self.E2.mode = "down"
+        try:
+            time.sleep(PAIR_TTL + 0.5)                   # the entry's list of the peer is read again
+            st, out, _ = self.call("/v1/chat/completions", self.chat("qwen3.8-flash-next-fp4"))
+            self.assertEqual(st, 503, out[:300])
+            self.assertEqual(json.loads(out)["error"]["type"], "engine_unavailable")
+            self.assertEqual(self.E2.seen, [])
+        finally:
+            self.E2.mode = "ok"
+            time.sleep(PAIR_TTL + 0.5)
+
+    def test_a_stream_the_peer_cuts_reaches_the_client_cut_never_ended(self):
+        self.E2.mode = "cut"
+        c = http.client.HTTPConnection("127.0.0.1", self.port1, timeout=60)
+        try:
+            c.request("POST", "/v1/chat/completions", json.dumps(self.chat("qwen3.8-flash-next-fp4", stream=True)).encode(),
+                      {"Content-Type": "application/json", "Authorization": f"Bearer {KEY_1}"})
+            r = c.getresponse()
+            self.assertEqual(r.status, 200)
+            with self.assertRaises(http.client.IncompleteRead):   # no closing chunk: the client sees a cut
+                r.read()
+        finally:
+            c.close()
+        self.assertIn("UPSTREAM CUT pair", self.journal("spark1"))
+
+    def test_a_peer_without_pair_json_refuses_a_request_sent_on_for_another_model(self):
+        bare = self.home(self.tmp / "bare-peer", KEY_2, None)            # the peer of a one-entry pair
+        port = self.start_proxy(bare, self.engines[0], "bare-peer")     # its engine serves the 27B
+        st, out, _ = self.call("/v1/chat/completions", self.chat("qwen3.8-flash-next-fp4"), port=port, key=KEY_2,
+                               headers={"X-Alzeo-Pair-Hop": "spark1"})
+        self.assertEqual(st, 409, out[:300])
+        self.assertEqual(json.loads(out)["error"]["type"], "model_not_served")
+        self.assertEqual(self.E1.seen, [], "the 27B is never asked a request for Flash")
+        st, out, _ = self.call("/v1/chat/completions", self.chat("qwen3.8-flash-next-fp4"), port=port, key=KEY_2)
+        self.assertEqual(st, 200, "a client of its own, with no hop, is served as on a box alone")
+
+    def test_a_request_sent_on_to_a_box_whose_engine_restarts_is_told_to_try_again_not_held(self):
+        # a peer whose engine does not answer while its unit starts again (a switch): its own clients are
+        # held for whatever lane comes back (role 6), but a request an entry sent on for one model is told
+        # at once to try again, since the lane that comes back may serve another
+        t = self.tmp / "restarting"
+        (t / "bin").mkdir(parents=True)
+        (t / "bin/systemctl").write_text(
+            "#!/bin/sh\n"
+            'case "$*" in *InvocationID*) echo inv-1; echo; exit 0;; esac\n'
+            'if [ "$1" = show ]; then echo activating; exit 0; fi\n'
+            'if [ "$1" = list-jobs ]; then exit 0; fi\n'
+            "exit 3\n")
+        (t / "bin/systemctl").chmod(0o755)
+        home = self.home(t / "home", KEY_2, None)
+        gone = localports.held(self)                      # its engine: nothing listens there
+        env = {"PATH": f"{t / 'bin'}:{os.environ['PATH']}", "HOME": str(home), "PROXY_BIND": "127.0.0.1",
+               "UPSTREAM": f"http://127.0.0.1:{gone}", "PROMPT_CEILING_TOKENS": "0", "FLASH_PROMPT_CEILING_TOKENS": "0",
+               "PROXY_HOLD_UNITS": "qwen38-x.service", "PROXY_HOLD_MAX_S": "20", "PROXY_HOLD_POLL_S": "0.2"}
+        with open(self.tmp / "restarting.journal", "ab") as journal:
+            proc, port = localports.spawn(lambda port: subprocess.Popen(
+                [sys.executable, str(REPO / "keepalive-proxy.py"), str(port)], env=env,
+                stdout=subprocess.DEVNULL, stderr=journal))
+        self.procs.append(proc)
+        t0 = time.monotonic()
+        st, out, _ = self.call("/v1/chat/completions", self.chat("qwen3.8-27b"), port=port, key=KEY_2,
+                               headers={"X-Alzeo-Pair-Hop": "spark1"})
+        self.assertLess(time.monotonic() - t0, 5, "not held up to PROXY_HOLD_MAX_S")
+        self.assertEqual(st, 503, out[:300])
+        self.assertIn("try again", json.loads(out)["error"]["message"])
+
+    def test_a_peer_that_takes_the_connection_and_never_answers_holds_nobody(self):
+        class Frozen(http.server.BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+
+            def do_GET(self):
+                time.sleep(40)                      # a proxy that hangs: the connection is taken, no answer
+
+            do_POST = do_GET
+        port = localports.held(self)
+        frozen = localports.serve(port, Engine, Frozen)
+        threading.Thread(target=frozen.serve_forever, daemon=True).start()
+        self.addCleanup(frozen.server_close)
+        self.addCleanup(frozen.shutdown)
+        pair = json.loads((self.home1 / ".config/qwen38/pair.json").read_text())
+        pair["peers"][0]["proxy"] = f"http://127.0.0.1:{port}"
+        try:
+            (self.home1 / ".config/qwen38/pair.json").write_text(json.dumps(pair))
+            time.sleep(2.5)
+            t0 = time.monotonic()
+            st, out, _ = self.call("/v1/chat/completions", self.chat("qwen3.8-flash-next-fp4"))
+            self.assertLess(time.monotonic() - t0, 20, "two reads of its list, 5 s each, then the answer")
+            self.assertEqual(st, 503, out[:300])
+            t0 = time.monotonic()
+            st, out, _ = self.call("/v1/models", method="GET")
+            self.assertLess(time.monotonic() - t0, 12)
+            self.assertEqual([r["id"] for r in json.loads(out)["data"]], ["qwen3.8-27b"])
+        finally:
+            pair["peers"][0]["proxy"] = f"http://127.0.0.1:{self.port2}"
+            (self.home1 / ".config/qwen38/pair.json").write_text(json.dumps(pair))
+            time.sleep(2.5)
+
+    def test_two_boxes_that_name_each_other_ask_each_other_once(self):
+        a = self.home(self.tmp / "sym-a", KEY_1, None)
+        b = self.home(self.tmp / "sym-b", KEY_2, None)
+        pa = self.start_proxy(a, self.engines[0], "sym-a")
+        pb = self.start_proxy(b, self.engines[1], "sym-b")
+        for home, me, peer, port, key in ((a, "spark1", "spark2", pb, KEY_2), (b, "spark2", "spark1", pa, KEY_1)):
+            (home / ".config/qwen38/pair").mkdir()
+            (home / ".config/qwen38/pair" / f"{peer}.key").write_text(key + "\n")
+            (home / ".config/qwen38/pair.json").write_text(json.dumps({"name": me, "peers": [
+                {"name": peer, "proxy": f"http://127.0.0.1:{port}", "key_file": f"pair/{peer}.key"}]}))
+        time.sleep(2.5)
+        st, out, _ = self.call("/v1/models", port=pa, method="GET")
+        self.assertEqual(st, 200, out[:300])
+        self.assertEqual({r["id"]: r["box"] for r in json.loads(out)["data"]},
+                         {"qwen3.8-27b": "spark1", "qwen3.8-flash-next-fp4": "spark2"})
+        lines = self.journal("sym-a").count("GET /v1/models ok get") + self.journal("sym-b").count("GET /v1/models ok get")
+        self.assertLessEqual(lines, 2, "one GET from the client, one from the entry to its peer: no loop")
+        st, out, _ = self.call("/v1/chat/completions", self.chat("kolibri-1"), port=pa)
+        self.assertEqual(st, 404, out[:300])
+        self.assertEqual(json.loads(out)["error"]["served"],
+                         {"spark1": ["qwen3.8-27b"], "spark2": ["qwen3.8-flash-next-fp4"]},
+                         "each box says what it serves itself, not the union it shows its clients")
 
 
 class TheLaneNamesAreThoseTheUnitsServe(unittest.TestCase):
