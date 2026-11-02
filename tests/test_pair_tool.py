@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
-"""pair.py, the tool that pairs two boxes (proxy role 10, discussion #45, decisions 971-976).
+"""pair.py, the tool that pairs two boxes (proxy role 10, discussion #45, decisions 971-978).
 
 Two boxes on this machine, each a home of its own (its API key, its installed proxy), a fake engine and its
 proxy run in this process, its client port and its pair port each on a held port. A fake ssh stands for SSH
 between them: it runs the command it is given as the other box, with that box's home. `pair.py add` pairs
-both boxes in one command over that SSH, each with a certificate of its own; no key is ever on a command
-line or on the screen; what each box writes is what its proxy takes, and a request then goes from one box
-to the other over TLS; a check that fails keeps nothing on either box; `remove` unpairs both; an SSH that
-does not reach the other box, two boxes of one name and an older proxy are said with what to do."""
+both boxes in one command over that SSH, each with a certificate of its own, the pair's only credential:
+no box ever holds the other's API key, and nothing secret is on a command line or on the screen; what each
+box writes is what its proxy takes, and a request then goes from one box to the other over TLS; a check that
+fails, or an SSH cut once the other box wrote, keeps nothing on either box; `remove` unpairs both; an SSH
+that does not reach the other box, two boxes of one name and an older proxy are said with what to do."""
 import hashlib
 import http.client
 import http.server
@@ -60,7 +61,14 @@ if box.get("hostkey") == "unknown":
     sys.exit(255)
 env = {"PATH": os.environ["PATH"], "HOME": box["home"], "SSH_CLIENT": f"{box['from']} 50022 22",
        "PAIR_PORT": str(box["pair_port"])}
-sys.exit(subprocess.run(["sh", "-c", command], env=env).returncode)
+request = sys.stdin.read()
+r = subprocess.run(["sh", "-c", command], env=env, input=request, capture_output=True, text=True)
+if box.get("cut") and box["cut"] in request:
+    sys.stderr.write("Connection to the box closed by remote host.\r\n")
+    sys.exit(255)                       # its half ran, wrote, and its answer never came back
+sys.stdout.write(r.stdout)
+sys.stderr.write(r.stderr)
+sys.exit(r.returncode)
 '''
 
 
@@ -103,7 +111,7 @@ class Engine(socketserver.ThreadingMixIn, http.server.HTTPServer):
 class Box:
     """A box on this machine: its home, its fake engine, its proxy in this process on held ports."""
 
-    def __init__(self, test, root, name, key, model):
+    def __init__(self, test, root, name, key, model, env=None):
         self.name, self.key = name, key
         self.home = root / name
         self.cfg = self.home / ".config/qwen38"
@@ -124,6 +132,7 @@ class Box:
         for k in ("QWEN38_CLIENT_KEYS_FILE", "PROXY_HOLD_UNITS", "QWEN38_PAIR_FILE", "http_proxy", "HTTP_PROXY",
                   "https_proxy", "HTTPS_PROXY"):
             os.environ.pop(k, None)
+        os.environ.update(env or {})
         try:
             spec = importlib.util.spec_from_file_location(f"kp_tool_{name}_{time.time_ns()}", REPO / "keepalive-proxy.py")
             self.mod = importlib.util.module_from_spec(spec)
@@ -151,6 +160,11 @@ class Box:
 
     def peer_files(self):
         return sorted(p.name for p in (self.cfg / "pair").glob("*@*"))
+
+    def holds(self, secret):
+        """Whether any file this box keeps for its pair holds `secret`."""
+        return any(secret in f.read_text(errors="replace") for f in (self.cfg / "pair").rglob("*") if f.is_file()) \
+            or secret in ((self.cfg / "pair.json").read_text() if (self.cfg / "pair.json").exists() else "")
 
 
 class PairTool(unittest.TestCase):
@@ -215,26 +229,28 @@ class PairTool(unittest.TestCase):
         self.assertIn(f"box1 -> box2 (https://127.0.0.1:{self.b2.pair_port}): answers over TLS, serves "
                       f"qwen3.8-flash-next-fp4", out)
         self.assertIn(f"box2 -> box1 (https://127.0.0.1:{self.b1.pair_port}): answers over TLS, serves qwen3.8-27b", out)
+        self.assertIn("neither box holds the other's API key", out)
         p1, p2 = self.b1.pair(), self.b2.pair()
         self.assertEqual([(q["name"], q["proxy"], q["ssh"]) for q in p1["peers"]],
                          [("box2", f"https://127.0.0.1:{self.b2.pair_port}", "box2")])
         self.assertEqual([(q["name"], q["proxy"]) for q in p2["peers"]], [("box1", f"https://127.0.0.1:{self.b1.pair_port}")])
-        # each pins the other's certificate, made on its own box, and holds the other's key
+        # each pins the other's certificate, made on its own box; neither holds the other's API key (decision 978)
         for here, there, p in ((self.b1, self.b2, p1), (self.b2, self.b1, p2)):
             entry = p["peers"][0]
             self.assertEqual(entry["sha256"].replace(":", "").lower(), self.sha(there.cfg / "pair/identity/cert.pem"))
-            self.assertEqual((here.cfg / entry["key_file"]).read_text(), there.key + "\n")
-            for f in (here.cfg / entry["key_file"], here.cfg / entry["cert_file"], here.cfg / "pair.json",
-                      here.cfg / "pair/identity/key.pem"):
+            self.assertNotIn("key_file", entry)
+            self.assertFalse(here.holds(there.key), f"{here.name} holds the API key of {there.name}")
+            for f in (here.cfg / entry["cert_file"], here.cfg / "pair.json", here.cfg / "pair/identity/key.pem"):
                 self.assertEqual(stat.S_IMODE(f.stat().st_mode), 0o600, f)
             self.assertEqual(stat.S_IMODE((here.cfg / "pair").stat().st_mode), 0o700)
-        # what each wrote, its proxy takes: a request goes from one box to the other over TLS, both ways
+        # what each wrote, its proxy takes: a request goes from one box to the other over TLS, both ways, and the
+        # engine of the box that serves it is admitted with that box's own key
         st, body = self.call(self.b1, "qwen3.8-flash-next-fp4")
         self.assertEqual((st, b"from box2" in body), (200, True), body[:300])
         st, body = self.call(self.b2, "qwen3.8-27b")
         self.assertEqual((st, b"from box1" in body), (200, True), body[:300])
 
-    def test_no_key_is_on_a_command_line_or_on_the_screen(self):
+    def test_nothing_secret_is_on_a_command_line_or_on_the_screen(self):
         rc, out = self.add()
         self.assertEqual(rc, 0, out)
         calls = [json.loads(line) for line in self.ssh_log.read_text().splitlines()]
@@ -243,7 +259,9 @@ class PairTool(unittest.TestCase):
             joined = " ".join(argv)
             for secret in (KEY_1, KEY_2, "PRIVATE KEY", "BEGIN CERTIFICATE"):
                 self.assertNotIn(secret, joined)
-            self.assertIn("BatchMode=yes", joined, "never a password asked")
+            for option in ("BatchMode=yes", "StrictHostKeyChecking=yes"):
+                self.assertIn(option, joined, "never a password asked, never a host key taken unseen")
+            self.assertIn("-T", argv, "no terminal asked for")
             self.assertEqual(argv[argv.index("--") + 1], "box2", "the destination after --: never taken for an option")
         for secret in (KEY_1, KEY_2, "PRIVATE KEY"):
             self.assertNotIn(secret, out)
@@ -263,6 +281,18 @@ class PairTool(unittest.TestCase):
         rc, out = self.run_tool(self.b1, "add", "127.0.0.1", "--ssh", "box3")
         self.assertNotEqual(rc, 0)
         self.assertIn("does not know the SSH host key of box3 yet: run ssh box3 once", out)
+
+    def test_an_ssh_cut_once_the_other_box_wrote_keeps_nothing_on_either_box(self):
+        # the other box's half ran and wrote its side, and its answer never came back (SSH cut, a timeout,
+        # Ctrl-C): it was left paired with a box that knew nothing of it (found in review, 2026-11-03)
+        self.ssh_boxes({"box2": {"home": str(self.b2.home), "pair_port": self.b2.pair_port, "from": "127.0.0.1",
+                                 "cut": '"do": "accept"'}})
+        rc, out = self.add()
+        self.assertNotEqual(rc, 0)
+        self.assertIn("cannot run a command on box2", out)
+        for b in (self.b1, self.b2):
+            self.assertEqual(b.pair(), {"name": b.name, "peers": []}, f"{b.name} keeps no pair")
+            self.assertEqual(b.peer_files(), [])
 
     def test_a_check_that_fails_keeps_nothing_on_either_box(self):
         # box2 says a pair port nothing listens on: box1 cannot reach it
@@ -349,8 +379,8 @@ class PairTool(unittest.TestCase):
         again = self.b1.pair()["peers"]
         self.assertEqual(len(again), 1)
         self.assertNotEqual((again[0]["key_file"], again[0]["cert_file"]), (first["key_file"], first["cert_file"]))
-        self.assertEqual(self.b1.peer_files(), sorted(pathlib.Path(again[0][k]).name for k in ("cert_file", "key_file")))
-        self.assertEqual(len(self.b2.peer_files()), 2, "box2 too: one key, one certificate")
+        self.assertEqual(self.b1.peer_files(), [pathlib.Path(again[0]["cert_file"]).name], "the earlier one dropped")
+        self.assertEqual(len(self.b2.peer_files()), 1, "box2 too: one certificate, no key")
         st, body = self.call(self.b1, "qwen3.8-flash-next-fp4")
         self.assertEqual(st, 200, body[:300])
 
@@ -366,10 +396,31 @@ class PairTool(unittest.TestCase):
         self.assertIn(f"box2 (https://127.0.0.1:{self.b2.pair_port}, certificate ", out)
         self.assertIn("answers over TLS, serves qwen3.8-flash-next-fp4", out)
         self.assertNotIn(KEY_2, out)
-        key_file = self.b1.cfg / self.b1.pair()["peers"][0]["key_file"]
-        key_file.write_text("k-stale\n")
-        rc, out = self.run_tool(self.b1, "status")
-        self.assertIn("does not answer: HTTP 401 on /v1/models: it does not take the key this box holds for it", out)
+        # box2 forgets box1 behind its back: box1's status says why box2 does not answer
+        rc, out = self.run_tool(self.b2, "remove", "box1")
+        self.assertEqual(rc, 0, out)
+        deadline = time.monotonic() + 8                  # box2's proxy reads its pair.json within seconds
+        while True:
+            rc, out = self.run_tool(self.b1, "status")
+            if "does not answer" in out or time.monotonic() > deadline:
+                break
+            time.sleep(0.5)
+        self.assertIn("box2 (https://127.0.0.1:", out)
+        self.assertIn("does not answer", out)
+
+    def test_a_box_with_an_identity_wall_is_paired_all_the_same(self):
+        # a box that names its clients (QWEN38_CLIENT_KEYS_FILE) took the other box's request for an unknown
+        # client before (found in review, 2026-11-03): its certificate admits it, the wall stays for clients
+        keys = self.root / "keys.json"
+        keys.write_text(json.dumps({"k-client-of-box3": "laptop"}))
+        b3 = Box(self, self.root, "box3", "k-box3-0a1", "qwen3.8-flash-next-fp4", env={"QWEN38_CLIENT_KEYS_FILE": str(keys)})
+        rc, out = self.run_tool(b3, "name", "box3")
+        self.assertEqual(rc, 0, out)
+        self.ssh_boxes({"box3": {"home": str(b3.home), "pair_port": b3.pair_port, "from": "127.0.0.1"}})
+        rc, out = self.run_tool(self.b1, "add", "127.0.0.1", "--ssh", "box3")
+        self.assertEqual(rc, 0, out)
+        st, body = self.call(self.b1, "qwen3.8-flash-next-fp4")
+        self.assertEqual((st, b"from box3" in body), (200, True), body[:300])
 
     def test_a_name_is_given_before_pairing_only(self):
         self.assertEqual(self.add()[0], 0)
@@ -407,27 +458,40 @@ class TheUninstallNamesThePair(unittest.TestCase):
     """uninstall.sh --list names pair/ when there is one: the other box keeps this one until it is told. The
     block runs here as uninstall.sh has it."""
 
-    def inventory(self, paired):
+    def inventory(self, state):
         text = (REPO / "uninstall.sh").read_text()
         start = text.index('if [ -d "$CONFIG_DIR" ]; then\n  echo "  config    $CONFIG_DIR')
         block = text[start:text.index("\nfi\n", start) + 4]
         cfg = pathlib.Path(tempfile.mkdtemp(prefix="uninst-pair-"))
         self.addCleanup(shutil.rmtree, cfg, True)
         (cfg / "api-key").write_text("k\n")
-        if paired:
-            (cfg / "pair").mkdir()
+        if state in ("paired", "certificate", "named"):
+            (cfg / "pair/identity").mkdir(parents=True)
+        if state == "paired":
+            (cfg / "pair.json").write_text(json.dumps({"name": "a", "peers": [{"name": "b", "proxy": "https://b:30002",
+                                                                              "cert_file": "pair/b@1.crt", "sha256": "0" * 64}]}, indent=2))
+        if state == "named":
+            (cfg / "pair.json").write_text(json.dumps({"name": "a", "peers": []}, indent=2))
         script = 'set -euo pipefail\ndir_size(){ echo 4K; }\n' + f'CONFIG_DIR="{cfg}"\n' + block + "echo INVENTORY-END\n"
         r = subprocess.run(["bash", "-c", script], capture_output=True, text=True, timeout=30)
         return cfg, r.stdout + r.stderr
 
     def test_a_paired_box_is_told_to_unpair_first(self):
-        cfg, out = self.inventory(True)
-        self.assertIn(f"  pair      {cfg}/pair (this box's certificate, and the other box's key and certificate: "
-                      "run pair.py remove first, so that the other box forgets this one)", out)
+        cfg, out = self.inventory("paired")
+        self.assertIn(f"  pair      {cfg}/pair.json (this box is paired: run pair.py remove first, so that the other "
+                      "box forgets this one)", out)
         self.assertIn("INVENTORY-END", out)
 
+    def test_a_box_that_kept_its_certificate_is_told_what_it_is(self):
+        # pair.py name, identity or remove leave pair/ without a pair: no word of unpairing (review, 2026-11-03)
+        for state in ("certificate", "named"):
+            with self.subTest(state=state):
+                cfg, out = self.inventory(state)
+                self.assertIn(f"  pair      {cfg}/pair (this box's certificate for a pair, made by pair.py)", out)
+                self.assertNotIn("run pair.py remove", out)
+
     def test_a_box_never_paired_gets_no_such_line(self):
-        _, out = self.inventory(False)
+        _, out = self.inventory("never")
         self.assertNotIn("  pair  ", out)
         self.assertIn("INVENTORY-END", out)
 

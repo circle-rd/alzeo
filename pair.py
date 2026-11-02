@@ -9,13 +9,14 @@
 
 `add` works over SSH without a password, as step 4 of NVIDIA's connect-two-sparks playbook sets it up
 between two Sparks, and one command pairs both boxes (decisions 973-974): each box makes a certificate of
-its own once, the two boxes swap their certificates and API keys over SSH, each pins the other's
-certificate in its pair.json, and from then on the two proxies talk over TLS both ways on port 30002,
-each request still carrying the other box's key. Either box is then an entry: a request that names a
-model of one of this repo's lanes goes to the box that serves it. Both proxies read pair.json again
-within 2 s: nothing restarts. `add` then checks both ways, and keeps nothing on either box when one way
-fails (--no-check keeps the pair anyway). No key is ever on a command line, where ps shows it to every
-user, nor on the screen.
+its own once, the two boxes swap their certificates over SSH, each pins the other's in its pair.json, and
+from then on the two proxies talk over TLS both ways on port 30002. The certificate is the pair's only
+credential (decision 978): no box ever holds the other's API key, which is also its cockpit's login, and
+the pair port takes the generation routes and the model list only. Either box is then an entry: a request
+that names a model of one of this repo's lanes goes to the box that serves it. Both proxies read pair.json
+again within seconds: nothing restarts. `add` then checks both ways, and keeps nothing on either box when
+one way fails (--no-check keeps the pair anyway). Nothing secret is ever on a command line, where ps shows
+it to every user, nor on the screen.
 
 This file runs on the other box too: `add` and `remove` send it there over SSH on standard input and run
 its remote() there, which leaves no file behind. Each box checks what it writes with its own installed
@@ -31,6 +32,7 @@ import importlib.util
 import ipaddress
 import json
 import os
+import re
 import secrets
 import shlex
 import shutil
@@ -47,6 +49,8 @@ IDENTITY = PAIR_DIR / "identity"
 PLAYBOOK = "https://github.com/NVIDIA/dgx-spark-playbooks/tree/main/nvidia/connect-two-sparks"
 # what the other box runs, its argument the same every time and no secret: this file and the request come
 # on standard input, so neither the keys nor the code are ever on a command line there
+# what the other box says reaches this terminal: never a control character, an escape included
+SAFE_TEXT = re.compile(r"[\x00-\x1f\x7f]")
 REMOTE_BOOT = ("import sys,base64,json;g={'__name__':'pair_remote'};"
                "exec(compile(base64.b64decode(sys.stdin.readline()),'pair.py','exec'),g);"
                "g['remote'](json.loads(sys.stdin.readline()))")
@@ -147,16 +151,6 @@ def write_pair(mod, conf):
     write_atomic(PAIR_FILE, text, 0o600)
 
 
-def api_key():
-    try:
-        key = (CONFIG / "api-key").read_text().split("\n")[0].strip()
-    except OSError:
-        key = ""
-    if not key or any(c.isspace() for c in key):
-        raise SystemExit(f"pair.py: this box has no API key in {CONFIG / 'api-key'}: is Alzeo installed here?")
-    return key
-
-
 def fingerprint(mod, pem, where):
     return hashlib.sha256(mod._pem_der(pem, where)).hexdigest()
 
@@ -197,18 +191,17 @@ def ensure_identity(name):
     return cert.read_text()
 
 
-def write_peer_files(name, key, pem):
-    """The other box's key and certificate, in files of new names: a file the pair uses now is never
-    written over, so until pair.json changes, the pair in place stays whole."""
-    tok = secrets.token_hex(4)
-    key_rel, crt_rel = f"pair/{name}@{tok}.key", f"pair/{name}@{tok}.crt"
-    write_atomic(CONFIG / key_rel, key + "\n", 0o600)
+def write_peer_cert(name, pem):
+    """The other box's certificate, in a file of a new name: a file the pair uses now is never written
+    over (the proxy reads a peer's certificate when it reads pair.json, never again)."""
+    crt_rel = f"pair/{name}@{secrets.token_hex(4)}.crt"
     write_atomic(CONFIG / crt_rel, pem, 0o600)
-    return key_rel, crt_rel
+    return crt_rel
 
 
 def drop_files(entries, keep=()):
-    """The key and certificate files of these pair.json entries, those under pair/ and in no entry kept."""
+    """The certificate files of these pair.json entries (and a key file of an earlier version), those under
+    pair/ and in no entry kept."""
     kept = {(CONFIG / os.path.expanduser(q.get(k, ""))).resolve() for q in keep for k in ("key_file", "cert_file")
             if isinstance(q, dict) and q.get(k)}
     for p in entries:
@@ -223,18 +216,18 @@ def url_host(addr):
     return f"[{addr}]" if ":" in addr and not addr.startswith("[") else addr
 
 
-def with_peer(mod, conf, name, proxy, key, pem, ssh=None):
-    """conf with `name` as a peer (in place of any entry of that name or of that certificate), its files
-    written, the entries it replaces returned for drop_files() once the new pair.json is in place."""
+def with_peer(mod, conf, name, proxy, pem, ssh=None):
+    """conf with `name` as a peer (in place of any entry of that name or of that certificate), its
+    certificate written, the entries it replaces returned for drop_files() once the new pair.json is in
+    place."""
     if not isinstance(name, str) or not mod.PAIR_NAME.fullmatch(name):
-        raise SystemExit(f"pair.py: a box's name is 1 to 40 letters, digits, dots, dashes or underscores, not {name!r}")
-    if not isinstance(key, str) or not key or len(key) > 4096 or any(c.isspace() for c in key):
-        raise SystemExit(f"pair.py: the key given for {name} is no API key")
+        raise SystemExit(f"pair.py: a box's name is 1 to 40 letters, digits, dots, dashes or underscores, "
+                         f"not {SAFE_TEXT.sub('?', repr(name))[:60]}")
     fp = fingerprint(mod, pem if isinstance(pem, str) else "", f"the certificate of {name}")
     gone = [q for q in conf["peers"] if not isinstance(q, dict) or q.get("name") == name
             or str(q.get("sha256", "")).replace(":", "").lower() == fp]
-    key_rel, crt_rel = write_peer_files(name, key, pem)
-    entry = {"name": name, "proxy": proxy, "key_file": key_rel, "cert_file": crt_rel, "sha256": colons(fp)}
+    crt_rel = write_peer_cert(name, pem)
+    entry = {"name": name, "proxy": proxy, "cert_file": crt_rel, "sha256": colons(fp)}
     if ssh:
         entry["ssh"] = ssh
     new = dict(conf, peers=[q for q in conf["peers"] if q not in gone] + [entry])
@@ -265,9 +258,6 @@ def reach(mod, name, within):
         if not err:
             return list(models), None
         if time.monotonic() >= deadline:
-            if err.startswith("HTTP 401"):
-                err += (": it does not take the key this box holds for it (its API key changed since the "
-                        "pairing: pair.py add again)")
             return None, err
         time.sleep(1)
 
@@ -288,7 +278,7 @@ def ssh_client_address():
 
 def do_accept(req):
     """The other box names itself and asks to pair: its peer entry written here, and this box's name,
-    key and certificate in return."""
+    certificate and pair port in return."""
     mod = proxy_module()
     with pair_lock():
         conf = read_conf()
@@ -299,14 +289,14 @@ def do_accept(req):
         back = address(req["back"], "--back") if req.get("back") else ssh_client_address()
         pem = ensure_identity(me)
         new, gone, _ = with_peer(mod, conf, req["name"], f"https://{url_host(back)}:{int(req['port'])}",
-                                 req["key"], req["cert"], ssh=back)
+                                 req["cert"], ssh=back)
         try:
             write_pair(mod, new)
         except BaseException:
             drop_files(new["peers"][-1:], keep=conf["peers"])
             raise
         drop_files(gone, keep=new["peers"])
-    return {"name": me, "key": api_key(), "cert": pem, "port": mod.PAIR_PORT, "back": back,
+    return {"name": me, "cert": pem, "port": mod.PAIR_PORT, "back": back,
             "replaced": [q.get("name") for q in gone if isinstance(q, dict)]}
 
 
@@ -344,8 +334,10 @@ def ssh_call(dest, do, req, timeout=120):
     """remote() run on `dest` over SSH: this file and the request on standard input, the answer one JSON
     line on standard output. A box that SSH does not reach without a password is said with what to do."""
     stdin = base64.b64encode(Path(__file__).read_bytes()).decode() + "\n" + json.dumps(dict(req, do=do)) + "\n"
-    cmd = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "-o", "ServerAliveInterval=15", "--", dest,
-           "python3 -I -c " + shlex.quote(REMOTE_BOOT)]
+    # host keys checked whatever ~/.ssh/config says (accept-new would send this box's certificate to whoever
+    # answers at that address the first time), and no terminal asked for (found in review, 2026-11-03)
+    cmd = ["ssh", "-T", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes", "-o", "ConnectTimeout=10",
+           "-o", "ServerAliveInterval=15", "--", dest, "python3 -I -c " + shlex.quote(REMOTE_BOOT)]
     try:
         r = subprocess.run(cmd, input=stdin, capture_output=True, text=True, timeout=timeout)
     except FileNotFoundError:
@@ -361,7 +353,7 @@ def ssh_call(dest, do, req, timeout=120):
         if isinstance(reply, dict):
             break
         reply = None
-    err = (r.stderr.strip().splitlines() or [""])[-1][:300]
+    err = SAFE_TEXT.sub("?", (r.stderr.strip().splitlines() or [""])[-1])[:300]
     if reply is None and r.returncode == 255:
         if "Host key verification failed" in r.stderr:
             raise SystemExit(f"pair.py: this box does not know the SSH host key of {dest} yet: run ssh {dest} once "
@@ -375,7 +367,7 @@ def ssh_call(dest, do, req, timeout=120):
             raise SystemExit(f"pair.py: python3 is missing on {dest}")
         raise SystemExit(f"pair.py: {dest} gave no answer over SSH (exit {r.returncode}): {err}")
     if "error" in reply:
-        raise SystemExit(f"pair.py: on {dest}: {reply['error']}")
+        raise SystemExit(f"pair.py: on {dest}: {SAFE_TEXT.sub('?', str(reply['error']))[:800]}")
     return reply
 
 
@@ -422,29 +414,35 @@ def cmd_add(args, mod):
         conf = read_conf()
         me = my_name(mod, conf)
         pem = ensure_identity(me)
-    key = api_key()
     print(f"pairing {me} (this box) with the box at {host}, over SSH ({dest})...")
-    # 1. the other box writes its side and says who it is: its name, key and certificate
-    r = ssh_call(dest, "accept", {"name": me, "port": mod.PAIR_PORT, "back": back, "key": key, "cert": pem})
-    name, their_key, their_pem = r.get("name"), r.get("key"), r.get("cert")
+    # 1. the other box writes its side and says who it is: its name, certificate and pair port. A failure
+    # once it may have written (an error after its write, SSH cut, a timeout, Ctrl-C) is undone there too:
+    # forget is nothing on a box that wrote nothing (found in review, 2026-11-03)
+    try:
+        r = ssh_call(dest, "accept", {"name": me, "port": mod.PAIR_PORT, "back": back, "cert": pem})
+    except BaseException:
+        forget_there(dest, me)
+        raise
+    name, their_pem = r.get("name"), r.get("cert")
     try:
         if not isinstance(name, str) or not mod.PAIR_NAME.fullmatch(name) or name == me:
-            raise ValueError(f"its name {name!r}")
-        if not isinstance(their_key, str) or not their_key or any(c.isspace() for c in their_key):
-            raise ValueError("its key")
+            raise ValueError(f"its name {SAFE_TEXT.sub('?', repr(name))[:60]}")
         port = int(r.get("port"))
         if not 0 < port < 65536:
             raise ValueError(f"its port {port}")
         fingerprint(mod, their_pem if isinstance(their_pem, str) else "", "its certificate")
-    except (ValueError, TypeError) as e:
+        their_back = address(r.get("back") or "", "the address it reaches this box at")
+        replaced = [n for n in (r.get("replaced") or []) if isinstance(n, str) and mod.PAIR_NAME.fullmatch(n)]
+    except (ValueError, TypeError, SystemExit) as e:
         why = forget_there(dest, me)
-        raise SystemExit(f"pair.py: {dest} answered with something this box does not take ({e}): nothing was kept"
+        said = SAFE_TEXT.sub("?", str(getattr(e, "code", None) or e))[:200]
+        raise SystemExit(f"pair.py: {dest} answered with something this box does not take ({said}): nothing was kept"
                          + (f" here, and it could not be told ({why}): run pair.py remove {me} there" if why else ""))
     # 2. this box writes its side
     try:
         with pair_lock():
             conf = read_conf()
-            new, gone, entry = with_peer(mod, conf, name, f"https://{url_host(host)}:{port}", their_key, their_pem, ssh=dest)
+            new, gone, entry = with_peer(mod, conf, name, f"https://{url_host(host)}:{port}", their_pem, ssh=dest)
             try:
                 write_pair(mod, new)
             except BaseException:
@@ -457,18 +455,30 @@ def cmd_add(args, mod):
     # 3. both ways, as the proxies will: this box to its pair port, and that box to this one's
     if not args.no_check:
         there, why_there = reach(mod, name, 10)
-        back_said = f"https://{url_host(r.get('back') or '?')}:{mod.PAIR_PORT}"
+        back_said = f"https://{url_host(their_back)}:{mod.PAIR_PORT}"
         here, why_here = None, None
         if why_there is None:
             try:
-                here = ssh_call(dest, "check", {"name": me, "within": 10}).get("models") or []
+                got = ssh_call(dest, "check", {"name": me, "within": 10}).get("models") or []
+                here = [m for m in got if isinstance(m, str) and mod._PAIR_SAFE_ID.fullmatch(m)]
             except SystemExit as e:
                 why_here = str(e.code if e.code is not None else "").removeprefix(f"pair.py: on {dest}: ")
         if why_there is not None or why_here is not None:
-            unpair_here(mod, name)
+            # undone on both boxes whatever fails on the way, and never in place of why the pair failed
+            # (found in review, 2026-11-03)
+            try:
+                unpair_here(mod, name)
+                undone = None
+            except BaseException as e:
+                undone = SAFE_TEXT.sub("?", str(getattr(e, "code", None) or e))[:200]
             why = forget_there(dest, me)
-            kept = ("Nothing was kept on either box" if why is None else
-                    f"Nothing was kept here, and {name} could not be told ({why}): run pair.py remove {me} there")
+            if why is None and undone is None:
+                kept = "Nothing was kept on either box"
+            else:
+                kept = ("Nothing was kept here" if undone is None else
+                        f"This box keeps it ({undone}): run pair.py remove {name} here")
+                if why is not None:
+                    kept += f", and {name} could not be told ({why}): run pair.py remove {me} there"
             if why_there is not None:
                 raise SystemExit(f"pair.py: this box cannot reach the pair port of {name} at https://{url_host(host)}:{port}: "
                                  f"{why_there}. {kept}. Check that both boxes run this version of Alzeo, that no "
@@ -483,8 +493,9 @@ def cmd_add(args, mod):
         print(f"  {name} -> {me} ({back_said}): answers over TLS, serves {', '.join(here or []) or 'nothing now'}")
     print(f"  certificates: {me} {colons(fingerprint(mod, pem, 'this certificate'))[:23]}..., "
           f"{name} {colons(fingerprint(mod, their_pem, 'its certificate'))[:23]}... (pair.py identity on each box shows its own)")
-    if r.get("replaced"):
-        print(f"  {name} had a pair with {', '.join(r['replaced'])} under that name or certificate: replaced")
+    print("  neither box holds the other's API key: the certificates are the pair's only credential")
+    if replaced:
+        print(f"  {name} had a pair with {', '.join(replaced)} under that name or certificate: replaced")
 
 
 def cmd_remove(args, mod):

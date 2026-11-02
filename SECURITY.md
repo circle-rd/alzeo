@@ -154,17 +154,24 @@ names, header hygiene) are property-tested.
 is the proxy itself, for the other box of a pair (`pair.py`, docs/pair.md). It
 speaks TLS 1.3 only and demands a client certificate: the chain must end at a
 certificate pinned in `pair.json`, and the certificate itself must have a pinned
-SHA-256, or the connection ends at the handshake, before a byte of a request is
-read. A request that gets past it is a hop from the box of that certificate:
-served there or refused, never sent on, and it still meets the API key check and
-every guard of :30001. The port opens within 2 s of `pair.json` naming a peer and
-closes once it names none; a box taken out of the pair is refused at its next
-request, even on a connection already open. Each box's certificate is self-signed
-(EC P-256), made once by `pair.py`, its key mode 600 in a directory mode 700, the
-model of NVIDIA PAIR's nodes; the boxes swap certificates and API keys over SSH,
-never on a command line. Outbound, a box sends to a peer's pair port only, with
-its own certificate, once the peer's is the pinned one, and never through a proxy
-of its environment.
+SHA-256, or the connection ends right after its handshake, before a byte of a
+request is read. The certificate is the pair's only credential: no box holds the
+other's API key, which is also its cockpit's login (root on a box, as above), and
+the pair port takes the generation routes and `GET /v1/models` only (403 for any
+other), admitted to the engine with this box's own key. A request that gets past
+it is a hop from the box of that certificate: served there or refused, never sent
+on, and it meets every guard of :30001 but the client keys. No exemption this
+machine's own tools get on loopback reaches it, whatever its address. The port
+opens within seconds of `pair.json` naming a peer and closes once it names none;
+a box taken out of the pair is refused at its next connection. Each box's
+certificate is self-signed (EC P-256), made once by `pair.py`, its key mode 600
+in a directory mode 700, the model of NVIDIA PAIR's nodes; its dates are not
+checked, the pin being the certificate itself. The boxes swap certificates over
+SSH, host keys checked whatever the user's SSH configuration says, nothing secret
+on a command line. Outbound, a box sends to a peer's pair port only, with its own
+certificate, once the peer's is the pinned one, never through a proxy of its
+environment, and never with its client's key or cookies; an answer it relays is
+bounded (`MAX_BODY_BYTES`) and stripped of cookies.
 
 **The installer (`install.sh`, `dashboard/install-*.sh`)** runs things you
 sudo. Every pinned byte is hash-verified: images by digest, checkpoints by

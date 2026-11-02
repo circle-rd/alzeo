@@ -85,6 +85,34 @@ def child_of(parent):
     return who
 
 
+def future_ident():
+    """A box's certificate valid from 2099 only, self-signed and CA:TRUE as pair.py's are: one whose dates this
+    machine's clock does not hold (openssl ca, the tool of OpenSSL 3.0 that sets a start date)."""
+    who = "future"
+    if who not in _IDS:
+        d = _ids_dir() / who
+        d.mkdir()
+        (d / "index.txt").write_text("")
+        (d / "serial").write_text("01\n")
+        (d / "ca.cnf").write_text(
+            "[ ca ]\ndefault_ca = here\n[ here ]\n"
+            f"database = {d}/index.txt\nnew_certs_dir = {d}\nserial = {d}/serial\n"
+            "default_md = sha256\npolicy = any\nunique_subject = no\nx509_extensions = ext\n"
+            "[ any ]\ncommonName = supplied\n"
+            "[ ext ]\nbasicConstraints = critical,CA:TRUE\nkeyUsage = critical,digitalSignature,keyCertSign\n")
+        subprocess.run(["openssl", "req", "-new", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:P-256", "-nodes",
+                        "-subj", "/CN=alzeo-pair-future", "-keyout", str(d / "key.pem"), "-out", str(d / "req.pem")],
+                       check=True, capture_output=True, timeout=120)
+        subprocess.run(["openssl", "ca", "-batch", "-selfsign", "-notext", "-config", str(d / "ca.cnf"),
+                        "-keyfile", str(d / "key.pem"), "-startdate", "20990101000000Z", "-enddate", "21000101000000Z",
+                        "-in", str(d / "req.pem"), "-out", str(d / "cert.pem")],
+                       check=True, capture_output=True, timeout=120)
+        pem = re.search(r"-----BEGIN CERTIFICATE-----.+?-----END CERTIFICATE-----\n?", (d / "cert.pem").read_text(), re.S).group(0)
+        (d / "cert.pem").write_text(pem)
+        _IDS[who] = (pem, hashlib.sha256(ssl.PEM_cert_to_DER_cert(pem)).hexdigest(), d)
+    return who
+
+
 def install_identity(cfg, who):
     """`who`'s certificate and key as the box's own (cfg/pair/identity), as pair.py leaves them."""
     _, _, d = ident(who)
@@ -93,15 +121,13 @@ def install_identity(cfg, who):
         shutil.copy(d / f, cfg / "pair/identity" / f)
 
 
-def peer_entry(cfg, name, port, key, who=None, host="127.0.0.1"):
-    """A pair.json entry for the peer `name` at https://host:port, its key and the certificate of `who` (by
-    default its own) written beside it, as pair.py writes them."""
+def peer_entry(cfg, name, port, who=None, host="127.0.0.1"):
+    """A pair.json entry for the peer `name` at https://host:port, the certificate of `who` (by default its
+    own) written beside it, as pair.py writes it: a certificate, the pair's only credential (decision 978)."""
     pem, sha, _ = ident(who or name)
     (cfg / "pair").mkdir(exist_ok=True)
-    (cfg / f"pair/{name}@t.key").write_text(key + "\n")
     (cfg / f"pair/{name}@t.crt").write_text(pem)
-    return {"name": name, "proxy": f"https://{host}:{port}", "key_file": f"pair/{name}@t.key",
-            "cert_file": f"pair/{name}@t.crt", "sha256": sha}
+    return {"name": name, "proxy": f"https://{host}:{port}", "cert_file": f"pair/{name}@t.crt", "sha256": sha}
 
 
 def server_ctx(me, trusts):
@@ -227,7 +253,7 @@ class TwoBoxesBehindOneEndpoint(unittest.TestCase):
                 cls.port1 = cls.start_inproc(cls.home1, cls.engines[0])
             else:
                 cls.port1 = cls.start_proxy(cls.home1, cls.engines[0], "spark1", PAIR_TTL_S=str(PAIR_TTL))
-            cls.pport1, cls.pport2 = cls.pair_up(cls.home1, "spark1", KEY_1, cls.home2, "spark2", KEY_2)
+            cls.pport1, cls.pport2 = cls.pair_up(cls.home1, "spark1", cls.home2, "spark2")
         except BaseException:
             cls.tearDownClass()
             raise
@@ -306,16 +332,34 @@ class TwoBoxesBehindOneEndpoint(unittest.TestCase):
         raise RuntimeError(f"{label} opened no pair port within {within:g} s: {cls.journal_of(label)[-800:]}")
 
     @classmethod
-    def pair_up(cls, home_a, a, key_a, home_b, b, key_b):
+    def reads(cls, label):
+        """How many times the proxy `label` read its pair.json: each read leaves a line."""
+        return len(re.findall(r"\[proxy\] pair: \S+ (?:with |is not used: )", cls.journal_of(label)))
+
+    @classmethod
+    def write_pair(cls, cfg, label, conf):
+        """pair.json written whole, one rename as pair.py writes it (a file half written would be read as no
+        pair), then the proxy `label` seen reading it: up to about 4 s after the write (review, 2026-11-03)."""
+        before = cls.reads(label)
+        tmp = cfg / ".pair.json.tmp"
+        tmp.write_text(json.dumps(conf))
+        os.replace(tmp, cfg / "pair.json")
+        deadline = time.monotonic() + 10
+        while cls.reads(label) <= before:
+            if time.monotonic() > deadline:
+                raise AssertionError(f"{label} did not read its pair.json within 10 s: {cls.journal_of(label)[-600:]}")
+            time.sleep(0.05)
+
+    @classmethod
+    def pair_up(cls, home_a, a, home_b, b):
         """a and b paired as pair.py pairs them, both ways: b first, to a stand-in address, so that its pair port
         opens and a can name it, then a, then b again with a's pair port. (a's pair port, b's)."""
         cfg_a, cfg_b = home_a / ".config/qwen38", home_b / ".config/qwen38"
-        (cfg_b / "pair.json").write_text(json.dumps({"name": b, "peers": [peer_entry(cfg_b, a, 9, key_a)]}))
+        cls.write_pair(cfg_b, b, {"name": b, "peers": [peer_entry(cfg_b, a, 9)]})
         pb = cls.pair_port(b)
-        (cfg_a / "pair.json").write_text(json.dumps({"name": a, "peers": [peer_entry(cfg_a, b, pb, key_b)]}))
+        cls.write_pair(cfg_a, a, {"name": a, "peers": [peer_entry(cfg_a, b, pb)]})
         pa = cls.pair_port(a)
-        (cfg_b / "pair.json").write_text(json.dumps({"name": b, "peers": [peer_entry(cfg_b, a, pa, key_a)]}))
-        time.sleep(2.5)                     # b reads its pair.json again
+        cls.write_pair(cfg_b, b, {"name": b, "peers": [peer_entry(cfg_b, a, pa)]})
         return pa, pb
 
     @classmethod
@@ -348,11 +392,11 @@ class TwoBoxesBehindOneEndpoint(unittest.TestCase):
         finally:
             c.close()
 
-    def tls_call(self, port, path, body=None, me="spark2", server="spark1", key=KEY_1, headers=None, method="POST"):
-        """A request to a box's pair port as the box `me` (its certificate), with `key`."""
+    def tls_call(self, port, path, body=None, me="spark2", server="spark1", headers=None, method="POST"):
+        """A request to a box's pair port as the box `me`: its certificate, no key (decision 978)."""
         c = http.client.HTTPSConnection("127.0.0.1", port, timeout=60, context=client_ctx(me, server))
         try:
-            h = {"Content-Type": "application/json", "Authorization": f"Bearer {key}", **(headers or {})}
+            h = {"Content-Type": "application/json", **(headers or {})}
             c.request(method, path, json.dumps(body).encode() if body is not None else None, h)
             r = c.getresponse()
             return r.status, r.read(), dict(r.getheaders())
@@ -383,7 +427,7 @@ class TwoBoxesBehindOneEndpoint(unittest.TestCase):
         if not keyfile:
             (cfg / "api-key").unlink()
         if peers:
-            pair = {"name": name, "peers": [peer_entry(cfg, n, p, k) for n, p, k in peers]}
+            pair = {"name": name, "peers": [peer_entry(cfg, n, p) for n, p in peers]}
         if callable(pair):
             pair = pair(cfg)
         if pair is not None:
@@ -400,17 +444,15 @@ class TwoBoxesBehindOneEndpoint(unittest.TestCase):
         return port
 
     def repoint(self, port):
-        """spark1's pair.json with spark2 at https://127.0.0.1:port, taken within 2 s; put back at cleanup."""
-        f = self.home1 / ".config/qwen38/pair.json"
-        pair = json.loads(f.read_text())
+        """spark1's pair.json with spark2 at https://127.0.0.1:port, seen read; put back at cleanup."""
+        cfg = self.home1 / ".config/qwen38"
+        pair = json.loads((cfg / "pair.json").read_text())
         pair["peers"][0]["proxy"] = f"https://127.0.0.1:{port}"
-        f.write_text(json.dumps(pair))
-        time.sleep(2.5)
+        self.write_pair(cfg, "spark1", pair)
 
         def back():
             pair["peers"][0]["proxy"] = f"https://127.0.0.1:{self.pport2}"
-            f.write_text(json.dumps(pair))
-            time.sleep(2.5)
+            self.write_pair(cfg, "spark1", pair)
         self.addCleanup(back)
 
     # ---- routing --------------------------------------------------------------------------------
@@ -487,8 +529,7 @@ class TwoBoxesBehindOneEndpoint(unittest.TestCase):
         home2b = self.home(self.tmp / "spark2b", KEY_2, None, who="spark2")
         self.start_proxy(home2b, self.engines[1], "spark2b")
         cfg2b = home2b / ".config/qwen38"
-        (cfg2b / "pair.json").write_text(json.dumps({"name": "spark2", "peers": [
-            peer_entry(cfg2b, "spark1", self.pport1, KEY_1)]}))
+        self.write_pair(cfg2b, "spark2b", {"name": "spark2", "peers": [peer_entry(cfg2b, "spark1", self.pport1)]})
         self.repoint(self.pair_port("spark2b"))
         st, out, _ = self.call("/v1/chat/completions", self.chat("qwen3.8-flash-next-fp4"))
         self.assertEqual(st, 404, out[:300])
@@ -496,12 +537,16 @@ class TwoBoxesBehindOneEndpoint(unittest.TestCase):
         st, out, _ = self.call("/v1/chat/completions", self.chat("ornith-1.5-122b"))
         self.assertEqual(st, 200, out[:300])
 
-    def test_a_request_a_peer_sent_on_is_served_or_refused_never_sent_on(self):
+    def test_a_hop_header_on_the_client_port_is_no_hop(self):
+        # a hop is a request that came in on the pair port, from the box of its certificate: the header that
+        # said it before let any key holder have a request refused and the journal name a box that sent nothing
+        # (found in review, 2026-11-03)
+        said = self.journal("spark1").count("sent on by spark9")
         st, out, _ = self.call("/v1/chat/completions", self.chat("qwen3.8-flash-next-fp4"),
                                headers={"X-Alzeo-Pair-Hop": "spark9"})
-        self.assertEqual(st, 409, out[:300])
-        self.assertEqual(json.loads(out)["error"]["type"], "model_not_served")
-        self.assertEqual(self.E1.seen + self.E2.seen, [])
+        self.assertEqual(st, 200, out[:300])
+        self.assertIn(b"from spark2", out, "sent on to the box that serves it, as any request")
+        self.assertEqual(self.journal("spark1").count("sent on by spark9"), said)
 
     def test_a_peer_that_does_not_answer_is_said_at_once(self):
         self.repoint(localports.held(self))        # bound, never listening: refused, as a box that is gone
@@ -538,14 +583,14 @@ class TwoBoxesBehindOneEndpoint(unittest.TestCase):
 
             def do_GET(self):
                 time.sleep(20)
-        entry = self.spare_proxy("frozen-list", KEY_1, peers=[("spark2", tls_peer(self, Frozen), KEY_2)])
+        entry = self.spare_proxy("frozen-list", KEY_1, peers=[("spark2", tls_peer(self, Frozen))])
         for _ in range(3):
             t0 = time.monotonic()
             st, out, _ = self.call("/v1/models", port=entry, method="GET")
             self.assertLess(time.monotonic() - t0, 2, "needle.sh and bench-matrix.sh give it 5 s")
             self.assertEqual(st, 200)
 
-    def test_the_peers_key_reaches_no_journal(self):
+    def test_no_secret_reaches_a_journal(self):
         self.call("/v1/chat/completions", self.chat("qwen3.8-flash-next-fp4"))
         self.call("/v1/chat/completions", self.chat("qwen3.8-27b"), port=self.port2, key=KEY_2)
         for label in ("spark1", "spark2"):
@@ -555,6 +600,54 @@ class TwoBoxesBehindOneEndpoint(unittest.TestCase):
                 self.assertNotIn(secret, text, label)
         self.assertIn("-> pair spark2 for qwen3.8-flash-next-fp4", self.journal("spark1"))
         self.assertIn("-> pair spark1 for qwen3.8-27b", self.journal("spark2"))
+
+    def test_no_key_or_cookie_crosses_the_pair(self):
+        # the certificate is the pair's only credential (decision 978): the client's key never goes to the other
+        # box, nor a cookie either way (cookies know no port: this box's cockpit cookie would have gone)
+        class Recording(http.server.BaseHTTPRequestHandler):
+            protocol_version = "HTTP/1.1"
+            seen: list = []
+
+            def log_message(self, *a):
+                pass
+
+            def reply(self, obj):
+                out = json.dumps(obj).encode()
+                self.send_response(200); self.send_header("Content-Type", "application/json")
+                self.send_header("Set-Cookie", "session=from-the-other-box")
+                self.send_header("Content-Length", str(len(out))); self.end_headers(); self.wfile.write(out)
+
+            def do_GET(self):
+                Recording.seen.append(("GET", {k.lower(): v for k, v in self.headers.items()}))
+                self.reply({"object": "list", "data": [{"id": "qwen3.8-flash-next-fp4"}]})
+
+            def do_POST(self):
+                self.rfile.read(int(self.headers.get("Content-Length") or 0))
+                Recording.seen.append(("POST", {k.lower(): v for k, v in self.headers.items()}))
+                self.reply({"id": "c", "choices": [{"message": {"content": "recorded"}}]})
+        entry = self.spare_proxy("recorded", KEY_1, peers=[("spark2", tls_peer(self, Recording))])
+        st, out, hdrs = self.call("/v1/chat/completions", self.chat("qwen3.8-flash-next-fp4"), port=entry,
+                                  headers={"Cookie": "qwen38_session=this-box-cockpit", "X-Api-Key": KEY_1,
+                                           "Proxy-Authorization": "Basic eA=="})
+        self.assertEqual(st, 200, out[:300])
+        self.assertNotIn("set-cookie", {k.lower() for k in hdrs}, "no cookie of the other box set here")
+        self.assertEqual([m for m, _ in Recording.seen].count("POST"), 1)
+        for _, h in Recording.seen:
+            for name in ("authorization", "x-api-key", "cookie", "proxy-authorization", "x-alzeo-pair-hop"):
+                self.assertNotIn(name, h)
+            self.assertNotIn(KEY_1, json.dumps(h))
+
+    def test_the_pair_port_takes_the_pairs_routes_only(self):
+        for method, path in (("GET", "/server_info"), ("GET", "/get_server_info"), ("POST", "/v1/systemone"),
+                             ("POST", "/generate"), ("PUT", "/v1/chat/completions"), ("GET", "/health"),
+                             ("POST", "/proxy/stop"), ("GET", "/metrics")):
+            with self.subTest(route=f"{method} {path}"):
+                st, out, _ = self.tls_call(self.pport1, path, {} if method != "GET" else None, method=method)
+                self.assertEqual(st, 403, out[:300])
+                self.assertIn("takes the generation routes and GET /v1/models only", json.loads(out)["error"]["message"])
+        self.assertEqual(self.E1.seen, [], "none reached the engine")
+        st, out, _ = self.tls_call(self.pport1, "/v1/messages/count_tokens", self.chat("qwen3.8-27b"))
+        self.assertEqual(st, 200, out[:300])
 
     def test_a_box_without_pair_json_is_what_it_was(self):
         alone = self.home(self.tmp / "alone", KEY_1, None)
@@ -596,11 +689,11 @@ class TwoBoxesBehindOneEndpoint(unittest.TestCase):
         self.assertIn("sent on by spark2", self.journal("spark1"))
 
     def test_the_cockpits_stop_is_never_taken_from_the_pair_port(self):
-        # the other box holds this box's key, and its connection may come from loopback (a tunnel's end, these
-        # tests): POST /proxy/stop is this machine's operator's, never a pair's
+        # the other box's connection may come from loopback (a tunnel's end, these tests): POST /proxy/stop is
+        # this machine's operator's, never a pair's
         st, out, _ = self.tls_call(self.pport1, "/proxy/stop", {"why": "a pair's stop", "kind": "operator"})
         self.assertEqual(st, 403, out[:300])
-        self.assertIn("is reached from this machine only", json.loads(out)["error"]["message"])
+        self.assertIn("403 pair route refused", self.journal("spark1"))
 
     def test_the_pair_port_refuses_a_box_without_a_pinned_certificate(self):
         for me in (None, "rogue"):
@@ -630,7 +723,7 @@ class TwoBoxesBehindOneEndpoint(unittest.TestCase):
                 self.send_response(200); self.send_header("Content-Length", "0"); self.end_headers()
 
             do_POST = do_GET
-        entry = self.spare_proxy("rogue-peer", KEY_1, peers=[("spark2", tls_peer(self, Rogue, me="rogue"), KEY_2)])
+        entry = self.spare_proxy("rogue-peer", KEY_1, peers=[("spark2", tls_peer(self, Rogue, me="rogue"))])
         st, out, _ = self.call("/v1/chat/completions", self.chat("qwen3.8-flash-next-fp4"), port=entry)
         self.assertEqual(st, 503, out[:300])
         self.assertIn("another certificate than the one pinned", json.loads(out)["error"]["served"]["spark2"])
@@ -642,16 +735,10 @@ class TwoBoxesBehindOneEndpoint(unittest.TestCase):
         st, _, _ = self.tls_call(self.pport1, "/v1/chat/completions", self.chat("qwen3.8-27b"))
         self.assertEqual(st, 200)
         cfg1 = self.home1 / ".config/qwen38"
-        kept = (cfg1 / "pair.json").read_text()
+        kept = json.loads((cfg1 / "pair.json").read_text())
         # spark2 out, another box in its place: spark1 stays paired, its pair port open
-        (cfg1 / "pair.json").write_text(json.dumps({"name": "spark1", "peers": [
-            peer_entry(cfg1, "spark3", 9, "k-3", who="rogue")]}))
-
-        def back():
-            (cfg1 / "pair.json").write_text(kept)
-            time.sleep(2.5)
-        self.addCleanup(back)
-        time.sleep(2.5)
+        self.write_pair(cfg1, "spark1", {"name": "spark1", "peers": [peer_entry(cfg1, "spark3", 9, who="rogue")]})
+        self.addCleanup(self.write_pair, cfg1, "spark1", kept)
         with self.assertRaises((ssl.SSLError, ConnectionResetError, BrokenPipeError, http.client.RemoteDisconnected)):
             self.tls_call(self.pport1, "/v1/chat/completions", self.chat("qwen3.8-27b"))
         self.assertEqual(len(self.E1.seen), 1, "the second request never reached the engine")
@@ -659,17 +746,18 @@ class TwoBoxesBehindOneEndpoint(unittest.TestCase):
     def test_the_pair_port_opens_with_a_pair_and_closes_without(self):
         home = self.home(self.tmp / "opens", KEY_1, None, who="spark1")
         self.start_proxy(home, self.engines[0], "opens")            # alone: no pair port
+        proc = self.procs[-1]
         self.assertNotIn("pair: port", self.journal("opens"))
         cfg = home / ".config/qwen38"
-        (cfg / "pair.json").write_text(json.dumps({"name": "spark1", "peers": [
-            peer_entry(cfg, "spark2", self.pport2, KEY_2)]}))
-        port = self.pair_port("opens", within=5)                     # within 2 s of pair.json
+        self.write_pair(cfg, "opens", {"name": "spark1", "peers": [peer_entry(cfg, "spark2", self.pport2)]})
+        port = self.pair_port("opens", within=5)
+        self.assertIn(port, localports._ports_of(proc.pid))
         st, out, _ = self.tls_call(port, "/v1/models", method="GET")  # spark2's certificate gets past
         self.assertEqual(st, 200, out[:300])
         (cfg / "pair.json").unlink()
-        self.assertTrue(self.until_in_journal("opens", f"pair: port {port} closed: this box has no pair now", 5))
-        with self.assertRaises(ConnectionRefusedError):
-            socket.create_connection(("127.0.0.1", port), timeout=5).close()
+        self.assertTrue(self.until_in_journal("opens", f"pair: port {port} closed: this box has no pair now", 8))
+        # what it listens on, read from /proc: no connection to a port number another program may hold now
+        self.assertNotIn(port, localports._ports_of(proc.pid))
 
     def test_a_certificate_that_is_not_the_one_pinned_leaves_the_box_alone(self):
         for label, said in (("pin-off", "is not the certificate pair.json pins"),
@@ -677,7 +765,7 @@ class TwoBoxesBehindOneEndpoint(unittest.TestCase):
             with self.subTest(label=label):
                 home = self.home(self.tmp / label, KEY_1, None, who="spark1")
                 cfg = home / ".config/qwen38"
-                e = peer_entry(cfg, "spark2", self.pport2, KEY_2)
+                e = peer_entry(cfg, "spark2", self.pport2)
                 if label == "pin-off":
                     e["sha256"] = ident("rogue")[1]
                 else:
@@ -692,18 +780,99 @@ class TwoBoxesBehindOneEndpoint(unittest.TestCase):
 
     def test_an_entrys_client_that_leaves_ends_the_request_on_the_other_box(self):
         # through TLS the other box sees the entry's connection end (no peek was made through TLS before: its
-        # engine generated to the end for nobody)
-        self.E2.delay = 8.0
-        c = http.client.HTTPConnection("127.0.0.1", self.port1, timeout=60)
-        t0 = time.monotonic()
-        c.request("POST", "/v1/chat/completions", json.dumps(self.chat("qwen3.8-flash-next-fp4")).encode(),
-                  {"Content-Type": "application/json", "Authorization": f"Bearer {KEY_1}"})
-        time.sleep(1.5)
-        c.close()                                   # the client leaves before the answer
-        self.assertTrue(self.until_in_journal("spark2", "CLIENT GONE", 5.5), self.journal("spark2")[-600:])
-        self.assertLess(time.monotonic() - t0, 7.5, "seen before its engine answered")
+        # engine generated to the end for nobody), the answer not streamed or streamed
+        for stream in (False, True):
+            with self.subTest(stream=stream):
+                self.E2.delay = 8.0
+                gone = self.journal("spark2").count("CLIENT GONE")
+                c = http.client.HTTPConnection("127.0.0.1", self.port1, timeout=60)
+                t0 = time.monotonic()
+                c.request("POST", "/v1/chat/completions",
+                          json.dumps(self.chat("qwen3.8-flash-next-fp4", stream=stream)).encode(),
+                          {"Content-Type": "application/json", "Authorization": f"Bearer {KEY_1}"})
+                time.sleep(1.5)
+                c.close()                           # the client leaves before the answer
+                deadline = time.monotonic() + 5.5
+                while self.journal("spark2").count("CLIENT GONE") <= gone and time.monotonic() < deadline:
+                    time.sleep(0.1)
+                self.assertGreater(self.journal("spark2").count("CLIENT GONE"), gone, self.journal("spark2")[-600:])
+                self.assertLess(time.monotonic() - t0, 7.5, "seen before its engine answered")
 
-    # ---- what the review of 2026-11-02 found ----------------------------------------------------
+    def test_an_answer_past_the_cap_is_refused(self):
+        # an answer not streamed was read whole: a box gone wrong could fill this one's memory (review, 2026-11-03)
+        class Huge(http.server.BaseHTTPRequestHandler):
+            protocol_version = "HTTP/1.1"
+
+            def log_message(self, *a):
+                pass
+
+            def reply(self, out):
+                self.send_response(200); self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(out))); self.end_headers(); self.wfile.write(out)
+
+            def do_GET(self):
+                self.reply(json.dumps({"object": "list", "data": [{"id": "qwen3.8-flash-next-fp4"}]}).encode())
+
+            def do_POST(self):
+                self.rfile.read(int(self.headers.get("Content-Length") or 0))
+                self.reply(b'{"pad": "' + b"x" * 20000 + b'"}')
+        port = self.spare_proxy("huge", KEY_1, peers=[("spark2", tls_peer(self, Huge))], extra={"MAX_BODY_BYTES": "8192"})
+        st, out, _ = self.call("/v1/chat/completions", self.chat("qwen3.8-flash-next-fp4"), port=port)
+        self.assertEqual(st, 502, out[:300])
+        self.assertEqual(json.loads(out)["error"]["type"], "upstream_too_large")
+        self.assertIn("502 pair answer too large", self.journal("huge"))
+
+    def test_an_error_answer_the_other_box_cuts_is_said_cut(self):
+        # its error answer cut on the way escaped the relay before (review, 2026-11-03)
+        class CutError(http.server.BaseHTTPRequestHandler):
+            protocol_version = "HTTP/1.1"
+
+            def log_message(self, *a):
+                pass
+
+            def do_GET(self):
+                out = json.dumps({"object": "list", "data": [{"id": "qwen3.8-flash-next-fp4"}]}).encode()
+                self.send_response(200); self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(out))); self.end_headers(); self.wfile.write(out)
+
+            def do_POST(self):
+                self.rfile.read(int(self.headers.get("Content-Length") or 0))
+                self.send_response(500); self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", "400"); self.end_headers()
+                self.wfile.write(b'{"error": "half'); self.wfile.flush()
+                self.close_connection = True
+                self.connection.shutdown(socket.SHUT_RDWR)
+        port = self.spare_proxy("cut-error", KEY_1, peers=[("spark2", tls_peer(self, CutError))])
+        st, out, _ = self.call("/v1/chat/completions", self.chat("qwen3.8-flash-next-fp4"), port=port)
+        self.assertEqual(st, 502, out[:300])
+        self.assertEqual(json.loads(out)["error"]["type"], "upstream_cut")
+        self.assertIn("UPSTREAM CUT pair", self.journal("cut-error"))
+
+    def test_a_certificate_whose_dates_this_clock_does_not_hold_still_pairs(self):
+        # a new certificate is valid from the second it is made: two boxes whose clocks disagree could not pair
+        # (review, 2026-11-03); the pin is the certificate itself, its dates add nothing
+        class Lists(http.server.BaseHTTPRequestHandler):
+            protocol_version = "HTTP/1.1"
+
+            def log_message(self, *a):
+                pass
+
+            def do_GET(self):
+                out = json.dumps({"object": "list", "data": [{"id": "qwen3.8-flash-next-fp4"}]}).encode()
+                self.send_response(200); self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(out))); self.end_headers(); self.wfile.write(out)
+
+            do_POST = do_GET
+        later = future_ident()
+        port = self.spare_proxy("clock", KEY_1, pair=lambda cfg: {"name": "spark1", "peers": [
+            peer_entry(cfg, "spark2", tls_peer(self, Lists, me=later), who=later)]})
+        st, out, _ = self.call("/v1/models", port=port, method="GET")
+        deadline = time.monotonic() + 3
+        while b"qwen3.8-flash-next-fp4" not in out and time.monotonic() < deadline:
+            time.sleep(0.2)
+            st, out, _ = self.call("/v1/models", port=port, method="GET")
+        self.assertIn(b"qwen3.8-flash-next-fp4", out, "the other box's list read: its certificate taken")
+
     def test_a_peer_whose_engine_restarts_gets_a_503_to_try_again_not_a_404(self):
         self.E2.mode = "down"
         try:
@@ -730,21 +899,10 @@ class TwoBoxesBehindOneEndpoint(unittest.TestCase):
             c.close()
         self.assertIn("UPSTREAM CUT pair", self.journal("spark1"))
 
-    def test_a_peer_without_pair_json_refuses_a_request_sent_on_for_another_model(self):
-        bare = self.home(self.tmp / "bare-peer", KEY_2, None)            # a box sent a request with the hop header
-        port = self.start_proxy(bare, self.engines[0], "bare-peer")     # its engine serves the 27B
-        st, out, _ = self.call("/v1/chat/completions", self.chat("qwen3.8-flash-next-fp4"), port=port, key=KEY_2,
-                               headers={"X-Alzeo-Pair-Hop": "spark1"})
-        self.assertEqual(st, 409, out[:300])
-        self.assertEqual(json.loads(out)["error"]["type"], "model_not_served")
-        self.assertEqual(self.E1.seen, [], "the 27B is never asked a request for Flash")
-        st, out, _ = self.call("/v1/chat/completions", self.chat("qwen3.8-flash-next-fp4"), port=port, key=KEY_2)
-        self.assertEqual(st, 200, "a client of its own, with no hop, is served as on a box alone")
-
     def test_a_request_sent_on_to_a_box_whose_engine_restarts_is_told_to_try_again_not_held(self):
-        # a peer whose engine does not answer while its unit starts again (a switch): its own clients are
-        # held for whatever lane comes back (role 6), but a request an entry sent on for one model is told
-        # at once to try again, since the lane that comes back may serve another
+        # a box whose engine does not answer while its unit starts again (a switch): its own clients are held for
+        # whatever lane comes back (role 6), but a request the other box sent on for one model is told at once to
+        # try again, since the lane that comes back may serve another
         t = self.tmp / "restarting"
         (t / "bin").mkdir(parents=True)
         (t / "bin/systemctl").write_text(
@@ -754,20 +912,23 @@ class TwoBoxesBehindOneEndpoint(unittest.TestCase):
             'if [ "$1" = list-jobs ]; then exit 0; fi\n'
             "exit 3\n")
         (t / "bin/systemctl").chmod(0o755)
-        home = self.home(t / "home", KEY_2, None)
+        home = self.home(t / "home", KEY_2, None, who="spark2")
         gone = localports.held(self)                      # its engine: nothing listens there
         env = {"PATH": f"{t / 'bin'}:{os.environ['PATH']}", "HOME": str(home), "PROXY_BIND": "127.0.0.1",
-               "UPSTREAM": f"http://127.0.0.1:{gone}", "PROMPT_CEILING_TOKENS": "0", "FLASH_PROMPT_CEILING_TOKENS": "0",
-               "PROXY_HOLD_UNITS": "qwen38-x.service", "PROXY_HOLD_MAX_S": "20", "PROXY_HOLD_POLL_S": "0.2"}
+               "PAIR_PORT": "0", "UPSTREAM": f"http://127.0.0.1:{gone}", "PROMPT_CEILING_TOKENS": "0",
+               "FLASH_PROMPT_CEILING_TOKENS": "0", "PROXY_HOLD_UNITS": "qwen38-x.service", "PROXY_HOLD_MAX_S": "20",
+               "PROXY_HOLD_POLL_S": "0.2"}
         with open(self.tmp / "restarting.journal", "ab") as journal:
-            proc, port = localports.spawn(lambda port: subprocess.Popen(
+            proc, _port = localports.spawn(lambda port: subprocess.Popen(
                 [sys.executable, str(REPO / "keepalive-proxy.py"), str(port)], env=env,
                 stdout=subprocess.DEVNULL, stderr=journal))
         self.procs.append(proc)
+        cfg = home / ".config/qwen38"
+        self.write_pair(cfg, "restarting", {"name": "spark2", "peers": [peer_entry(cfg, "spark1", 9)]})
         t0 = time.monotonic()
-        st, out, _ = self.call("/v1/chat/completions", self.chat("qwen3.8-27b"), port=port, key=KEY_2,
-                               headers={"X-Alzeo-Pair-Hop": "spark1"})
-        self.assertLess(time.monotonic() - t0, 5, "not held up to PROXY_HOLD_MAX_S")
+        st, out, _ = self.tls_call(self.pair_port("restarting"), "/v1/chat/completions", self.chat("qwen3.8-27b"),
+                                   me="spark1", server="spark2")
+        self.assertLess(time.monotonic() - t0, 12, "not held up to PROXY_HOLD_MAX_S")
         self.assertEqual(st, 503, out[:300])
         self.assertIn("try again", json.loads(out)["error"]["message"])
 
@@ -795,7 +956,7 @@ class TwoBoxesBehindOneEndpoint(unittest.TestCase):
         b = self.home(self.tmp / "sym-b", KEY_2, None, who="sym-b")
         pa = self.start_proxy(a, self.engines[0], "sym-a")
         self.start_proxy(b, self.engines[1], "sym-b")
-        self.pair_up(a, "sym-a", KEY_1, b, "sym-b", KEY_2)
+        self.pair_up(a, "sym-a", b, "sym-b")
         st, rows = self.models_once_known(port=pa)
         self.assertEqual(st, 200)
         self.assertEqual(rows, {"qwen3.8-27b": "sym-a", "qwen3.8-flash-next-fp4": "sym-b"})
@@ -812,16 +973,16 @@ class TwoBoxesBehindOneEndpoint(unittest.TestCase):
 
     # ---- what the code review of 2026-11-02 found -------------------------------------------------
     def test_a_box_that_cannot_read_its_own_key_sends_nothing_on(self):
-        port = self.spare_proxy("no-key", KEY_1, peers=[("spark2", self.pport2, KEY_2)], keyfile=False)
+        port = self.spare_proxy("no-key", KEY_1, peers=[("spark2", self.pport2)], keyfile=False)
         st, out, _ = self.call("/v1/chat/completions", self.chat("qwen3.8-flash-next-fp4"), port=port, key="anything")
         self.assertEqual(st, 503, out[:300])
         self.assertEqual(self.E2.seen, [], "the peer is never sent a request this box could not check")
 
     def test_a_pair_json_with_a_bad_port_or_name_leaves_the_box_alone(self):
         for label, pair in (("bad-port", lambda cfg: {"name": "spark1", "peers": [
-                                dict(peer_entry(cfg, "spark2", 1, KEY_2), proxy="https://127.0.0.1:3000l")]}),
+                                dict(peer_entry(cfg, "spark2", 1), proxy="https://127.0.0.1:3000l")]}),
                             ("http-peer", lambda cfg: {"name": "spark1", "peers": [
-                                dict(peer_entry(cfg, "spark2", 1, KEY_2), proxy=f"http://127.0.0.1:{self.port2}")]}),
+                                dict(peer_entry(cfg, "spark2", 1), proxy=f"http://127.0.0.1:{self.port2}")]}),
                             ("bad-name", lambda cfg: {"name": "Spark \u2460 bureau", "peers": []})):
             with self.subTest(label=label):
                 port = self.spare_proxy(label, KEY_1, pair=pair)
@@ -832,14 +993,14 @@ class TwoBoxesBehindOneEndpoint(unittest.TestCase):
         self.assertIn("proxy is https://host:port", self.journal("http-peer"), "never in clear between two boxes")
 
     def test_an_entry_whose_engine_does_not_answer_says_so_on_v1_models(self):
-        port = self.spare_proxy("entry-down", KEY_1, peers=[("spark2", self.pport2, KEY_2)],
+        port = self.spare_proxy("entry-down", KEY_1, peers=[("spark2", self.pport2)],
                                 upstream=f"http://127.0.0.1:{localports.held(self)}")
         st, out, _ = self.call("/v1/models", port=port, method="GET")
         self.assertEqual(st, 503, "as a box alone: no peer's model stands in for this box's engine")
 
     def test_no_proxy_of_the_environment_gets_the_peers_key(self):
         dead = f"http://127.0.0.1:{localports.held(self)}"
-        port = self.spare_proxy("with-proxy-env", KEY_1, peers=[("spark2", self.pport2, KEY_2)],
+        port = self.spare_proxy("with-proxy-env", KEY_1, peers=[("spark2", self.pport2)],
                                 extra={"http_proxy": dead, "HTTP_PROXY": dead, "https_proxy": dead, "HTTPS_PROXY": dead})
         st, out, _ = self.call("/v1/chat/completions", self.chat("qwen3.8-flash-next-fp4"), port=port)
         self.assertEqual(st, 200, out[:300])           # through the dead proxy it would have failed
@@ -868,7 +1029,7 @@ class TwoBoxesBehindOneEndpoint(unittest.TestCase):
                 if body.get("model") not in Switched.models:
                     return self.reply({"error": {"type": "model_not_served", "message": "another model here"}}, 409)
                 self.reply({"id": "c", "choices": [{"message": {"content": "from the switched peer"}}]})
-        port = self.spare_proxy("switch-409", KEY_1, peers=[("spark2", tls_peer(self, Switched), KEY_2)],
+        port = self.spare_proxy("switch-409", KEY_1, peers=[("spark2", tls_peer(self, Switched))],
                                 extra={"PAIR_TTL_S": "300"})
         st, out, _ = self.call("/v1/chat/completions", self.chat("qwen3.8-flash-next-fp4"), port=port)
         self.assertEqual(st, 200, out[:300])          # its list is read and kept 300 s
@@ -900,7 +1061,7 @@ class TwoBoxesBehindOneEndpoint(unittest.TestCase):
                 part = b'data: {"choices": [{"delta": {"content": "x"}}]}\n\n'
                 self.wfile.write(b"%x\r\n%s\r\n" % (len(part), part)); self.wfile.flush()
                 time.sleep(30)                      # the box went: no byte, no FIN
-        port = self.spare_proxy("silent", KEY_1, peers=[("spark2", tls_peer(self, Silent), KEY_2)],
+        port = self.spare_proxy("silent", KEY_1, peers=[("spark2", tls_peer(self, Silent))],
                                 extra={"PAIR_STREAM_SILENCE_S": "2"})
         c = http.client.HTTPConnection("127.0.0.1", port, timeout=20)
         try:
@@ -928,7 +1089,7 @@ class TwoBoxesBehindOneEndpoint(unittest.TestCase):
         (t / "bin/systemctl").chmod(0o755)
         engine_port = localports.held(self)
         # a box of a pair (its peer gone): a pair.json without a peer is a box alone now
-        port = self.spare_proxy("held-box", KEY_2, peers=[("spark1", localports.held(self), KEY_1)], name="spark2",
+        port = self.spare_proxy("held-box", KEY_2, peers=[("spark1", localports.held(self))], name="spark2",
                                 who="spark2", upstream=f"http://127.0.0.1:{engine_port}",
                                 extra={"PATH": f"{t / 'bin'}:{os.environ['PATH']}", "PROXY_HOLD_UNITS": "qwen38-x.service",
                                        "PROXY_HOLD_MAX_S": "30", "PROXY_HOLD_POLL_S": "0.2"})
@@ -979,8 +1140,8 @@ class TwoBoxesBehindOneEndpointInProcess(TwoBoxesBehindOneEndpoint):
     def test_a_peer_that_switched_since_its_list_was_read_never_serves_the_wrong_model(self):
         super().test_a_peer_that_switched_since_its_list_was_read_never_serves_the_wrong_model()
 
-    def test_a_request_a_peer_sent_on_is_served_or_refused_never_sent_on(self):
-        super().test_a_request_a_peer_sent_on_is_served_or_refused_never_sent_on()
+    def test_a_hop_header_on_the_client_port_is_no_hop(self):
+        super().test_a_hop_header_on_the_client_port_is_no_hop()
 
     def test_a_peer_that_does_not_answer_is_said_at_once(self):
         super().test_a_peer_that_does_not_answer_is_said_at_once()
@@ -991,8 +1152,14 @@ class TwoBoxesBehindOneEndpointInProcess(TwoBoxesBehindOneEndpoint):
     def test_the_models_list_never_waits_for_a_peer(self):
         super().test_the_models_list_never_waits_for_a_peer()
 
-    def test_the_peers_key_reaches_no_journal(self):
-        super().test_the_peers_key_reaches_no_journal()
+    def test_no_secret_reaches_a_journal(self):
+        super().test_no_secret_reaches_a_journal()
+
+    def test_no_key_or_cookie_crosses_the_pair(self):
+        super().test_no_key_or_cookie_crosses_the_pair()
+
+    def test_the_pair_port_takes_the_pairs_routes_only(self):
+        super().test_the_pair_port_takes_the_pairs_routes_only()
 
     def test_a_box_without_pair_json_is_what_it_was(self):
         super().test_a_box_without_pair_json_is_what_it_was()
@@ -1030,14 +1197,20 @@ class TwoBoxesBehindOneEndpointInProcess(TwoBoxesBehindOneEndpoint):
     def test_an_entrys_client_that_leaves_ends_the_request_on_the_other_box(self):
         super().test_an_entrys_client_that_leaves_ends_the_request_on_the_other_box()
 
+    def test_an_answer_past_the_cap_is_refused(self):
+        super().test_an_answer_past_the_cap_is_refused()
+
+    def test_an_error_answer_the_other_box_cuts_is_said_cut(self):
+        super().test_an_error_answer_the_other_box_cuts_is_said_cut()
+
+    def test_a_certificate_whose_dates_this_clock_does_not_hold_still_pairs(self):
+        super().test_a_certificate_whose_dates_this_clock_does_not_hold_still_pairs()
+
     def test_a_peer_whose_engine_restarts_gets_a_503_to_try_again_not_a_404(self):
         super().test_a_peer_whose_engine_restarts_gets_a_503_to_try_again_not_a_404()
 
     def test_a_stream_the_peer_cuts_reaches_the_client_cut_never_ended(self):
         super().test_a_stream_the_peer_cuts_reaches_the_client_cut_never_ended()
-
-    def test_a_peer_without_pair_json_refuses_a_request_sent_on_for_another_model(self):
-        super().test_a_peer_without_pair_json_refuses_a_request_sent_on_for_another_model()
 
     def test_a_request_sent_on_to_a_box_whose_engine_restarts_is_told_to_try_again_not_held(self):
         super().test_a_request_sent_on_to_a_box_whose_engine_restarts_is_told_to_try_again_not_held()
@@ -1158,17 +1331,18 @@ class ThePairsPieces(unittest.TestCase):
         self.assertIsNone(self.mod.pair_conf())
 
     def test_the_tls_of_a_pair_is_checked_whole(self):
-        good = peer_entry(self.cfg, "spark2", localports.held(self), KEY_2)
+        good = peer_entry(self.cfg, "spark2", localports.held(self))
         conf = self.conf_now({"name": "spark1", "peers": [good]})
         self.assertEqual(conf["tls"]["pins"], {ident("spark2")[1]: "spark2"})
         self.assertEqual(conf["tls"]["mine"], ident("spark1")[1])
+        self.assertTrue(conf["tls"]["server"].verify_flags & 0x200000, "dates not checked: the pin is the certificate")
         self.assertTrue(conf["peers"][0]["opener"] and conf["peers"][0]["list_opener"])
         self.assertIn("over TLS, this box's certificate sha256 " + ident("spark1")[1][:16], self.lines[-1])
         (self.cfg / "pair/two.crt").write_text(ident("spark2")[0] + ident("rogue")[0])
         (self.cfg / "pair/none.crt").write_text("not a certificate\n")
         for why, e in (("is not the certificate pair.json pins", dict(good, sha256=ident("rogue")[1])),
                        ("cannot be read", dict(good, cert_file="pair/missing.crt")),
-                       ("its certificate is this box's own", peer_entry(self.cfg, "me", localports.held(self), KEY_2, who="spark1")),
+                       ("its certificate is this box's own", peer_entry(self.cfg, "me", localports.held(self), who="spark1")),
                        ("holds 2 certificates, not one", dict(good, cert_file="pair/two.crt")),
                        ("holds 0 certificates, not one", dict(good, cert_file="pair/none.crt"))):
             with self.subTest(why=why):
@@ -1191,13 +1365,10 @@ class ThePairsPieces(unittest.TestCase):
         self.assertEqual(why(socket.timeout("timed out")), "no answer in time")
         self.assertEqual(why(ValueError("its /v1/models is not a list of models")), "its /v1/models is not a list of models")
         self.assertEqual(why(ValueError()), "ValueError")
+        self.assertEqual(why(ValueError("HTTP/1.1 200\r\n\x1b[2Jforged")), "HTTP/1.1 200???[2Jforged",
+                         "what the other box wrote never holds a control character")
 
-    def test_the_hop_header_and_the_model(self):
-        hop = self.mod.pair_hop
-        self.assertIsNone(hop({}))
-        self.assertIsNone(hop({"X-Alzeo-Pair-Hop": "  "}))
-        self.assertEqual(hop({"X-Alzeo-Pair-Hop": "spark1"}), "spark1")
-        self.assertEqual(hop({"X-Alzeo-Pair-Hop": "spark1\nGET /fake"}), "a peer")
+    def test_the_model_a_body_names(self):
         bm = self.mod.body_model
         self.assertEqual(bm(b'{"model": "kolibri-1"}'), "kolibri-1")
         for body in (b"not json", b"[1]", b'{"model": 3}', b"{}"):
@@ -1206,32 +1377,32 @@ class ThePairsPieces(unittest.TestCase):
     def test_a_peers_list_is_read_kept_and_read_again(self):
         class Lists(http.server.BaseHTTPRequestHandler):
             protocol_version = "HTTP/1.1"
-            answer, gets = (200, {"data": [{"id": "kolibri-1"}, {"id": 3}, "x"]}), []
+            answer, auths = (200, {"data": [{"id": "kolibri-1"}, {"id": 3}, "x", {"id": "forged\n[proxy] line"},
+                                            {"id": "\x1b[31mred"}]}), []
 
             def log_message(self, *a):
                 pass
 
             def do_GET(self):
-                Lists.gets.append(self.headers.get("X-Alzeo-Pair-Hop"))
+                Lists.auths.append(self.headers.get("Authorization"))
                 code, obj = Lists.answer
                 out = json.dumps(obj).encode()
                 self.send_response(code); self.send_header("Content-Type", "application/json")
                 self.send_header("Content-Length", str(len(out))); self.end_headers(); self.wfile.write(out)
         port = tls_peer(self, Lists)
         conf = self.mod._pair_parse(json.dumps({"name": "spark1", "peers": [
-            peer_entry(self.cfg, "lists", port, "k-peer", who="spark2"),
-            peer_entry(self.cfg, "gone", localports.held(self), "k-peer", who="rogue"),
-            dict(peer_entry(self.cfg, "nokey", port, "k-peer", who="spark3"), key_file="pair/missing.key")]}))
+            peer_entry(self.cfg, "lists", port, who="spark2"),
+            peer_entry(self.cfg, "gone", localports.held(self), who="rogue"),
+            peer_entry(self.cfg, "othercert", port, who="spark3")]}))
         self.mod._pair_tls(conf)
-        peer, gone, nokey = conf["peers"]
+        peer, gone, other = conf["peers"]
         pm = self.mod.peer_models
-        self.assertEqual(pm(peer), ("kolibri-1",))
+        self.assertEqual(pm(peer), ("kolibri-1",), "an id that is no printable word never kept: a journal line")
         self.assertEqual(pm(peer), ("kolibri-1",), "kept")
-        self.assertEqual(len(Lists.gets), 1)
-        self.assertTrue(Lists.gets[0], "a peer's list is asked as a hop: its own, never its union")
+        self.assertEqual(Lists.auths, [None], "read once, with no key: the certificate is the pair's")
         t = time.monotonic()
         self.assertEqual(pm(peer, fresh=True, since=t - 60), ("kolibri-1",), "read after `since`: kept")
-        self.assertEqual(len(Lists.gets), 1)
+        self.assertEqual(len(Lists.auths), 1)
         Lists.answer = (200, [1, 2])
         self.assertEqual(pm(peer, fresh=True), ())
         self.assertIn("not a list", self.mod._PAIR_MODELS["lists"]["error"])
@@ -1240,11 +1411,11 @@ class ThePairsPieces(unittest.TestCase):
         self.assertEqual(self.mod._PAIR_MODELS["lists"]["error"], "HTTP 503 on /v1/models")
         self.assertEqual(pm(gone), ())
         self.assertIn("nothing listens on its pair port", self.mod._PAIR_MODELS["gone"]["error"])
-        self.assertEqual(pm(nokey), ())
-        self.assertTrue(self.mod._PAIR_MODELS["nokey"]["error"])
+        self.assertEqual(pm(other), (), "the box at that address shows another certificate than the pinned one")
+        self.assertIn("another certificate than the one pinned", self.mod._PAIR_MODELS["othercert"]["error"])
 
     def test_the_union_and_the_served_map(self):
-        conf = self.conf_now({"name": "spark1", "peers": [peer_entry(self.cfg, "spark2", localports.held(self), KEY_2)]})
+        conf = self.conf_now({"name": "spark1", "peers": [peer_entry(self.cfg, "spark2", localports.held(self))]})
         self.mod._PAIR_MODELS["spark2"] = {"ts": time.monotonic(), "models": ("kolibri-1",), "error": None,
                                            "rows": [{"id": "kolibri-1", "object": "model"}, {"id": "qwen3.8-27b"}]}
         out = json.loads(self.mod.pair_models_body(b'{"object": "list", "data": [{"id": "qwen3.8-27b"}]}'))
@@ -1263,9 +1434,10 @@ class ThePairsPieces(unittest.TestCase):
         self.addCleanup(keeper.stop)
         keeper.check()
         self.assertIsNone(keeper.srv, "a box alone opens no port")
-        self.conf_now({"name": "spark1", "peers": [peer_entry(self.cfg, "spark2", localports.held(self), KEY_2)]})
+        self.conf_now({"name": "spark1", "peers": [peer_entry(self.cfg, "spark2", localports.held(self))]})
         keeper.check()
         self.assertIsNotNone(keeper.srv)
+        opened = keeper.srv
         port = keeper.srv.server_address[1]
         self.assertIn(f"pair: port 127.0.0.1:{port} open over TLS, to the certificates of spark2 only", self.lines)
         keeper.check()
@@ -1275,13 +1447,12 @@ class ThePairsPieces(unittest.TestCase):
         keeper.check()
         self.assertIsNone(keeper.srv)
         self.assertIn(f"pair: port {port} closed: this box has no pair now", self.lines)
-        with self.assertRaises(ConnectionRefusedError):
-            socket.create_connection(("127.0.0.1", port), timeout=5).close()
+        self.assertEqual(opened.socket.fileno(), -1, "its socket closed (never a connection to a number now free)")
 
     def test_a_pair_port_that_cannot_be_opened_is_said_once(self):
         keeper = self.mod.PairPort()
         self.addCleanup(keeper.stop)
-        self.conf_now({"name": "spark1", "peers": [peer_entry(self.cfg, "spark2", localports.held(self), KEY_2)]})
+        self.conf_now({"name": "spark1", "peers": [peer_entry(self.cfg, "spark2", localports.held(self))]})
         saved, self.mod.PAIR_PORT = self.mod.PAIR_PORT, localports.held(self)     # bound by another: EADDRINUSE
         try:
             keeper.check()
@@ -1305,7 +1476,7 @@ class ThePairsPieces(unittest.TestCase):
     def test_a_pair_connection_is_the_networks_even_from_loopback(self):
         # the header clock of the network (CLIENT_HEADER_S), not loopback's CLIENT_IO_S: a slow box on a
         # tunnel's end holds a thread seconds, not 15 minutes
-        self.conf_now({"name": "spark1", "peers": [peer_entry(self.cfg, "spark2", localports.held(self), KEY_2)]})
+        self.conf_now({"name": "spark1", "peers": [peer_entry(self.cfg, "spark2", localports.held(self))]})
         srv = self.mod.PairServer(("127.0.0.1", 0), self.mod.H)
         threading.Thread(target=srv.serve_forever, daemon=True).start()
         self.addCleanup(srv.server_close)
@@ -1327,6 +1498,36 @@ class ThePairsPieces(unittest.TestCase):
         self.assertLess(time.monotonic() - t0, 6)
         self.assertTrue(self.mod.PairServer.from_network and not self.mod.Server.from_network)
 
+    def test_a_request_of_the_pair_is_admitted_by_this_boxs_own_key(self):
+        # the other box holds no key of this one (decision 978): its certificate admits it on the pair port, and
+        # this box's own key admits it to the engine, whatever key it sent (none, or another)
+        class Fake:
+            pass
+        f = Fake()
+        f._pair_box, f.headers, f.command, f.path = "spark2", {"Authorization": "Bearer not-this-box"}, "POST", "/v1/messages"
+        saved = self.mod.UPSTREAM_API_KEY
+        self.mod.UPSTREAM_API_KEY = "k-own-key"          # never this machine's real key file
+        self.addCleanup(setattr, self.mod, "UPSTREAM_API_KEY", saved)
+        self.assertEqual(self.mod._upstream_auth(f), "Bearer k-own-key")
+        self.assertFalse(self.mod.H._door_shut(f, "/v1/messages"), "no key asked of the pair: its certificate")
+        f._pair_box = None
+        self.assertEqual(self.mod._upstream_auth(f), "Bearer not-this-box", "a client of the client port: its own")
+
+    def test_a_line_said_once_a_minute_counts_the_others(self):
+        lines = []
+        saved = self.mod.log
+        self.mod.log = lines.append
+        self.addCleanup(setattr, self.mod, "log", saved)
+        say = self.mod._say_once_a_minute
+        say("test-kind", "first")
+        say("test-kind", "second")
+        say("test-kind", "third")
+        self.assertEqual(lines, ["first"])
+        t, quiet = self.mod._SAID["test-kind"]
+        self.mod._SAID["test-kind"] = (t - 61, quiet)
+        say("test-kind", "fourth")
+        self.assertEqual(lines, ["first", "fourth (2 more such since the last line)"])
+
     def test_a_connection_refused_in_setup_reads_nothing_and_a_box_taken_out_is_refused(self):
         class Fake:
             pass
@@ -1334,7 +1535,7 @@ class ThePairsPieces(unittest.TestCase):
         refused._refused, refused.close_connection = True, False
         self.mod.H.handle_one_request(refused)            # it has no rfile: a read would raise here
         self.assertTrue(refused.close_connection)
-        self.conf_now({"name": "spark1", "peers": [peer_entry(self.cfg, "spark3", localports.held(self), "k-3", who="rogue")]})
+        self.conf_now({"name": "spark1", "peers": [peer_entry(self.cfg, "spark3", localports.held(self), who="rogue")]})
         out = Fake()
         out._refused, out.close_connection = False, False
         out._pair_box, out._pair_pin, out.client_address = "spark2", ident("spark2")[1], ("127.0.0.1", 5)

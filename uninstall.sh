@@ -158,8 +158,13 @@ if [ -d "$CONFIG_DIR" ]; then
   # since v1.36.0 (2026-10-17): it goes with the folder; kept, a new install reads the box's age in it
   [ -f "$CONFIG_DIR/installed.json" ] && echo "  record    $CONFIG_DIR/installed.json (the release the last ./install.sh installed, and the choices it recorded)"
   [ -f "$CONFIG_DIR/claude-code.env" ] && echo "  legacy    $CONFIG_DIR/claude-code.env (pre-v1.3 client config, unmaintained)"
-  # 2026-11-02: a pair (docs/pair.md): the other box keeps this one until it is told
-  [ -d "$CONFIG_DIR/pair" ] && echo "  pair      $CONFIG_DIR/pair (this box's certificate, and the other box's key and certificate: run pair.py remove first, so that the other box forgets this one)"
+  # 2026-11-02: a pair (docs/pair.md): the other box keeps this one until it is told. A peer of pair.json
+  # pins a certificate (sha256); pair/ alone is this box's certificate, kept for a next pair
+  if [ -f "$CONFIG_DIR/pair.json" ] && grep -q '"sha256"' "$CONFIG_DIR/pair.json" 2>/dev/null; then
+    echo "  pair      $CONFIG_DIR/pair.json (this box is paired: run pair.py remove first, so that the other box forgets this one)"
+  elif [ -d "$CONFIG_DIR/pair" ]; then
+    echo "  pair      $CONFIG_DIR/pair (this box's certificate for a pair, made by pair.py)"
+  fi
   [ -f "$CONFIG_DIR/opencode.off" ] && echo "  marker    $CONFIG_DIR/opencode.off (opencode integration disabled with --no-opencode)"
   [ -f "$CONFIG_DIR/cockpit.off" ] && echo "  marker    $CONFIG_DIR/cockpit.off (cockpit disabled with --no-cockpit)"
   for _lane in image video flash 27b kolibri nemotron nemotron-super flash-local ornith-122b; do

@@ -53,7 +53,7 @@ Ten roles, nothing else:
    cockpit turns the line into a banner (docs/clients.md);
 10. on a box with pair.json (discussion #45), send each generation that names one of this
    repo's lanes' models to the box of the pair that serves it, a peer's own proxy with that
-   peer's key over TLS both ways (each box's certificate pinned by the other, PAIR_PORT), and
+   over TLS both ways (each box's certificate pinned by the other, PAIR_PORT), and
    refuse, in the client's dialect, a lane name no box serves, with what each
    box serves, instead of answering it with another model. Any other name stays on this box, as
    on a box alone. GET /v1/models lists every box's models (see "Two boxes behind one endpoint" below).
@@ -62,14 +62,16 @@ v6.50: two boxes behind one endpoint (role 10, discussion #45, decisions 961-966
 config directory holds pair.json reads its peers' /v1/models (every PAIR_TTL_S seconds, and again
 when a peer answers 409 that it serves another model now), sends a generation that names a model
 of one of this repo's lanes to the box that serves it, and refuses a lane name no box serves (404,
-with what each box serves). A request a peer sends on carries X-Alzeo-Pair-Hop and is served
-where it lands or refused (409), never sent on again. The boxes talk over TLS both ways
-(decisions 971-974, as NVIDIA PAIR's nodes do): each has a certificate of its own, made by
-pair.py, which the other pins in its pair.json, and a box of a pair listens on PAIR_PORT (30002)
-for its peers only, a connection without a pinned certificate refused at the handshake; a
-request that comes in there is a hop from the box of its certificate, whatever its headers say.
-The port is opened within 2 s of pair.json naming a peer and closed once it names none: nothing
-restarts. Nothing changes on a box without pair.json.
+with what each box serves). The boxes talk over TLS both ways (decisions 971-978, as NVIDIA
+PAIR's nodes do): each has a certificate of its own, made by pair.py, which the other pins in its
+pair.json, and a box of a pair listens on PAIR_PORT (30002) for its peers only, a connection
+without a pinned certificate refused right after its handshake. A request that comes in there is a
+hop from the box of its certificate: served where it lands or refused (409), never sent on again.
+The certificate is the pair's only credential: no box holds the other's API key, which is also its
+cockpit's login, and the pair port takes the generation routes and GET /v1/models only, admitted
+to this box's engine with this box's own key. The port is opened within seconds of pair.json
+naming a peer and closed once it names none: nothing restarts. Nothing changes on a box without
+pair.json.
 
 v6.49: a long prompt sent again after its client gave up on it is said in the journal (role 9).
 On the Ornith lane a prompt of 494,089 tokens the prefix cache could not serve took 19 min
@@ -860,6 +862,11 @@ def _upstream_auth(handler):
     check there: right for an engine with no check of its own, or one shared
     key on purpose, and the startup banner says which mode is on.
     """
+    if getattr(handler, "_pair_box", None):
+        # the other box of a pair, admitted by its certificate on the pair port: this box's own key admits
+        # it to the engine, a key the other box never holds (decision 978)
+        key = _door_key()
+        return "Bearer " + key if key else None
     if CLIENT_KEYS and UPSTREAM_API_KEY:
         return "Bearer " + UPSTREAM_API_KEY
     value = handler.headers.get("Authorization")
@@ -3117,16 +3124,16 @@ def route_model_name(body, path):
 
 
 
-# ── Two boxes behind one endpoint (v6.50, role 10, discussion #45, decisions 961-966) ──────────
+# ── Two boxes behind one endpoint (v6.50, role 10, discussion #45, decisions 961-978) ──────────
 # A box whose config directory holds pair.json routes each generation that names one of OUR lanes'
-# models to the box that serves it: this one, or a peer's own proxy, with that peer's key. A lane
+# models to the box that serves it: this one, or a peer's own proxy, over the pair's TLS. A lane
 # name no box serves is refused, in the client's dialect, with what each box serves, instead of being answered
 # by another model; any other name (claude-*, gpt-*, none) stays on this box, as on a box alone
-# ("any name reaches the lane that serves", claude-local.py). A request a peer sends on carries
-# PAIR_HOP: it is served here or refused (409), never sent on again, so two boxes that name each
+# ("any name reaches the lane that serves", claude-local.py). A request a peer sends on comes in on
+# the pair port: it is served here or refused (409), never sent on again, so two boxes that name each
 # other cannot bounce it. The peer runs every guard of its own on it (sizes, tools, efforts, holds),
 # so it goes there as the client wrote it. pair.json is read again when it changes: no restart.
-# The boxes talk over TLS both ways (decisions 971-974, the model of NVIDIA PAIR's nodes: a
+# The boxes talk over TLS both ways (decisions 971-978, the model of NVIDIA PAIR's nodes: a
 # certificate of its own per box, pinned by the other, a client certificate demanded). pair.py makes
 # this box's certificate once (PAIR_IDENTITY, 100 years: a pair must not break on a date) and swaps
 # certificates and keys with the other box over SSH; pair.json pins each peer's certificate by its
@@ -3134,8 +3141,9 @@ def route_model_name(body, path):
 # certificate, the peer's demanded and checked against the pinned ones, by the chain and then by the
 # fingerprint itself; and it sends to a peer's PAIR_PORT with its own certificate, the peer's checked
 # the same way. No host name is checked: the pin is the certificate, and the address can be an IP of
-# the ConnectX-7 cable. The peer's key still goes with each request, as before: a second lock, checked
-# by other code than the TLS check.
+# the ConnectX-7 cable. The certificate is the pair's one credential (decision 978, after review: the API
+# key it once carried as a second lock is also the cockpit's login, which is root on a box, SECURITY.md):
+# the pair port takes the pair's routes only, and this box's own key admits them to its engine.
 LANE_NAMES = frozenset({"qwen3.8-27b", "qwen3.8-flash-next", "qwen3.8-flash-next-fp4", "ornith-1.5-122b",
                         "nemotron-3.5-bolt", "nemotron-3.5-super-vl", "kolibri-1"})
 PAIR_FILE = os.path.expanduser(os.environ.get("QWEN38_PAIR_FILE") or "~/.config/qwen38/pair.json")
@@ -3143,6 +3151,16 @@ PAIR_DIR = os.path.join(os.path.dirname(PAIR_FILE), "pair")
 # made by pair.py, a directory renamed into place whole: a certificate never meets another key
 PAIR_IDENTITY = (os.path.join(PAIR_DIR, "identity", "cert.pem"), os.path.join(PAIR_DIR, "identity", "key.pem"))
 PAIR_PORT = int(os.environ.get("PAIR_PORT") or 30002)     # 0: one the kernel chooses (the tests)
+# The largest answer not streamed this box takes from the other one: the cap of a request. It was read
+# whole, and a box gone wrong could fill this one's memory with one answer (found in review, 2026-11-03).
+PAIR_ANSWER_MAX = MAX_BODY_BYTES if MAX_BODY_BYTES > 0 else 256 * 1024 * 1024
+# X509_V_FLAG_NO_CHECK_TIME (OpenSSL 1.1+): the pin is the certificate itself, so its dates add nothing,
+# and two boxes whose clocks disagree by more than the age of a new certificate could not pair (a
+# certificate is valid from the second it is made; found in review, 2026-11-03)
+_NO_CHECK_TIME = 0x200000
+# what of a peer's /v1/models this box keeps and says: printable, no space, no control character that
+# could forge a journal line or a terminal's escape (found in review, 2026-11-03)
+_PAIR_SAFE_ID = re.compile(r"[\x21-\x7e]{1,200}")
 PAIR_ROUTES = frozenset({"/v1/chat/completions", "/v1/completions", "/v1/messages",
                          "/v1/messages/count_tokens", "/v1/responses"})
 PAIR_HOP = "X-Alzeo-Pair-Hop"
@@ -3160,12 +3178,11 @@ _PAIR_LOCK = threading.Lock()
 
 
 def _pair_parse(text):
-    """pair.json as this proxy uses it: {"name": "<this box>", "peers": [{"name", "proxy", "key_file",
-    "cert_file", "sha256"}]}. A proxy address is https://host:port with nothing after it (the peer's
-    PAIR_PORT); cert_file is the peer's certificate and sha256 its fingerprint, 64 hex digits, with or
-    without openssl's colons; a key file is read when a request goes to that peer, never logged.
-    Files are named from the directory of pair.json. Other fields (pair.py's "ssh") are not used here.
-    Raises ValueError with what is wrong."""
+    """pair.json as this proxy uses it: {"name": "<this box>", "peers": [{"name", "proxy", "cert_file",
+    "sha256"}]}. A proxy address is https://host:port with nothing after it (the peer's PAIR_PORT);
+    cert_file is the peer's certificate and sha256 its fingerprint, 64 hex digits, with or without
+    openssl's colons, a file named from the directory of pair.json. Other fields (pair.py's "ssh") are
+    not used here. Raises ValueError with what is wrong."""
     j = json.loads(text)
     if not isinstance(j, dict) or not isinstance(j.get("peers", []), list):
         raise ValueError("pair.json is an object whose \"peers\" is a list")
@@ -3173,8 +3190,8 @@ def _pair_parse(text):
     base = os.path.dirname(PAIR_FILE)
     for i, p in enumerate(j.get("peers", [])):
         if not isinstance(p, dict) or not all(isinstance(p.get(k), str) and p.get(k)
-                                              for k in ("name", "proxy", "key_file", "cert_file", "sha256")):
-            raise ValueError(f"peer {i} needs a name, a proxy, a key_file, a cert_file and a sha256, each a string")
+                                              for k in ("name", "proxy", "cert_file", "sha256")):
+            raise ValueError(f"peer {i} needs a name, a proxy, a cert_file and a sha256, each a string")
         if not PAIR_NAME.fullmatch(p["name"]):
             raise ValueError(f"peer {i}: a name is 1 to 40 letters, digits, dots, dashes or underscores")
         u = urllib.parse.urlsplit(p["proxy"])
@@ -3190,7 +3207,6 @@ def _pair_parse(text):
         if not re.fullmatch(r"[0-9a-f]{64}", pin):
             raise ValueError(f"peer {p['name']}: sha256 is the 64 hex digits of its certificate's fingerprint")
         peers.append({"name": p["name"], "proxy": f"https://{u.netloc}", "sha256": pin,
-                      "key_file": os.path.join(base, os.path.expanduser(p["key_file"])),
                       "cert_file": os.path.join(base, os.path.expanduser(p["cert_file"]))})
     name = j.get("name") if j.get("name") is not None else re.sub(r"[^A-Za-z0-9._-]", "-", socket.gethostname())[:40]
     if not isinstance(name, str) or not PAIR_NAME.fullmatch(name):
@@ -3247,6 +3263,7 @@ def _pair_tls(conf):
         c.minimum_version = ssl.TLSVersion.TLSv1_3
         c.check_hostname = False        # the pin is the certificate: the address may be the cable's own IP
         c.verify_mode = ssl.CERT_REQUIRED
+        c.verify_flags |= _NO_CHECK_TIME
         c.load_verify_locations(cadata=pem)     # that one certificate, and nothing else, is trusted
         c.load_cert_chain(cert, key)
         p["opener"] = _pair_opener(c, fp, MAX_SILENCE_S if MAX_SILENCE_S > 0 else None)
@@ -3255,6 +3272,7 @@ def _pair_tls(conf):
     s.minimum_version = ssl.TLSVersion.TLSv1_3
     s.load_cert_chain(cert, key)
     s.verify_mode = ssl.CERT_REQUIRED           # a connection without a peer's certificate ends at the handshake
+    s.verify_flags |= _NO_CHECK_TIME
     if pems:
         s.load_verify_locations(cadata="".join(pems))
     conf["tls"] = {"server": s, "pins": pins, "mine": mine}
@@ -3300,11 +3318,6 @@ def pair_conf():
         return _PAIR["conf"]
 
 
-def _peer_key(peer):
-    with open(peer["key_file"], encoding="utf-8") as f:
-        return f.read().split("\n")[0].strip()
-
-
 _PAIR_READING: dict = {}
 
 
@@ -3342,17 +3355,16 @@ def _peer_models_soon(peer):
 def _peer_models_read(peer):
     models, rows, err = (), [], None
     try:
-        # marked as a hop: the peer answers with its own engine's list, never the union it shows its
-        # clients, so two boxes that name each other do not ask each other in a loop, and a refusal
-        # says what each box serves itself (found in review, 2026-11-02)
-        req = urllib.request.Request(peer["proxy"] + "/v1/models",
-                                     headers={"Authorization": f"Bearer {_peer_key(peer)}",
-                                              PAIR_HOP: (pair_conf() or {}).get("name") or "pair"})
+        # on the pair port, a hop: the peer answers with its own engine's list, never the union it shows its
+        # clients, so two boxes that name each other do not ask each other in a loop, and a refusal says
+        # what each box serves itself (found in review, 2026-11-02)
+        req = urllib.request.Request(peer["proxy"] + "/v1/models")
         with peer["list_opener"].open(req, timeout=5) as r:
             data = json.loads(r.read(1 << 20).decode())
         if not isinstance(data, dict) or not isinstance(data.get("data"), list):
             raise ValueError("its /v1/models is not a list of models")
-        rows = [m for m in data["data"] if isinstance(m, dict) and isinstance(m.get("id"), str)]
+        rows = [m for m in data["data"] if isinstance(m, dict) and isinstance(m.get("id"), str)
+                and _PAIR_SAFE_ID.fullmatch(m["id"])]
         models = tuple(m["id"] for m in rows)
     except urllib.error.HTTPError as e:
         err = f"HTTP {e.code} on /v1/models"
@@ -3376,7 +3388,8 @@ def _pair_why(e):
         return "nothing listens on its pair port: its proxy is stopped, or older than this pair"
     if isinstance(r, (socket.timeout, TimeoutError)):
         return "no answer in time"
-    return s[:160] or type(r).__name__
+    # what the other box wrote (a status line, a reason) may hold a CR or an escape: never a forged journal line
+    return re.sub(r"[\x00-\x1f\x7f]", "?", s)[:160] or type(r).__name__
 
 
 def pair_models_body(data):
@@ -3403,15 +3416,6 @@ def pair_models_body(data):
             if r["id"] not in have:
                 rows.append(dict(r, box=p["name"])); have.add(r["id"])
     return rewritten(j)
-
-
-def pair_hop(headers):
-    """The box an entry names on X-Alzeo-Pair-Hop, None when there is none or it is empty; any value that is
-    no box name reads as "a peer", so a client's value is never journaled."""
-    hop = (headers.get(PAIR_HOP) or "").strip()
-    if not hop:
-        return None
-    return hop if PAIR_NAME.fullmatch(hop) else "a peer"
 
 
 def body_model(body):
@@ -3795,6 +3799,13 @@ class _PeerHTTPS(urllib.request.HTTPSHandler):
             req.upstream = conn
             return conn
         return self.do_open(connection, req, context=self._context)
+
+
+# What never crosses the pair: the client's credentials on the way out (the certificate is the pair's),
+# a cookie either way (cookies know no port: a browser's cookie for this box's cockpit went to the other
+# box, and the other box's could be set here; found in review, 2026-11-03)
+PAIR_DROP_OUT = frozenset({"authorization", "x-api-key", "proxy-authorization", "cookie", PAIR_HOP.lower()})
+PAIR_DROP_IN = frozenset({"x-accel-buffering", "set-cookie"})
 
 
 def _pair_opener(context, pin, read_s):
@@ -4208,6 +4219,18 @@ MAX_REMOTE_CONN = int(os.environ.get("PROXY_MAX_REMOTE_CONN", "256") or 0)
 CLIENT_HEADER_S = float(os.environ.get("CLIENT_HEADER_S", "30") or 0)
 
 
+def _peek(sock):
+    """The next byte a client sent, left in place, b"" once it ended its side. Under TLS (the pair port,
+    QWEN38_TLS_CERT) the socket under TLS is peeked at: a box whose client left ends its connection to the
+    pair port with no close_notify (Python sends none), and the end of the TCP side is the same goodbye as
+    on a plain socket; a byte there is a record of the client's, an alert or a next request, as on a plain
+    socket bytes are. No peek was made through TLS before the pair: a box never saw the other's client
+    leave, and its engine served nobody (found in review, 2026-11-02 and 2026-11-03)."""
+    if isinstance(sock, ssl.SSLSocket):
+        return socket.socket.recv(sock, 1, socket.MSG_PEEK | socket.MSG_DONTWAIT)
+    return sock.recv(1, socket.MSG_PEEK | socket.MSG_DONTWAIT)
+
+
 def _counted_peer(addr):
     """True for a peer whose connections count against the network's ceilings: any but loopback."""
     try:
@@ -4349,6 +4372,22 @@ class Server(ThreadingHTTPServer):
         super().handle_error(request, client_address)
 
 
+_SAID: dict = {}
+_SAID_LOCK = threading.Lock()
+
+
+def _say_once_a_minute(kind, line):
+    """line in the journal, once a minute at most for its kind, with how many were not said since."""
+    now = time.monotonic()
+    with _SAID_LOCK:
+        t, quiet = _SAID.get(kind, (None, 0))
+        if t is not None and now - t < 60:
+            _SAID[kind] = (t, quiet + 1)
+            return
+        _SAID[kind] = (now, 0)
+    log(line + (f" ({quiet} more such since the last line)" if quiet else ""))
+
+
 class PairServer(Server):
     """The pair port (role 10, decision 971): this proxy, for the boxes of its pair only. Each
     connection is wrapped with the pair as it is now, so a box taken out of pair.json is refused at its
@@ -4379,8 +4418,16 @@ class PairPort:
     def __init__(self):
         self.srv, self.said = None, None
         self.stopped = threading.Event()
+        # a stop that came while check() was opening the port left it open, its thread running (found in
+        # review, 2026-11-03): one at a time
+        self._lock = threading.Lock()
 
     def check(self):
+        with self._lock:
+            if not self.stopped.is_set():
+                self._check()
+
+    def _check(self):
         conf = pair_conf()
         if conf and conf.get("tls") and self.srv is None:
             try:
@@ -4413,7 +4460,8 @@ class PairPort:
     def stop(self):
         """The keeper's end, and its port's (a proxy run inside a test's process)."""
         self.stopped.set()
-        srv, self.srv = self.srv, None
+        with self._lock:
+            srv, self.srv = self.srv, None
         if srv is not None:
             srv.shutdown()
             srv.server_close()
@@ -4492,8 +4540,10 @@ class H(BaseHTTPRequestHandler):
                 # log(), not log_error(): this class mutes log_message, so the base
                 # logger would print nothing to a journal that is the only witness.
                 if pair_port:
-                    # why, for whoever pairs the boxes (no certificate, not the pinned one): no secret in it
-                    log(f"pair port: TLS handshake from {self.client_address[0]} failed ({str(e)[:160]})")
+                    # why, for whoever pairs the boxes (no certificate, not the pinned one): no secret in it;
+                    # once a minute, with how many since: any host on the network can try (review, 2026-11-03)
+                    _say_once_a_minute("handshake", f"pair port: TLS handshake from {self.client_address[0]} "
+                                                    f"failed ({re.sub(r'[^ -~]', '?', str(e))[:160]})")
                     self._refused = True
                 else:
                     log(f"TLS handshake from {self.client_address[0]} failed: {type(e).__name__}")
@@ -5147,14 +5197,7 @@ class H(BaseHTTPRequestHandler):
             readable, _, _ = select.select([sock], [], [], 0)
             if not readable:
                 return False
-            if isinstance(sock, ssl.SSLSocket):
-                # under TLS, the bytes waiting may be a record of the client's (an alert, a next request),
-                # and only the end of its TCP side says it left: an entry box whose client left ends its
-                # connection to the pair port so (Python sends no close_notify), and the socket under TLS,
-                # peeked at, reads as ended. A peek through TLS returned False here before the pair:
-                # a peer never saw an entry's client leave, and its engine served nobody.
-                return not socket.socket.recv(sock, 1, socket.MSG_PEEK | socket.MSG_DONTWAIT)
-            return not sock.recv(1, socket.MSG_PEEK | socket.MSG_DONTWAIT)
+            return not _peek(sock)
         except BlockingIOError:
             return False
         except (OSError, ValueError):
@@ -5233,15 +5276,8 @@ class H(BaseHTTPRequestHandler):
         an EOF is read as the caller leaving: a client that half-closes after its request
         would be taken for gone."""
         sock = self.connection
-        # Under TLS (the pair port, QWEN38_TLS_CERT) the socket under TLS is peeked at: an entry box
-        # whose client left ends its connection to the pair port with no close_notify (Python sends
-        # none), and the end of the TCP side is the same goodbye as on a plain socket. This keeper
-        # returned at once on TLS before the pair: a peer's engine then generated to the end for an
-        # entry's client that was gone, and a stop of the cockpit went unseen while it waited.
-        if isinstance(sock, ssl.SSLSocket):
-            peek = lambda: socket.socket.recv(sock, 1, socket.MSG_PEEK | socket.MSG_DONTWAIT)
-        else:
-            peek = lambda: sock.recv(1, socket.MSG_PEEK | socket.MSG_DONTWAIT)
+        # Under TLS too (_peek): this keeper returned at once on TLS before the pair, and a stop of the
+        # cockpit went unseen while a request waited
         while not done.is_set():
             if self._stopped_while_routed(done):
                 return
@@ -5252,7 +5288,7 @@ class H(BaseHTTPRequestHandler):
             if not readable:
                 continue
             try:
-                if peek():
+                if _peek(sock):
                     return               # the client sent bytes: pipelining (or a TLS record), not a goodbye
             except BlockingIOError:
                 continue
@@ -5323,7 +5359,7 @@ class H(BaseHTTPRequestHandler):
         if done.wait(min(1.0, KEEPALIVE_S)):
             return
         sock = self.connection
-        peek = not isinstance(sock, ssl.SSLSocket)   # a peek through TLS is not this simple
+        peek = True                      # through TLS too (_peek; a streamed request of the pair, 2026-11-03)
         anthropic = self.path.startswith("/v1/messages")
         next_ka = start + KEEPALIVE_S
         while not done.is_set():
@@ -5362,7 +5398,7 @@ class H(BaseHTTPRequestHandler):
             if not readable:
                 continue
             try:
-                if sock.recv(1, socket.MSG_PEEK | socket.MSG_DONTWAIT):
+                if _peek(sock):
                     peek = False         # the client sent bytes: pipelining, not a goodbye
                     continue
             except BlockingIOError:
@@ -5641,9 +5677,11 @@ class H(BaseHTTPRequestHandler):
         log(f"{self._peer} -> {self.command} {self.path.split('?')[0]} body={n0}b")
         # v6.47: a stop is this request's own, on a connection that serves several too
         self._stop_why = None; self._stop_floor = True; self._relay_q = None
+        if self._pair_port_refused():
+            return
         if self.path.split("?")[0] == STOP_PATH:
             self._stop_route(with_body); return     # the operator's: its own checks, before the wall and the door
-        if self._wall_refused() or self._door_refused():
+        if self._pair_box is None and (self._wall_refused() or self._door_refused()):
             return
         n = parse_body_length(self.headers.get("Content-Length"))
         if n is None:
@@ -5807,20 +5845,37 @@ class H(BaseHTTPRequestHandler):
         try: self._answer(status, headers, json.dumps(err).encode())
         except Exception: pass
 
+    def _pair_port_refused(self):
+        """On the pair port, the other box of the pair has the pair's routes and nothing else: a generation
+        (PAIR_ROUTES) or GET /v1/models. Its certificate admits it, never a key: this box's own admits it to
+        the engine (_upstream_auth), a key the other box never holds, which is also the cockpit's login, root
+        on a box (decision 978, after review, 2026-11-03). True when this request was refused, 403."""
+        if self._pair_box is None:
+            return False
+        route = self.path.split("?")[0]
+        if (self.command == "POST" and route in PAIR_ROUTES) or (self.command == "GET" and route.rstrip("/") == "/v1/models"):
+            return False
+        log(f"{self._peer} REFUSED {self.command} {route} from {self._pair_box}: the pair port takes the pair's routes only")
+        self._plain(403, {"Content-Type": "application/json"},
+                    json.dumps({"error": {"type": "forbidden", "message": "keepalive-proxy: the pair port takes "
+                                          "the generation routes and GET /v1/models only"}}).encode())
+        self._done("403 pair route refused")
+        return True
+
     def _pair_hop(self):
-        """The box that sent this request on: on the pair port, the box of the certificate that opened
-        the connection, whatever its headers say; elsewhere, the one X-Alzeo-Pair-Hop names, or None."""
-        return self._pair_box or pair_hop(self.headers)
+        """The box that sent this request on, or None: on the pair port, the box of the certificate that
+        opened the connection. A header said it before the pair port: any key holder on the client port
+        could send it, and the journal said a box sent on what it never sent (found in review, 2026-11-03)."""
+        return self._pair_box
 
     def _pair_routed(self, body, route):
         """Role 10: True when the pair answered this request (sent to a peer, or refused), False
         when it goes on to this box's own engine as it always did."""
         conf = pair_conf()
         hop = self._pair_hop()
-        # A request an entry sent on is judged here even on a box without pair.json, the peer of a
-        # one-entry pair: without that, a peer that had switched served it with its new model (found in
-        # review, 2026-11-02). A pair.json that names no peer is a box alone (found in review, 2026-11-02:
-        # `pair.py name` alone made a lane name this box does not serve a 404)
+        # A request the other box sent on is judged here: without that, a box that had switched served it
+        # with its new model (found in review, 2026-11-02). A pair.json that names no peer is a box alone
+        # (found in review, 2026-11-02: `pair.py name` alone made a lane name this box does not serve a 404)
         if (not (conf and conf["peers"]) and not hop) or route not in PAIR_ROUTES or not body:
             return False
         name = body_model(body)
@@ -5862,7 +5917,7 @@ class H(BaseHTTPRequestHandler):
             if not CLIENT_KEYS and not _door_key():
                 # this box admitted the request without checking a key (its own is unreadable: the engine's check
                 # was left to do it, and a request sent on never reaches it), so nothing goes to another box on
-                # its say: the peer's key would sign it (found in review, 2026-11-02). Its own lane is still
+                # its say: the pair's certificate would carry it (found in review, 2026-11-02). Its own lane is still
                 # served as before: this is checked only when a peer would get the request.
                 log(f"{self._peer} REFUSED {name}: this box cannot read its own key, so it sends nothing on to a peer")
                 self._pair_refuse(503, "engine_unavailable", "this box cannot read its own key "
@@ -5931,22 +5986,14 @@ class H(BaseHTTPRequestHandler):
         return True
 
     def _forward_peer(self, body, peer, name, conf, local):
-        """Role 10: the request to the peer's proxy as the client wrote it, with the peer's key
-        and PAIR_HOP; its answer relayed as it comes. "moved" when the peer answers that it serves
-        another model now (409 model_not_served), None once the caller has its answer."""
-        try:
-            key = _peer_key(peer)
-        except OSError as e:
-            log(f"{self._peer} pair: the key file of {peer['name']} cannot be read ({e.strerror or e})")
-            self._pair_refuse(503, "engine_unavailable", f"the key file of box {peer['name']} cannot be "
-                              f"read on this box", pair_served_map(conf, local))
-            self._done("503 pair peer key unreadable")
-            return None
+        """Role 10: the request to the peer's pair port as the client wrote it, without its credentials
+        (the certificate is the pair's: the peer admits it with its own key); its answer relayed as it
+        comes. "moved" when the peer answers that it serves another model now (409 model_not_served),
+        None once the caller has its answer."""
+        # the client's key, cookies included, never cross the pair: a browser's cookie for this box's cockpit
+        # (cookies know no port) went to the other box (found in review, 2026-11-03)
         h = {k: v for k, v in self.headers.items()
-             if k.lower() not in HOP and k.lower() not in ("authorization", "x-api-key", PAIR_HOP.lower())
-             and not k.lower().startswith("x-override-")}
-        h["Authorization"] = f"Bearer {key}"
-        h[PAIR_HOP] = conf["name"]
+             if k.lower() not in HOP and k.lower() not in PAIR_DROP_OUT and not k.lower().startswith("x-override-")}
         req = urllib.request.Request(peer["proxy"] + self.path, data=body, headers=h, method=self.command)
         log(f"{self._peer} -> pair {peer['name']} for {name}")
         done, left = threading.Event(), threading.Event()
@@ -5971,13 +6018,27 @@ class H(BaseHTTPRequestHandler):
             try:
                 resp = peer["opener"].open(req)
             except urllib.error.HTTPError as e:
-                data = e.read(1 << 20)
-                try: e.close()
-                except Exception: pass
+                try:
+                    data = e.read(1 << 20)
+                except (OSError, ValueError, http.client.HTTPException) as cut:
+                    # its error answer cut on the way (the box went, or this client left): it escaped this
+                    # function before (found in review, 2026-11-03)
+                    data = None
+                    why = type(cut).__name__
+                finally:
+                    try: e.close()
+                    except Exception: pass
+                if data is None:
+                    if left.is_set():
+                        self._done("CLIENT GONE during pair"); return None
+                    log(f"{self._peer} pair: {peer['name']} cut its answer short ({why})")
+                    self._pair_refuse(502, "upstream_cut", f"box {peer['name']} cut its answer short",
+                                      pair_served_map(conf, local))
+                    self._done("UPSTREAM CUT pair"); return None
                 if e.code == 409 and b'"model_not_served"' in data:
                     log(f"{self._peer} pair: {peer['name']} serves another model now; the lists are read again")
                     return "moved"
-                self._plain(e.code, dict(e.headers), data)
+                self._plain(e.code, {k: v for k, v in e.headers.items() if k.lower() not in PAIR_DROP_IN}, data)
                 self._done(f"{e.code} pair upstream")
                 return None
             except (urllib.error.URLError, OSError, http.client.HTTPException) as e:
@@ -5991,11 +6052,11 @@ class H(BaseHTTPRequestHandler):
                 return None
             if left.is_set():
                 self._done("CLIENT GONE during pair"); return None
-            headers = {k: v for k, v in resp.headers.items() if k.lower() != "x-accel-buffering"}
+            headers = {k: v for k, v in resp.headers.items() if k.lower() not in PAIR_DROP_IN}
             try:
                 if "text/event-stream" not in (resp.headers.get("Content-Type") or ""):
                     try:
-                        data = resp.read()
+                        data = resp.read(PAIR_ANSWER_MAX + 1)
                     except (OSError, http.client.HTTPException) as e:
                         if left.is_set():
                             self._done("CLIENT GONE during pair"); return None
@@ -6003,6 +6064,11 @@ class H(BaseHTTPRequestHandler):
                         self._pair_refuse(502, "upstream_cut", f"box {peer['name']} cut its answer short",
                                           pair_served_map(conf, local))
                         self._done("UPSTREAM CUT pair"); return None
+                    if len(data) > PAIR_ANSWER_MAX:
+                        log(f"{self._peer} pair: the answer of {peer['name']} is over {PAIR_ANSWER_MAX} bytes: refused")
+                        self._pair_refuse(502, "upstream_too_large", f"the answer of box {peer['name']} is over "
+                                          f"{PAIR_ANSWER_MAX} bytes", pair_served_map(conf, local))
+                        self._done("502 pair answer too large"); return None
                     self._plain(resp.status, headers, data)
                     self._bytes = len(data)
                     self._done("ok pair")
@@ -6535,9 +6601,11 @@ class H(BaseHTTPRequestHandler):
                                               "fragment, an escape left after one decode, or a byte "
                                               "outside printable ASCII, and is refused"}}).encode())
             self._done("400 suspect path"); return
+        if self._pair_port_refused():
+            return
         if self.path.split("?")[0] == STOP_PATH:
             self._stop_route(False); return     # v6.47: the proxy's own route, never the engine's
-        if self._wall_refused() or self._door_refused():
+        if self._pair_box is None and (self._wall_refused() or self._door_refused()):
             return
         resp, herr, cerr = self._open(None)
         models_route = self.path.split("?")[0].rstrip("/") == "/v1/models"
@@ -6614,8 +6682,8 @@ class H(BaseHTTPRequestHandler):
         """True when this request does not carry the key the engine admits (v6.34). The
         wall, when on, decides instead; a route the engine leaves open, or a box whose key
         the proxy cannot read, stays the engine's own business."""
-        if CLIENT_KEYS or route in ENGINE_OPEN_ROUTES:
-            return False
+        if CLIENT_KEYS or route in ENGINE_OPEN_ROUTES or getattr(self, "_pair_box", None):
+            return False                # the pair port: its certificate admitted it (_pair_port_refused)
         key = _door_key()
         return bool(key) and not engine_admits(self.headers.get("Authorization"), key)
 

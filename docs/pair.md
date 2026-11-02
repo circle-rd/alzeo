@@ -25,6 +25,7 @@ python3 ~/dgx-spark-qwen38/pair.py add 192.168.100.2
 
 It pairs both boxes at once, checks that each box reaches the other, and keeps nothing on either box
 when a check fails, with what to fix. Both proxies take the pair within a few seconds: nothing restarts.
+The two boxes' clocks need not agree.
 
 ```bash
 python3 ~/dgx-spark-qwen38/pair.py status          # this box's pair, and what each box serves now
@@ -57,14 +58,19 @@ one its SSH server sees, give that one: `--back 192.168.100.1`.
 - The two boxes talk over TLS 1.3 both ways, on port 30002. Each box has a certificate of its own, made
   once by `pair.py` (in `~/.config/qwen38/pair/identity`, its key readable by your user alone), and pins
   the other box's certificate by its SHA-256 in `pair.json`. A connection that does not present the
-  pinned certificate is refused at the handshake, and a box never sends a request to an address that
-  does not present it. This is how the nodes of [NVIDIA PAIR](https://github.com/NVIDIA/Personal-AI-Router)
-  trust each other.
-- Each request still carries the other box's API key, as a second lock.
-- `pair.py` swaps the certificates and the keys over SSH, on standard input: never on a command line,
-  where `ps` shows it to every user, and never on the screen.
-- Port 30002 is open only while the box is paired, and only the paired box gets past its handshake. A
-  box taken out of the pair is refused at once, even on a connection it already has open.
+  pinned certificate is refused right after its handshake, before a byte of a request is read, and a box
+  never sends a request to an address that does not present it. This is how the nodes of
+  [NVIDIA PAIR](https://github.com/NVIDIA/Personal-AI-Router) trust each other.
+- The certificate is the pair's only credential. No box ever holds the other's API key, which is also the
+  login of its cockpit: a box of a pair can only send the other generations and read its list of models.
+  Port 30002 refuses every other route, and the box that serves a request admits it to its own engine
+  with its own key.
+- `pair.py` swaps the certificates over SSH, with the host key checked whatever your SSH configuration
+  says, and nothing secret on a command line, where `ps` shows it to every user, or on the screen.
+- Port 30002 is open only while the box is paired, and only the paired box gets past it. Once you
+  remove a box from the pair, its next connection is refused; nothing else needs to change, since it
+  never held a key of this box.
+- Your clients' keys and cookies never cross to the other box.
 
 ## Limits
 
@@ -81,7 +87,7 @@ one its SSH server sees, give that one: `--back 192.168.100.1`.
 - *cannot run a command over SSH without a password*: set SSH up as step 4 of NVIDIA's playbook does,
   then `ssh <the other box> true` must work without a question.
 - *does not know the SSH host key*: run `ssh <the other box>` once and answer yes once you have checked
-  the key.
+  the key. `pair.py` never takes an unknown host key on its own, even when your SSH configuration would.
 - *cannot reach the pair port*: both boxes must run this version of Alzeo, no firewall may stop port
   30002/tcp between them, and the address must be one both boxes share.
 - *both boxes are named*: two boxes with the same host name; name one of them with `pair.py name`.
