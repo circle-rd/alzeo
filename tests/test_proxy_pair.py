@@ -595,6 +595,13 @@ class TwoBoxesBehindOneEndpoint(unittest.TestCase):
         self.assertEqual([r["id"] for r in json.loads(out)["data"]], ["qwen3.8-27b"], "its own list, not the union")
         self.assertIn("sent on by spark2", self.journal("spark1"))
 
+    def test_the_cockpits_stop_is_never_taken_from_the_pair_port(self):
+        # the other box holds this box's key, and its connection may come from loopback (a tunnel's end, these
+        # tests): POST /proxy/stop is this machine's operator's, never a pair's
+        st, out, _ = self.tls_call(self.pport1, "/proxy/stop", {"why": "a pair's stop", "kind": "operator"})
+        self.assertEqual(st, 403, out[:300])
+        self.assertIn("is reached from this machine only", json.loads(out)["error"]["message"])
+
     def test_the_pair_port_refuses_a_box_without_a_pinned_certificate(self):
         for me in (None, "rogue"):
             with self.subTest(me=me), self.assertRaises((ssl.SSLError, ConnectionResetError, BrokenPipeError,
@@ -999,6 +1006,9 @@ class TwoBoxesBehindOneEndpointInProcess(TwoBoxesBehindOneEndpoint):
     def test_a_request_on_the_pair_port_is_a_hop_from_the_box_of_its_certificate(self):
         super().test_a_request_on_the_pair_port_is_a_hop_from_the_box_of_its_certificate()
 
+    def test_the_cockpits_stop_is_never_taken_from_the_pair_port(self):
+        super().test_the_cockpits_stop_is_never_taken_from_the_pair_port()
+
     def test_the_pair_port_refuses_a_box_without_a_pinned_certificate(self):
         super().test_the_pair_port_refuses_a_box_without_a_pinned_certificate()
 
@@ -1291,6 +1301,31 @@ class ThePairsPieces(unittest.TestCase):
         with self.assertRaisesRegex(OSError, "admits nobody"):
             srv.get_request()
         self.assertEqual(cli.recv(1), b"", "closed at once, before any handshake")
+
+    def test_a_pair_connection_is_the_networks_even_from_loopback(self):
+        # the header clock of the network (CLIENT_HEADER_S), not loopback's CLIENT_IO_S: a slow box on a
+        # tunnel's end holds a thread seconds, not 15 minutes
+        self.conf_now({"name": "spark1", "peers": [peer_entry(self.cfg, "spark2", localports.held(self), KEY_2)]})
+        srv = self.mod.PairServer(("127.0.0.1", 0), self.mod.H)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        self.addCleanup(srv.server_close)
+        self.addCleanup(srv.shutdown)
+        saved = self.mod.CLIENT_HEADER_S
+        self.mod.CLIENT_HEADER_S = 1.0
+        self.addCleanup(setattr, self.mod, "CLIENT_HEADER_S", saved)
+        tls = client_ctx("spark2", "spark1").wrap_socket(socket.create_connection(srv.server_address, timeout=10))
+        self.addCleanup(tls.close)
+        tls.sendall(b"GET /v1/models HTTP/1.1\r\n")             # and nothing more
+        t0 = time.monotonic()
+        try:
+            got = tls.recv(1)
+        except (ConnectionResetError, ssl.SSLError):
+            got = b""
+        except socket.timeout:
+            self.fail("the pair port waited past the header clock: it took a loopback address for this machine's")
+        self.assertEqual(got, b"")
+        self.assertLess(time.monotonic() - t0, 6)
+        self.assertTrue(self.mod.PairServer.from_network and not self.mod.Server.from_network)
 
     def test_a_connection_refused_in_setup_reads_nothing_and_a_box_taken_out_is_refused(self):
         class Fake:

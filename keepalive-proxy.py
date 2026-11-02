@@ -4281,6 +4281,9 @@ class _HeaderClock(io.RawIOBase):
 class Server(ThreadingHTTPServer):
     daemon_threads = True
     request_queue_size = 128
+    # the pair port's connections are the network's, whatever their address (a tunnel's end is loopback):
+    # no exemption made for this machine's own tools reaches the other box of a pair
+    from_network = False
 
     def __init__(self, *args, **kwargs):
         self._conn_lock = threading.Lock()
@@ -4299,7 +4302,7 @@ class Server(ThreadingHTTPServer):
 
     def process_request(self, request, client_address):
         addr = str(client_address[0]) if client_address else ""
-        counted = _counted_peer(addr)
+        counted = self.from_network or _counted_peer(addr)
         if counted:
             with self._conn_lock:
                 full = ((MAX_REMOTE_CONN > 0 and sum(self._conn_open.values()) >= MAX_REMOTE_CONN)
@@ -4350,8 +4353,10 @@ class PairServer(Server):
     """The pair port (role 10, decision 971): this proxy, for the boxes of its pair only. Each
     connection is wrapped with the pair as it is now, so a box taken out of pair.json is refused at its
     next connection, and its handshake runs in H.setup, on the connection's own thread (S6): a box that
-    connects and says nothing costs one thread for TLS_HANDSHAKE_S, not the accept loop."""
+    connects and says nothing costs one thread for TLS_HANDSHAKE_S, not the accept loop. Every
+    connection is the network's (from_network), even one whose address is loopback."""
     pair_port = True
+    from_network = True
 
     def get_request(self):
         conn, addr = self.socket.accept()
@@ -4509,11 +4514,12 @@ class H(BaseHTTPRequestHandler):
         # socket.timeout instead of parking the thread forever
         self.connection.settimeout(CLIENT_IO_S)
         # a peer on the network has CLIENT_HEADER_S in all for its request's headers (2026-10-17)
-        self._header_clock = CLIENT_HEADER_S > 0 and _counted_peer(str(self.client_address[0]))
+        remote = getattr(self.server, "from_network", False) or _counted_peer(str(self.client_address[0]))
+        self._header_clock = CLIENT_HEADER_S > 0 and remote
         if self._header_clock:
             self.rfile = io.BufferedReader(_HeaderClock(self.rfile.detach(), self))
         # and HEADER_BYTES_MAX for those headers in all (2026-10-24)
-        self._header_budget = HEADER_BYTES_MAX > 0 and _counted_peer(str(self.client_address[0]))
+        self._header_budget = HEADER_BYTES_MAX > 0 and remote
         if self._header_budget:
             self.rfile = _HeaderBudget(self.rfile, self)
         # small frequent SSE events: without NODELAY, Nagle batches them (Tailscale)
@@ -5057,8 +5063,8 @@ class H(BaseHTTPRequestHandler):
         refuse = None
         if self.command != "POST":
             refuse = (405, "takes POST")
-        elif str(self.client_address[0]) not in STOP_PEERS:
-            refuse = (403, "is reached from this machine only")
+        elif getattr(self.server, "from_network", False) or str(self.client_address[0]) not in STOP_PEERS:
+            refuse = (403, "is reached from this machine only")      # never from the other box of a pair
         else:
             key = _door_key()
             if not key or not engine_admits(self.headers.get("Authorization"), key):
@@ -5681,7 +5687,8 @@ class H(BaseHTTPRequestHandler):
             self._over_budget(n); return
         body = None
         if with_body and n:
-            stall = BODY_STALL_S > 0 and _counted_peer(str(self.client_address[0]))
+            stall = BODY_STALL_S > 0 and (getattr(self.server, "from_network", False)
+                                          or _counted_peer(str(self.client_address[0])))
             wait_s = min(BODY_STALL_S, CLIENT_IO_S) if stall else CLIENT_IO_S
             if stall:
                 self.connection.settimeout(wait_s)
