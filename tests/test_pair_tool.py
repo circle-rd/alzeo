@@ -403,5 +403,34 @@ class PairTool(unittest.TestCase):
         self.assertEqual(self.b1.pair()["peers"], [])
 
 
+class TheUninstallNamesThePair(unittest.TestCase):
+    """uninstall.sh --list names pair/ when there is one: the other box keeps this one until it is told. The
+    block runs here as uninstall.sh has it."""
+
+    def inventory(self, paired):
+        text = (REPO / "uninstall.sh").read_text()
+        start = text.index('if [ -d "$CONFIG_DIR" ]; then\n  echo "  config    $CONFIG_DIR')
+        block = text[start:text.index("\nfi\n", start) + 4]
+        cfg = pathlib.Path(tempfile.mkdtemp(prefix="uninst-pair-"))
+        self.addCleanup(shutil.rmtree, cfg, True)
+        (cfg / "api-key").write_text("k\n")
+        if paired:
+            (cfg / "pair").mkdir()
+        script = 'set -euo pipefail\ndir_size(){ echo 4K; }\n' + f'CONFIG_DIR="{cfg}"\n' + block + "echo INVENTORY-END\n"
+        r = subprocess.run(["bash", "-c", script], capture_output=True, text=True, timeout=30)
+        return cfg, r.stdout + r.stderr
+
+    def test_a_paired_box_is_told_to_unpair_first(self):
+        cfg, out = self.inventory(True)
+        self.assertIn(f"  pair      {cfg}/pair (this box's certificate, and the other box's key and certificate: "
+                      "run pair.py remove first, so that the other box forgets this one)", out)
+        self.assertIn("INVENTORY-END", out)
+
+    def test_a_box_never_paired_gets_no_such_line(self):
+        _, out = self.inventory(False)
+        self.assertNotIn("  pair  ", out)
+        self.assertIn("INVENTORY-END", out)
+
+
 if __name__ == "__main__":
     unittest.main()
