@@ -6372,6 +6372,8 @@ class H(BaseHTTPRequestHandler):
             # or 504; never an engine that closed the connection while it had the request
             if (kind == "upstream" or (kind == "unreachable" and detail == "refused")) and self._pair_take_over(asked):
                 return
+            if kind == "warming" and self._pair_take_over(asked, "this box's engine is warming up"):
+                return                      # its pool not measured yet: the other box's is (v6.52)
             if self._pair_hop() and kind == "unreachable" and detail != "refused":
                 # a request the other box sent on, whose engine here closed the connection while it had it: a 502, not
                 # the 503 the other box takes back to its own engine, which the same request could take down too
@@ -6629,7 +6631,9 @@ class H(BaseHTTPRequestHandler):
             # cache of the turns before (found in review, 2026-11-03)
             affinity_note(me, blocks, now)
             return False
-        boxes = [me] + [p["name"] for p in peers]
+        # a box that refuses new generations for memory (its cockpit's floor, v6.47) takes none it could send on: it
+        # said 529 while the other box idled (found in review, 2026-11-03)
+        boxes = ([] if floor_refusal() is not None else [me]) + [p["name"] for p in peers]
         match = {b: affinity_of(b, blocks, now) for b in boxes}
         best = max(match.values())
         with _SPREAD_LOCK:
@@ -6687,7 +6691,7 @@ class H(BaseHTTPRequestHandler):
                 if row:
                     _PAIR_MODELS[pick] = dict(row, models=tuple(m for m in row["models"] if m != name), ts=0.0)
 
-    def _pair_take_over(self, asked):
+    def _pair_take_over(self, asked, why="this box's engine does not answer"):
         """Decision 998, this box's side: its engine did not answer (connection refused, or an HTTP error while it
         starts or stops) a request of a model the other box serves too, at its first try: no byte went out, no hold
         opened a stream. True once the other box answered it; False when none could (this box then holds it, or says
@@ -6698,10 +6702,11 @@ class H(BaseHTTPRequestHandler):
         peers, name, conf, local, blocks = alt
         with _GEN_LOCK:
             _PAIR_HERE.discard(self)
+            _GENERATIONS.discard(self)      # it runs elsewhere, if anywhere: a stop or a count here is not its
         for peer in peers:
             if _PAIR_COOL.get(peer["name"], 0) > time.monotonic():
                 continue                    # it refused a request moments ago (found in review, 2026-11-03)
-            log(f"{self._peer} pair: this box's engine does not answer for {name}: trying {peer['name']}")
+            log(f"{self._peer} pair: {why} for {name}: trying {peer['name']}")
             # the body as this box has it: the client's, with fixes this proxy makes and the other one makes again the
             # same way (tool schemas, reasoning effort), not a copy of the client's kept for the whole request, which
             # held one body more in memory on a paired box (found in review, 2026-11-03)
@@ -7010,6 +7015,9 @@ class H(BaseHTTPRequestHandler):
             # while the box is short of memory (floor_refusal)
             with _GEN_LOCK:
                 _GENERATIONS.add(self)
+            if (floor_refusal() is not None and getattr(self, "_pair_alt", None)
+                    and self._pair_take_over(body, "this box is short of memory")):
+                return None                 # the other box of a pair that serves its model took it (v6.52)
             if self._floor_refused():
                 return None
         # v6.34: every prompt body is measured: by its bound where a wedge is possible.
@@ -7079,6 +7087,10 @@ class H(BaseHTTPRequestHandler):
                            f"tokens{ceil}) and the engine would hang instead of refusing it. The engine "
                            f"itself is up: compact the conversation, drop image attachments, or serve a "
                            f"larger pool.")
+                    if getattr(self, "_pair_alt", None) and self._pair_take_over(
+                            body, "the prompt is too long for this box's pool"):
+                        return None         # the other box of a pair that serves its model took it, its own pool
+                                            # deciding (a 128 GB box paired with a 64 GB one, v6.52)
                     log(f"{self._peer} REFUSED oversize ({len(body)}b, {reason}, limit {limit})")
                     self._answer(400, {"Content-Type": "application/json"},
                                  json.dumps({"error": {"type": "context_too_long",

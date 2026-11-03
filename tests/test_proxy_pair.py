@@ -184,6 +184,8 @@ def fake_engine(name, model):
             if self.path.startswith("/v1/models"):
                 return self.reply({"object": "list", "data": [{"id": m, "object": "model", "owned_by": "sglang",
                                                                "max_model_len": 262144} for m in Handler.served]})
+            if self.path.startswith(("/server_info", "/get_server_info")) and Handler.mode == "nopool":
+                return self.reply({"error": "starting"}, 503)      # an engine that just started: no pool to read
             if self.path.startswith(("/server_info", "/get_server_info")):
                 return self.reply({"max_total_num_tokens": 900000})
             return self.reply({})
@@ -193,6 +195,8 @@ def fake_engine(name, model):
             Handler.seen.append((self.path, body.get("model"), self.headers.get("Authorization"),
                                  self.headers.get("X-Alzeo-Pair-Hop")))
             Handler.rids.append((body.get("rid"), self.headers.get("x-override-rid")))
+            if self.path == "/tokenize":            # the size guard's count: two characters a token
+                return self.reply({"tokens": [], "count": len(json.dumps(body)) // 2, "max_model_len": 9990})
             Handler.users.append(body.get("user"))
             Handler.bodies.append(body)
             if Handler.mode == "busy":
@@ -1804,6 +1808,47 @@ class TwoBoxesServeOneModel(PairFixture, unittest.TestCase):
         self.assertEqual(st, 200, out[:300])
         self.assertIn(b"from spark1", out, "a new conversation went to the busier box")
 
+    def test_a_long_prompt_a_warming_engine_cannot_take_goes_to_the_other_box(self):
+        # this box's engine just started, its pool not measured yet: a long prompt waited for it (503), where the other
+        # box's is measured (review, 2026-11-03)
+        if not self.INPROC:
+            self.skipTest("this box's pool is dropped in this test's process")
+        self.E1.mode = "nopool"
+        self.mod.invalidate_pool()
+        body = dict(self.chat("qwen3.8-27b"), messages=[{"role": "user", "content": "w" * 300000}])
+        st, out, _ = self.call("/v1/chat/completions", body)
+        self.assertEqual(st, 200, out[:300])
+        self.assertIn(b"from spark2", out, "a long prompt waited for this box's warming engine")
+        self.assert_said("spark1", "this box's engine is warming up for qwen3.8-27b: trying spark2")
+
+    def test_a_prompt_too_long_for_this_boxs_pool_goes_to_the_other_box(self):
+        # a 64 GB box paired with a 128 GB one: what the small pool refuses, the big one serves (review, 2026-11-03)
+        if not self.INPROC:
+            self.skipTest("this box's pool is set in this test's process")
+        self.mod._POOL.update(tokens=10000, window=9990, ts=time.time())
+        self.addCleanup(self.mod._POOL.update, tokens=None, window=None, ts=0.0)
+        body = dict(self.chat("qwen3.8-27b"), messages=[{"role": "user", "content": "w " * 30000}])
+        st, out, _ = self.call("/v1/chat/completions", body)
+        self.assertEqual(st, 200, out[:300])
+        self.assertIn(b"from spark2", out, "this box refused as too long what the other box's pool holds")
+        self.assert_said("spark1", "the prompt is too long for this box's pool for qwen3.8-27b: trying spark2")
+
+    def test_a_box_held_by_its_memory_floor_sends_on_what_the_other_box_serves(self):
+        # the cockpit's floor stopped a generation here: new ones wait here (v6.47), but the other box serves the model:
+        # it answers, where this box said 503 or 529 for the whole hold (review, 2026-11-03)
+        held = self.busy(self.E1, self.port1, KEY_1, "local-only", 1, 6.0)        # a generation the stop cuts
+        st, out, _ = self.call("/proxy/stop", {"why": "test floor", "hold_s": 3})
+        self.assertEqual(st, 200, out[:300])
+        self.assertEqual(json.loads(out).get("stopped"), 1, out[:300])
+        for path in ("/v1/chat/completions", "/v1/messages"):
+            with self.subTest(path=path):
+                st, out, _ = self.call(path, self.chat("qwen3.8-27b"))
+                self.assertEqual(st, 200, out[:300])
+                self.assertIn(b"from spark2", out, "this box refused for memory what the other box serves")
+        for th in held:
+            th.join(30)
+        time.sleep(3)                                                       # the hold is over
+
     def test_a_claude_code_conversation_stays_on_its_box(self):
         # Claude Code writes its system prompt and its tools after the conversation: the turns share their messages
         # alone, 32 KiB here, under 30 % of a body that carries 80 KB of system and tools (review, 2026-11-03)
@@ -2073,6 +2118,15 @@ class TwoBoxesServeOneModelInProcess(TwoBoxesServeOneModel):
 
     def test_a_conversation_stays_on_the_box_that_served_it(self):
         super().test_a_conversation_stays_on_the_box_that_served_it()
+
+    def test_a_box_held_by_its_memory_floor_sends_on_what_the_other_box_serves(self):
+        super().test_a_box_held_by_its_memory_floor_sends_on_what_the_other_box_serves()
+
+    def test_a_prompt_too_long_for_this_boxs_pool_goes_to_the_other_box(self):
+        super().test_a_prompt_too_long_for_this_boxs_pool_goes_to_the_other_box()
+
+    def test_a_long_prompt_a_warming_engine_cannot_take_goes_to_the_other_box(self):
+        super().test_a_long_prompt_a_warming_engine_cannot_take_goes_to_the_other_box()
 
     def test_a_claude_code_conversation_stays_on_its_box(self):
         super().test_a_claude_code_conversation_stays_on_its_box()
