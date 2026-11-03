@@ -329,6 +329,18 @@ def fake_peer(listed, post, running=0):
             self.rfile.read(int(self.headers.get("Content-Length") or 0))
             Peer.seen.append(self.path)
             code, obj = Peer.state["post"]
+            time.sleep(Peer.state.get("delay", 0))
+            if Peer.state.get("cut"):           # its answer cut on the way: fewer bytes than it said
+                out = json.dumps(obj).encode()
+                self.send_response(code)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(out) + 100))
+                self.end_headers()
+                self.wfile.write(out[:10])
+                self.wfile.flush()
+                self.close_connection = True
+                self.connection.shutdown(socket.SHUT_RDWR)
+                return
             if code == 409:                 # a box that switched lists its new lane from then on
                 Peer.state["listed"] = ["ornith-1.5-122b"] + [i for i in (Peer.state["listed"] or []) if i.startswith("marker")]
             self.reply(code, obj)
@@ -1967,6 +1979,17 @@ class TwoBoxesServeOneModel(PairFixture, unittest.TestCase):
         st, out, _ = self.call("/v1/chat/completions", self.chat("qwen3.8-27b"), port=entry)
         self.assertIn(b"from the peer", out, "one prompt too long for it kept the other box out")
 
+    def test_a_refusal_cut_on_the_way_is_still_served_here(self):
+        # its status said it all: a 503 whose body was cut is a refusal, served here, not a 502 (review, 2026-11-03)
+        Peer = fake_peer(["qwen3.8-27b", "marker-cut"], (503, {"error": {"type": "engine_unavailable", "message": "x" * 200}}))
+        Peer.state["cut"] = True
+        entry = self.spare_proxy("spark1-cut", KEY_1, peers=(("spark2", tls_peer(self, Peer)),))
+        self.until_listed("marker-cut", port=entry)
+        self.busy(self.E1, entry, KEY_1, "local-only", 1, 4.0)
+        st, out, _ = self.call("/v1/chat/completions", self.chat("qwen3.8-27b"), port=entry)
+        self.assertEqual(st, 200, out[:300])
+        self.assertIn(b"from spark1", out, "a cut refusal reached the client as a 502")
+
     def test_a_box_that_switched_is_not_sent_the_next_request(self):
         Peer = fake_peer(["qwen3.8-27b", "marker-moved"], (409, {"error": {
             "type": "model_not_served", "message": "this box (spark2) serves ornith-1.5-122b, not qwen3.8-27b"}}))
@@ -2080,6 +2103,9 @@ class TwoBoxesServeOneModelInProcess(TwoBoxesServeOneModel):
 
     def test_a_box_that_switched_is_not_sent_the_next_request(self):
         super().test_a_box_that_switched_is_not_sent_the_next_request()
+
+    def test_a_refusal_cut_on_the_way_is_still_served_here(self):
+        super().test_a_refusal_cut_on_the_way_is_still_served_here()
 
     def test_a_list_read_long_ago_still_shares(self):
         super().test_a_list_read_long_ago_still_shares()

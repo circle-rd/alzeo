@@ -6818,9 +6818,13 @@ class H(BaseHTTPRequestHandler):
                 finally:
                     try: e.close()
                     except Exception: pass
+                if left.is_set():
+                    # the client left while the other box said no: nothing to serve here either (found in review,
+                    # 2026-11-03: a refusal brought the request back to this box's engine, which computed it for nobody)
+                    self._done("CLIENT GONE during pair"); return None
+                if fallback and e.code in (503, 529) and (data is None or len(data) > PAIR_ANSWER_MAX):
+                    return "fallback"       # its refusal's status said it all, its body cut or too long (same review)
                 if data is None:
-                    if left.is_set():
-                        self._done("CLIENT GONE during pair"); return None
                     log(f"{self._peer} pair: {peer['name']} cut its answer short ({why})")
                     self._pair_refuse(502, "upstream_cut", f"box {peer['name']} cut its answer short",
                                       pair_served_map(conf, local))
