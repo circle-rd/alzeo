@@ -54,15 +54,30 @@ tests/test_proxy_pair.py runs two proxies over real TLS, as processes and in thi
 pairs two proxies through a fake ssh, and the tile and its collector have tests of their own. Each fix has a
 test that fails on the code before it.
 
-**Proven on the reference box.** One DGX Spark, two proxies of this release paired over TLS: the entry served
-a model of its own, the other one the box's real lane, Flash FP4-Local. The OpenAI and Anthropic SDKs, fetch in
-Node and Bun, LiteLLM, Claude Code, opencode, Hermes and pi all went through the pair (24 requests sent on, 24
-answered), and the tile read the box's real cockpit through the pair. Two physical boxes: not yet, the first
-pair of discussion #45 gets its second box this week.
+**Proven on the reference box.** One DGX Spark, two proxies of this release paired over TLS, both ways round. With
+the entry serving a model of its own and the other proxy the box's real lane, Flash FP4-Local, the OpenAI and
+Anthropic SDKs, fetch in Node and Bun, LiteLLM, Claude Code, opencode, Hermes and pi all went through the pair: 25
+requests sent on, 25 answered, no error on either proxy (what they refused was the suites' own requests without a
+key, and the agents' probes of routes the stand-in engine does not have). With the entry on the real lane, its
+requests stayed there, and the other proxy's model was reached through the pair. The tile read the box's real
+cockpit through the pair. Two physical boxes: not yet, the first pair of discussion #45 gets its second box this
+week.
 
 **Also.** No test file has the same name in tests/ and dashboard/tests/: a twin was loaded in place of the
 other in the single-process step, and 19 tests never ran on a branch (2026-11-02). Ornith's installer tests
 lose their twin.
+
+**After the push.** The reference box updated at e07f2c2 on 2026-11-03 with the command of this release,
+`cd ~/dgx-spark-qwen38 && curl -fsSL https://get.alzeo.ai | bash`, once GitHub's CI had passed on that commit and
+get.alzeo.ai served its get.sh byte for byte: the run ended whole in 93 s. The proxy and the cockpit restarted. Flash
+FP4-Local, the lane that served, kept running, and no unit file changed. The 8 real clients (Claude Code, opencode,
+Hermes, pi, the OpenAI and Anthropic SDKs, fetch under Node and Bun, LiteLLM) answered through the proxy on Flash
+FP4-Local, and the production checks passed. pi's first run said that the file it read held another text: the model
+took the description of a skill installed on the box for the file, which its tool had read right, and pi passed three
+times in three after that. The cockpit showed no banner on any of its 5 views, with no JavaScript error. A one-token
+answer that took 38 ms at the engine took 52 ms through the installed proxy (medians of eight). The matrix then ran
+the 8 clients on each of the 7 lanes of the box, each lane loaded as the cockpit loads it: 56 of 56. GitHub's CI
+passed its 7 jobs, 89 steps, with no step skipped.
 
 ## v1.41.0 (2026-11-01): the project is Alzeo, at github.com/hasso5703/alzeo, its command is get.alzeo.ai, and the cockpit is the Alzeo cockpit
 
