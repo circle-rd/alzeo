@@ -4,7 +4,8 @@
 
 **Two boxes that serve one model share its requests.** Until now, the box a request was sent to served every model it
 loads itself, and the other box of the pair got none of its requests. When both boxes load the same lane, they now
-share them, and the box a request was sent to decides where it goes (decisions 996 to 998). A conversation stays on
+share them, from the same checkpoint only (decision 1018), and the box a request was sent to decides where it goes
+(decisions 996 to 998). A conversation stays on
 its box: an agent sends its whole conversation again at each turn, and the box that served the turn before holds all
 of it in its prefix cache but the new turn, where the other box would compute all of it again (100,000 tokens take
 tens of seconds on the 27B). So the box keeps fingerprints of the first 4 KiB, 8 KiB, 16 KiB and so on of what it sent
@@ -45,7 +46,8 @@ other, a box gone without a reset cost every shared request 10 s, and a request 
 this box's stop and of its load. The tile counted a request that came back as sent there, a prompt too long as a
 box that did not answer, and showed nothing while the other box did not answer, when the counts matter most. The
 threshold of 4 requests ahead, made for the lanes that run 8 at once, moved a conversation off a lane of 16 or 24
-with room to spare, its prefix computed again elsewhere. The
+with room to spare, its prefix computed again elsewhere. Two boxes that served two checkpoints of one lane under its
+name (switch-model.sh's stock and uncensored 27B) shared them as one model. The
 paired run with the real clients found one more: a token count was shared as a generation is (the Anthropic SDK's
 went to the other box), and a count of a whole conversation, as Claude Code sends, could take the conversation to
 the box that caches nothing for a count. A count is answered by the box it was sent to now.

@@ -62,8 +62,11 @@ one its SSH server sees, give that one: `--back 192.168.100.1`.
 
 ## A model both boxes serve
 
-When both boxes load the same lane, they share its requests, and the box they were sent to decides where each
-one goes:
+When both boxes load the same lane, from the same checkpoint, they share its requests, and the box they were sent
+to decides where each one goes. Each box says in the list it gives the other the checkpoint its lane serves, the
+revision its unit names (`--revision`): `switch-model.sh` serves the 27B's stock, uncensored, fp8 and
+uncensored-fp8 checkpoints, and Flash's three, under one name each, and two boxes that serve two of them, or a box
+that says none, keep their own requests:
 
 - **A conversation stays on its box.** An agent (Claude Code, opencode, Hermes, pi) sends its whole
   conversation again at each turn, and the box that served the turn before holds all of it in its prefix cache

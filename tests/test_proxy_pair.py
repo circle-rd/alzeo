@@ -39,6 +39,7 @@ import localports  # noqa: E402
 
 REPO = pathlib.Path(__file__).resolve().parents[1]
 KEY_1, KEY_2 = "k-entry-111", "k-peer-222"
+TEST_REV = "1a2b3c4d5e" * 4            # the checkpoint every test box says it serves (PAIR_CHECKPOINT, decision 1018)
 PAIR_TTL = 2                        # PAIR_TTL_S of the entry: its lists of the peer are read again after it
 OPENSSL_CERT = ["-x509", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:P-256", "-nodes", "-days", "36500",
                 "-addext", "keyUsage=critical,digitalSignature,keyCertSign"]
@@ -303,11 +304,12 @@ def tls_peer(test, handler, me="spark2", trusts=("spark1",)):
     return port
 
 
-def fake_peer(listed, post, running=0, slots=None):
+def fake_peer(listed, post, running=0, slots=None, revision=TEST_REV):
     """The pair port of another box, for a spare entry: it lists `listed` (ids, or None: its list fails with a 503)
     and answers every POST with `post` ((status, body)); all three may change during a test (state). `seen`: its POSTs.
     running: the count its list says (x_alzeo_running, none of them the entry's), None for none, as a box of v1.42.0.
-    slots: what it says its lane runs at once (x_alzeo_slots), None for nothing said."""
+    slots: what it says its lane runs at once (x_alzeo_slots), None for nothing said. revision: the checkpoint it
+    says it serves (x_alzeo_revision), None for nothing said."""
     class Peer(http.server.BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
         state = {"listed": listed, "post": post, "running": running}
@@ -333,6 +335,8 @@ def fake_peer(listed, post, running=0, slots=None):
                 listing["x_alzeo_running"], listing["x_alzeo_running_yours"] = Peer.state["running"], 0
             if slots is not None:
                 listing["x_alzeo_slots"] = slots
+            if revision is not None:
+                listing["x_alzeo_revision"] = revision
             self.reply(200, listing)
 
         def do_POST(self):
@@ -401,7 +405,8 @@ class PairFixture:
     @classmethod
     def start_inproc(cls, home, engine):
         cls.saved_env = dict(os.environ)
-        os.environ.update({**cls.ENTRY_ENV, "HOME": str(home), "PROXY_BIND": "127.0.0.1", "PAIR_TTL_S": str(PAIR_TTL),
+        os.environ.update({"PAIR_CHECKPOINT": TEST_REV, **cls.ENTRY_ENV, "HOME": str(home), "PROXY_BIND": "127.0.0.1",
+                           "PAIR_TTL_S": str(PAIR_TTL),
                            "PAIR_PORT": "0",
                            "QWEN38_COCKPIT_URL": cls.cockpit_url,
                            "UPSTREAM": f"http://127.0.0.1:{engine.server_address[1]}",
@@ -439,7 +444,7 @@ class PairFixture:
     def start_proxy(cls, home, engine, label, **extra):
         env = {"PATH": os.environ["PATH"], "HOME": str(home), "PROXY_BIND": "127.0.0.1", "PAIR_PORT": "0",
                "QWEN38_COCKPIT_URL": cls.cockpit_url, "UPSTREAM": f"http://127.0.0.1:{engine.server_address[1]}",
-               "PROMPT_CEILING_TOKENS": "0", "FLASH_PROMPT_CEILING_TOKENS": "0", **extra}
+               "PROMPT_CEILING_TOKENS": "0", "FLASH_PROMPT_CEILING_TOKENS": "0", "PAIR_CHECKPOINT": TEST_REV, **extra}
         with open(cls.tmp / f"{label}.journal", "ab") as journal:     # the child keeps its own copy
             proc, port = localports.spawn(lambda port: subprocess.Popen(
                 [sys.executable, str(REPO / "keepalive-proxy.py"), str(port)], env=env,
@@ -589,7 +594,8 @@ class PairFixture:
         env = {"PATH": os.environ["PATH"], "HOME": str(home), "PROXY_BIND": "127.0.0.1",
                "PAIR_PORT": str(localports.held(self)),
                "UPSTREAM": upstream or f"http://127.0.0.1:{self.engines[0].server_address[1]}",
-               "PROMPT_CEILING_TOKENS": "0", "FLASH_PROMPT_CEILING_TOKENS": "0", **(extra or {})}
+               "PROMPT_CEILING_TOKENS": "0", "FLASH_PROMPT_CEILING_TOKENS": "0", "PAIR_CHECKPOINT": TEST_REV,
+               **(extra or {})}
         with open(self.tmp / f"{label}.journal", "ab") as journal:
             proc, port = localports.spawn(lambda port: subprocess.Popen(
                 [sys.executable, str(REPO / "keepalive-proxy.py"), str(port)], env=env,
@@ -2126,6 +2132,23 @@ class TwoBoxesServeOneModel(PairFixture, unittest.TestCase):
         for th in held:
             th.join(30)
 
+    def test_a_box_serving_another_checkpoint_gets_nothing_shared(self):
+        # decision 1018: switch-model.sh serves the 27B's stock, uncensored and fp8 checkpoints under one name. Shared
+        # as one model, a client of the stock box got the uncensored one (review, 2026-11-03)
+        for said in ("9f8e7d6c5b" * 4, None):
+            with self.subTest(revision=said):
+                Peer = fake_peer(["qwen3.8-27b", f"marker-rev-{said is None}"], PEER_ANSWER, revision=said)
+                entry = self.spare_proxy(f"spark1-rev-{said is None}", KEY_1, peers=(("spark2", tls_peer(self, Peer)),))
+                self.until_listed(f"marker-rev-{said is None}", port=entry)
+                held = self.busy(self.E1, entry, KEY_1, "local-only", 1, 3.0)     # one here, none there
+                st, out, _ = self.call("/v1/chat/completions", self.chat("qwen3.8-27b"), port=entry)
+                self.assertEqual(st, 200, out[:300])
+                self.assertIn(b"from spark1", out, "a box serving another checkpoint, or saying none, was sent it")
+                self.assertEqual(Peer.seen, [])
+                for th in held:
+                    th.join(30)
+                self.E1.users.clear()
+
     def test_a_burst_of_new_conversations_is_shared(self):
         self.E1.delay = self.E2.delay = 1.0
         out = []
@@ -2164,7 +2187,8 @@ class TwoBoxesServeOneModel(PairFixture, unittest.TestCase):
 
             def do_GET(self):
                 out = json.dumps({"object": "list", "data": [{"id": "qwen3.8-27b"}, {"id": "marker-drop"}],
-                                  "x_alzeo_running": 0, "x_alzeo_running_yours": 0}).encode()
+                                  "x_alzeo_running": 0, "x_alzeo_running_yours": 0,
+                                  "x_alzeo_revision": TEST_REV}).encode()
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Content-Length", str(len(out)))
@@ -2367,7 +2391,9 @@ class TwoBoxesServeOneModel(PairFixture, unittest.TestCase):
 
     def test_a_box_tells_the_other_how_many_it_runs_and_how_many_are_its(self):
         said = lambda: {k: v for k, v in json.loads(self.tls_call(self.pport1, "/v1/models", method="GET")[1]).items()
-                        if k.startswith("x_alzeo")}
+                        if k.startswith("x_alzeo_running")}
+        listed = json.loads(self.tls_call(self.pport1, "/v1/models", method="GET")[1])
+        self.assertEqual(listed.get("x_alzeo_revision"), TEST_REV, "the checkpoint this box serves")
         self.assertEqual(said(), {"x_alzeo_running": 0, "x_alzeo_running_yours": 0})
         self.busy(self.E1, self.port1, KEY_1, "local-only", 2, 3.0)        # two of its own clients' generations
         # and one the other box sent (on the pair port, its certificate)
@@ -2489,6 +2515,9 @@ class TwoBoxesServeOneModelInProcess(TwoBoxesServeOneModel):
 
     def test_a_request_the_other_boxs_engine_died_on_goes_there_or_nowhere_when_sent_again(self):
         super().test_a_request_the_other_boxs_engine_died_on_goes_there_or_nowhere_when_sent_again()
+
+    def test_a_box_serving_another_checkpoint_gets_nothing_shared(self):
+        super().test_a_box_serving_another_checkpoint_gets_nothing_shared()
 
 
 class ThePairsPieces(unittest.TestCase):
@@ -3054,18 +3083,18 @@ class ThePairsPieces(unittest.TestCase):
         saved = (m.HOLD_UNITS, m.subprocess)
         m.HOLD_UNITS = ("qwen38-a.service", "qwen38-b.service")
         m.subprocess = types.SimpleNamespace(run=run)
-        m._UNIT_SLOTS.update(ts=-1e9, n=None)
+        m._UNIT_FACTS.update(ts=-1e9, texts=None)
 
         def restore():
             m.HOLD_UNITS, m.subprocess = saved
-            m._UNIT_SLOTS.update(ts=-1e9, n=None)
+            m._UNIT_FACTS.update(ts=-1e9, texts=None)
         self.addCleanup(restore)
         self.assertEqual(m.unit_slots(), 16, "the active unit's script, its comment left out")
         self.assertEqual(m.unit_slots(), 16)
         self.assertEqual(len(calls), 1, "read again 10 s on at most")
         self.assertEqual(calls[0][:2], ["systemctl", "show"])
         m.HOLD_UNITS = ()
-        m._UNIT_SLOTS.update(ts=-1e9, n=None)
+        m._UNIT_FACTS.update(ts=-1e9, texts=None)
         self.assertIsNone(m.unit_slots(), "no unit named: a proxy run by hand or by a test")
 
     def test_this_box_says_its_slots_in_the_list_it_gives_the_other(self):
@@ -3158,6 +3187,48 @@ class ThePairsPieces(unittest.TestCase):
                 os.environ.clear()
                 os.environ.update(saved)
             self.assertEqual(getattr(mod, name), want, f"{name}={said}")
+
+    def test_the_checkpoint_of_a_lane_is_read_from_its_engines_command(self):
+        m = self.mod
+        rev, other = "ab" * 20, "cd" * 20
+        self.assertEqual(m.revision_in([f"--model-path R/Qwen --revision {rev} --max-running-requests 8"]), rev)
+        self.assertEqual(m.revision_in([f"vllm serve n/F --revision={rev}",
+                                        f"--speculative-draft-model-revision {other} --tokenizer-revision {other}"]), rev,
+                         "a draft model's or a tokenizer's revision is another flag")
+        self.assertIsNone(m.revision_in([f"--revision {rev}", f"--revision {other}"]), "two checkpoints: not known")
+        self.assertIsNone(m.revision_in(["--revision main", "--revision " + rev[:39], "--revision " + rev + "0"]))
+        self.assertIsNone(m.revision_in([]))
+        self.assertEqual(m.pair_revision({"x_alzeo_revision": rev}), rev)
+        for bad in (rev.upper(), rev[:39], rev + "0", "main", 7, None, [rev]):
+            self.assertIsNone(m.pair_revision({"x_alzeo_revision": bad}), bad)
+        self.assertIsNone(m.pair_revision([rev]))
+
+    def test_this_box_reads_its_checkpoint_from_its_unit_and_forgets_it_with_its_engine(self):
+        m = self.mod
+        rev = "ef" * 20
+        shown = f"ActiveState=active\nExecStart={{ path=/usr/bin/docker ; argv[]=docker run x --revision {rev} ; }}\n"
+        calls = []
+
+        def run(argv, **kw):
+            calls.append(argv)
+            return subprocess.CompletedProcess(argv, 0, shown, "")
+        saved = (m.HOLD_UNITS, m.subprocess)
+        m.HOLD_UNITS, m.subprocess = ("qwen38-a.service",), types.SimpleNamespace(run=run)
+        m._UNIT_FACTS.update(ts=-1e9, texts=None)
+
+        def restore():
+            m.HOLD_UNITS, m.subprocess = saved
+            m._UNIT_FACTS.update(ts=-1e9, texts=None)
+        self.addCleanup(restore)
+        self.assertEqual(m.unit_revision(), rev)
+        self.assertEqual(m.unit_slots(), None, "no slots in that command")
+        self.assertEqual(len(calls), 1, "one read for the revision and the slots")
+        shown = shown.replace(rev, "01" * 20)
+        self.assertEqual(m.unit_revision(), rev, "kept 10 s")
+        m.forget_engine_rules()                             # another engine serves: its unit is read again
+        self.assertEqual(m.unit_revision(), "01" * 20)
+        m.HOLD_UNITS = ()
+        self.assertIsNone(m.unit_revision(), "no unit and no PAIR_CHECKPOINT: nothing said, nothing shared")
 
     def test_a_request_an_engine_closed_on_is_kept_with_its_box_for_a_while(self):
         m = self.mod

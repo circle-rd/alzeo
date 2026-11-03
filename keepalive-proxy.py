@@ -3134,6 +3134,7 @@ def forget_engine_rules():
     _VOCAB.update(size=0, ts=0.0)
     _rid_override_honoured = None
     _UNIT_OVERRIDE.update(ts=-1e9, set=None)
+    _UNIT_FACTS.update(ts=-1e9, texts=None)     # another lane: its slots and its checkpoint read again (v6.52)
 
 
 def note_engine(names, owner):
@@ -3585,7 +3586,7 @@ def _peer_models_read(peer):
     # answered: the peer's proxy gave an HTTP answer over the pair's TLS, which proves the pair both ways even
     # when its engine does not answer (a 503 while a lane loads); pair.py's check reads it (found in review,
     # 2026-11-03: add undid a working pair while either engine was stopped)
-    models, rows, err, answered, running, slots = (), [], None, False, None, None
+    models, rows, err, answered, running, slots, revision = (), [], None, False, None, None, None
     t0 = time.monotonic()
     try:
         # on the pair port, a hop: the peer answers with its own engine's list, never the union it shows its
@@ -3600,7 +3601,7 @@ def _peer_models_read(peer):
         rows = [_pair_row(m) for m in data["data"] if isinstance(m, dict) and isinstance(m.get("id"), str)
                 and _PAIR_SAFE_ID.fullmatch(m["id"])]
         models = tuple(m["id"] for m in rows)
-        running, slots = pair_running(data), pair_slots(data)
+        running, slots, revision = pair_running(data), pair_slots(data), pair_revision(data)
     except urllib.error.HTTPError as e:
         answered, err = True, f"HTTP {e.code} on /v1/models"
     except Exception as e:      # an address that is no HTTP server, a broken answer: the peer does not answer
@@ -3617,7 +3618,7 @@ def _peer_models_read(peer):
         # requests there, counted here as they go and end
         _PAIR_MODELS[peer["name"]] = {"ts": now, "models": models, "rows": rows, "error": err, "answered": answered,
                                       "known": known, "known_ts": known_ts, "read_s": now - t0, "running": running,
-                                      "slots": slots}
+                                      "slots": slots, "revision": revision}
     return models
 
 
@@ -3793,9 +3794,11 @@ def running_said(data, box):
         return data
     if not isinstance(j, dict) or not isinstance(j.get("data"), list):
         return data
-    slots = unit_slots()
+    slots, revision = unit_slots(), unit_revision()
     if slots is not None:
         j["x_alzeo_slots"] = slots          # what its lane runs at once: the gap that box allows here (decision 1014)
+    if revision is not None:
+        j["x_alzeo_revision"] = revision    # the checkpoint it serves: shared with the same one only (decision 1018)
     with _GEN_LOCK:
         j["x_alzeo_running"] = len(_GENERATIONS)
         j["x_alzeo_running_yours"] = sum(1 for h in _GENERATIONS if getattr(h, "_pair_box", None) == box)
@@ -3953,6 +3956,12 @@ def pair_slots(data):
     count from 1 to PAIR_SLOTS_MAX, never a bool, a float or a string."""
     n = data.get("x_alzeo_slots") if isinstance(data, dict) else None
     return n if isinstance(n, int) and not isinstance(n, bool) and 1 <= n <= PAIR_SLOTS_MAX else None
+
+
+def pair_revision(data):
+    """The checkpoint a peer's list says it serves, "x_alzeo_revision", or None: 40 hexadecimal characters only."""
+    rev = data.get("x_alzeo_revision") if isinstance(data, dict) else None
+    return rev if isinstance(rev, str) and re.fullmatch(r"[0-9a-f]{40}", rev) else None
 
 
 def pair_spread_gap(slots):
@@ -4668,8 +4677,49 @@ def unit_sets_rid_override():
     return found
 
 
-_UNIT_SLOTS = {"ts": -1e9, "n": None}
+_UNIT_FACTS = {"ts": -1e9, "texts": None}
+_UNIT_FACTS_LOCK = threading.Lock()
 _SLOTS_FLAG = re.compile(r"(?<![\w-])--max-(?:running-requests|num-seqs)(?:=|[ \t]+)(\d+)(?![\w.])")
+_REVISION_FLAG = re.compile(r"(?<![\w-])--revision(?:=|[ \t]+)([0-9a-f]{40})(?![0-9A-Za-z])")
+# What this box says it serves when no unit says it (a proxy run by hand, the tests): a checkpoint's revision, 40
+# hexadecimal characters, or nothing, and a box that says nothing shares no model with the other (decision 1018).
+PAIR_CHECKPOINT = (os.environ.get("PAIR_CHECKPOINT") or "").strip().lower()
+PAIR_CHECKPOINT = PAIR_CHECKPOINT if re.fullmatch(r"[0-9a-f]{40}", PAIR_CHECKPOINT) else None
+
+
+def unit_texts():
+    """The command of the active unit named in PROXY_HOLD_UNITS: its ExecStart and the scripts it runs, their comments
+    left out, or None when systemd does not say (no unit named, none active). Read again 10 s on at most, by one
+    request at a time (a burst at the cache's end ran one systemctl each, and a late one wrote its older answer), and
+    forgotten with the engine's rules when another engine serves (forget_engine_rules; found in review of v1.43.0,
+    2026-11-03). The rid override keeps its own reader (unit_sets_rid_override)."""
+    if not HOLD_UNITS:
+        return None
+    with _UNIT_FACTS_LOCK:
+        now = time.monotonic()
+        if now - _UNIT_FACTS["ts"] <= 10:
+            return _UNIT_FACTS["texts"]
+        found = None
+        try:
+            out = subprocess.run(["systemctl", "show", *HOLD_UNITS, "-p", "ActiveState", "-p", "ExecStart"],
+                                 capture_output=True, text=True, timeout=3)
+            for block in (out.stdout.split("\n\n") if out.returncode == 0 else ()):
+                props = dict(ln.split("=", 1) for ln in block.splitlines() if "=" in ln)
+                if props.get("ActiveState") != "active":
+                    continue
+                found = [props.get("ExecStart", "")]
+                for script in re.findall(r"(/\S+\.sh)\b", found[0]):
+                    try:
+                        with open(script, encoding="utf-8") as f:
+                            found.append("\n".join(ln for ln in f.read().splitlines()
+                                                   if not ln.lstrip().startswith("#")))
+                    except OSError:
+                        pass
+                break
+        except Exception:
+            found = None
+        _UNIT_FACTS.update(ts=now, texts=found)
+        return found
 
 
 def slots_in(texts):
@@ -4680,37 +4730,26 @@ def slots_in(texts):
 
 
 def unit_slots():
-    """The requests the lane this box serves runs at once (decision 1014): what the active unit named in
-    PROXY_HOLD_UNITS starts its engine with, in its ExecStart or in a script it runs, or None when systemd does not
-    say (no unit named, as for a proxy run by hand or by a test) or the unit sets none. Read again 10 s on at most:
-    a Load, or the tier of the Flash lane, changes it."""
-    if not HOLD_UNITS:
-        return None
-    now = time.monotonic()
-    if now - _UNIT_SLOTS["ts"] <= 10:
-        return _UNIT_SLOTS["n"]
-    found = None
-    try:
-        out = subprocess.run(["systemctl", "show", *HOLD_UNITS, "-p", "ActiveState", "-p", "ExecStart"],
-                             capture_output=True, text=True, timeout=3)
-        for block in (out.stdout.split("\n\n") if out.returncode == 0 else ()):
-            props = dict(ln.split("=", 1) for ln in block.splitlines() if "=" in ln)
-            if props.get("ActiveState") != "active":
-                continue
-            texts = [props.get("ExecStart", "")]
-            for script in re.findall(r"(/\S+\.sh)\b", texts[0]):
-                try:
-                    with open(script, encoding="utf-8") as f:
-                        texts.append("\n".join(ln for ln in f.read().splitlines()
-                                               if not ln.lstrip().startswith("#")))
-                except OSError:
-                    pass
-            found = slots_in(texts)
-            break
-    except Exception:
-        found = None
-    _UNIT_SLOTS.update(ts=now, n=found)
-    return found
+    """The requests the lane this box serves runs at once (decision 1014), as its active unit starts its engine, or
+    None (no unit named, as for a proxy run by hand or by a test, or none set)."""
+    texts = unit_texts()
+    return slots_in(texts) if texts else None
+
+
+def revision_in(texts):
+    """The checkpoint's revision an engine's command names (--revision, 40 hexadecimal characters; a draft model's
+    --speculative-draft-model-revision is another flag), or None when it names none, or two."""
+    found = {m.group(1) for x in texts for m in _REVISION_FLAG.finditer(x)}
+    return found.pop() if len(found) == 1 else None
+
+
+def unit_revision():
+    """The checkpoint this box's lane serves (decision 1018): the revision its active unit names, which every lane's
+    unit carries, else PAIR_CHECKPOINT, else None. switch-model.sh serves four checkpoints of the 27B (stock,
+    uncensored, fp8, uncensored-fp8) and three of Flash under one name each: two boxes shared them as one model, and a
+    client of the stock box got the uncensored one (code review of 2026-11-03)."""
+    texts = unit_texts()
+    return (revision_in(texts) if texts else None) or PAIR_CHECKPOINT
 
 # Every character a reader of the journal takes for the end of a line, and every other
 # control. A client's own text reaches some messages (a tool schema's pattern, whole), and a
@@ -6795,7 +6834,7 @@ class H(BaseHTTPRequestHandler):
         now = time.monotonic()
         me = conf["name"]
         blocks, size = prefix_blocks(body, route)
-        peers = []
+        peers, mine = [], unit_revision()
         for p in conf["peers"]:
             _peer_models_soon(p)
             # the list as kept at its last read, however old: a box that switched lanes since says 409 and is read
@@ -6806,6 +6845,12 @@ class H(BaseHTTPRequestHandler):
             # filled it (found in review of v1.43.0, 2026-11-03); it is shared with once updated
             if name in (row.get("models") or ()) and row.get("running") is not None \
                     and _PAIR_COOL.get(p["name"], 0) <= now:
+                if mine is None or row.get("revision") != mine:
+                    # another checkpoint under the same name, or one not said: each box keeps its own (decision 1018)
+                    _say_once_a_minute(f"checkpoint {p['name']}", f"{self._peer} pair: {p['name']} serves {name} from "
+                                       f"checkpoint {str(row.get('revision') or 'not said')[:12]}, this box from "
+                                       f"{str(mine or 'not said')[:12]}: each keeps its own requests (decision 1018)")
+                    continue
                 peers.append(p)
         if not peers or (not CLIENT_KEYS and not _door_key()):
             # a box alone for this model now, or one that sends nothing on (_pair_routed): this box serves it, and the
