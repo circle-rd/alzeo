@@ -53,16 +53,15 @@ Ten roles, nothing else:
    cockpit turns the line into a banner (docs/clients.md);
 10. on a box with pair.json (discussion #45), send each generation that names one of this
    repo's lanes' models to the box of the pair that serves it, a peer's own proxy with that
-   over TLS both ways (each box's certificate pinned by the other, PAIR_PORT), and
-   refuse, in the client's dialect, a lane name no box serves, with what each
-   box serves, instead of answering it with another model. Any other name stays on this box, as
-   on a box alone. GET /v1/models lists every box's models (see "Two boxes behind one endpoint" below).
+   over TLS both ways (each box's certificate pinned by the other, PAIR_PORT). A lane name no box
+   serves, and any other name, stays on this box, as on a box alone (decision 986). GET /v1/models
+   lists every box's models (see "Two boxes behind one endpoint" below).
 
 v6.50: two boxes behind one endpoint (role 10, discussion #45, decisions 961-966). A box whose
 config directory holds pair.json reads its peers' /v1/models (every PAIR_TTL_S seconds, and again
 when a peer answers 409 that it serves another model now), sends a generation that names a model
-of one of this repo's lanes to the box that serves it, and refuses a lane name no box serves (404,
-with what each box serves). The boxes talk over TLS both ways (decisions 971-978, as NVIDIA
+of one of this repo's lanes to the box that serves it, and answers a lane name no box serves with its
+own lane, as a box alone does (decision 986). The boxes talk over TLS both ways (decisions 971-978, as NVIDIA
 PAIR's nodes do): each has a certificate of its own, made by pair.py, which the other pins in its
 pair.json, and a box of a pair listens on PAIR_PORT (30002) for its peers only, a connection
 without a pinned certificate refused right after its handshake. A request that comes in there is a
@@ -3127,9 +3126,8 @@ def route_model_name(body, path):
 # ── Two boxes behind one endpoint (v6.50, role 10, discussion #45, decisions 961-978) ──────────
 # A box whose config directory holds pair.json routes each generation that names one of OUR lanes'
 # models to the box that serves it: this one, or a peer's own proxy, over the pair's TLS. A lane
-# name no box serves is refused, in the client's dialect, with what each box serves, instead of being answered
-# by another model; any other name (claude-*, gpt-*, none) stays on this box, as on a box alone
-# ("any name reaches the lane that serves", claude-local.py). A request a peer sends on comes in on
+# name no box serves, and any other name (claude-*, gpt-*, none), stays on this box, as on a box alone
+# ("any name reaches the lane that serves", claude-local.py; decision 986). A request a peer sends on comes in on
 # the pair port: it is served here or refused (409), never sent on again, so two boxes that name each
 # other cannot bounce it. The peer runs every guard of its own on it (sizes, tools, efforts, holds),
 # so it goes there as the client wrote it. pair.json is read again when it changes: no restart.
@@ -3404,8 +3402,13 @@ def _peer_models_read(peer):
         answered, err = True, f"HTTP {e.code} on /v1/models"
     except Exception as e:      # an address that is no HTTP server, a broken answer: the peer does not answer
         err = _pair_why(e)
+    # known: what it served at its last good read, kept through a failed one, None before any: a box that does
+    # not answer now may still serve those, and a request for one of them waits for it (503); a box never read
+    # may serve any (another certificate at its address, a box not reached yet: the 503 says why); any other
+    # name is this box's own (decision 986), even while that box is off
+    known = models if err is None else (_PAIR_MODELS.get(peer["name"]) or {}).get("known")
     _PAIR_MODELS[peer["name"]] = {"ts": time.monotonic(), "models": models, "rows": rows, "error": err,
-                                  "answered": answered}
+                                  "answered": answered, "known": known}
     return models
 
 
@@ -6199,18 +6202,26 @@ class H(BaseHTTPRequestHandler):
                 return True
             if attempt == 2 or self._forward_peer(body, peer, name, conf, local) != "moved":
                 if attempt == 2:
-                    return False if local is None else self._pair_refused_nowhere(name, conf, local)
+                    return False if local is None else self._pair_served_nowhere(name, conf, local)
                 return True
             since = time.monotonic()        # the peer serves another model since its list was read
         if local is None:
             return False                    # this box's engine does not answer: its own path holds or says 503
-        return self._pair_refused_nowhere(name, conf, local)
+        return self._pair_served_nowhere(name, conf, local)
 
-    def _pair_refused_nowhere(self, name, conf, local):
-        """No box of the pair lists name: 503 to try again when a peer's list cannot be read, 404 otherwise."""
+    def _pair_served_nowhere(self, name, conf, local):
+        """No box of the pair lists name: a 503 to try again when a box that may serve it does not answer now
+        (it served it at its last good read, or it was never read: it may be restarting, or another box holds
+        its address), and otherwise False: this box's own lane answers it, as on a box alone, so a client set up
+        for a lane that is not loaded keeps working once its box is paired, and while the other box is off
+        (decision 986 of 2026-11-03, where 961 refused it with a 404: Claude Code, pi and Hermes as installed
+        name lanes that are often not loaded)."""
         served = pair_served_map(conf, local)
         said = "; ".join(f"{b}: {v if isinstance(v, str) else (', '.join(v) or 'nothing')}" for b, v in served.items())
-        unread = [p["name"] for p in conf["peers"] if (_PAIR_MODELS.get(p["name"]) or {}).get("error")]
+        def waited_for(p):
+            row = _PAIR_MODELS.get(p["name"]) or {}
+            return bool(row.get("error")) and (row.get("known") is None or name in row["known"])
+        unread = [p["name"] for p in conf["peers"] if waited_for(p)]
         if unread:
             # a peer whose list cannot be read may be the box that serves it (unreachable, or its engine
             # restarting): a 503 the client tries again, not a 404 it takes as final (found in review,
@@ -6220,10 +6231,9 @@ class H(BaseHTTPRequestHandler):
                               f"of this pair serves {name} now ({said}): try again", served)
             self._done("503 pair peer unreachable")
             return True
-        log(f"{self._peer} REFUSED {name}: no box of the pair serves it ({said})")
-        self._pair_refuse(404, "model_not_found", f"no box of this pair serves {name} now ({said})", served)
-        self._done("404 pair model served nowhere")
-        return True
+        _say_once_a_minute(f"nowhere {name}", f"pair: no box of the pair serves {name} now ({said}): this box's "
+                                               f"lane answers it, as on a box alone")
+        return False
 
     def _pair_held_refused(self, body, route):
         """Role 10, after a hold: the lane that came back may serve another model than the one this request

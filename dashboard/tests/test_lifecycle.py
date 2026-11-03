@@ -774,7 +774,7 @@ class FeedOutcomes(unittest.TestCase):
         "411 stop refused": "fail",
         "413 stop refused": "fail",
         # v6.50, role 10 (two boxes behind one endpoint): the answer came from the peer's proxy; the caller
-        # left while the peer worked; the peer cannot be reached; a lane name no box serves; a request a peer
+        # left while the peer worked; the peer cannot be reached; a request a peer
         # sent on for a model this box does not serve; the peer's own error relayed (its status is the hole);
         # the peer's stream cut before its end; on the pair port, a route the pair does not take (decision
         # 978); a peer's answer not streamed past the cap (review, 2026-11-03)
@@ -782,7 +782,6 @@ class FeedOutcomes(unittest.TestCase):
         "CLIENT GONE during pair": "gone",
         "503 pair peer unreachable": "fail",
         "503 pair own key unreadable": "fail",   # this box cannot check a key, so it sends nothing on (review, 2026-11-02)
-        "404 pair model served nowhere": "fail",
         "409 pair another model here": "fail",
         "502 pair upstream": "fail",
         "UPSTREAM CUT pair": "fail",

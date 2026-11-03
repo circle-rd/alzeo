@@ -220,6 +220,15 @@ class PairTool(unittest.TestCase):
     def add(self, *extra):
         return self.run_tool(self.b1, "add", "127.0.0.1", "--ssh", "box2", *extra)
 
+    def call_until_200(self, box, model, within=15.0):
+        """A call made again until it answers 200: a proxy reads pair.json again within 2 s of a change."""
+        deadline = time.monotonic() + within
+        while True:
+            st, body = self.call(box, model)
+            if st == 200 or time.monotonic() > deadline:
+                return st, body
+            time.sleep(0.5)
+
     def call(self, box, model):
         c = http.client.HTTPConnection("127.0.0.1", box.port, timeout=60)
         try:
@@ -314,10 +323,40 @@ class PairTool(unittest.TestCase):
         self.assertNotEqual(rc, 0)
         self.assertIn("this box cannot reach the pair port of box2", out)
         self.assertIn("nothing listens on its pair port", out)
-        self.assertIn("Nothing was kept on either box", out)
+        self.assertIn("Both boxes are as they were before this run", out)
         for b in (self.b1, self.b2):
             self.assertEqual(b.pair(), {"name": b.name, "peers": []}, "its name kept, its pair gone")
             self.assertEqual(b.peer_files(), [], "no key or certificate of the other box left")
+
+    def test_a_failed_add_on_a_working_pair_leaves_it_working_both_ways(self):
+        # decision 988: add run again on a pair that worked, and its answer cut once the other box wrote, left the
+        # pair one way (this box's entry forgotten there, the other kept here; review, 2026-11-03)
+        rc, out = self.add()
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(list((self.b1.cfg / "pair").glob("undo-*")), [], "no record left here once it worked")
+        self.ssh_boxes({"box2": {"home": str(self.b2.home), "pair_port": self.b2.pair_port, "from": "127.0.0.1",
+                                 "cut": '"do": "accept"'}})
+        rc, out = self.add()
+        self.assertNotEqual(rc, 0)
+        self.assertEqual(([p["name"] for p in self.b1.pair()["peers"]], [p["name"] for p in self.b2.pair()["peers"]]),
+                         (["box2"], ["box1"]), "the pair as it was, on both boxes")
+        self.assertEqual((len(self.b1.peer_files()), len(self.b2.peer_files())), (1, 1), "each certificate back")
+        for here, model in ((self.b1, "qwen3.8-flash-next-fp4"), (self.b2, "qwen3.8-27b")):
+            st, body = self.call_until_200(here, model)
+            self.assertEqual(st, 200, body[:300])
+
+    def test_a_check_that_fails_on_a_working_pair_puts_both_boxes_back(self):
+        rc, out = self.add()
+        self.assertEqual(rc, 0, out)
+        # run again with box2 now reaching box1 at an address where box1 does not listen: the check fails
+        self.ssh_boxes({"box2": {"home": str(self.b2.home), "pair_port": self.b2.pair_port, "from": "127.0.0.2"}})
+        rc, out = self.add()
+        self.assertNotEqual(rc, 0)
+        self.assertIn("Both boxes are as they were before this run", out)
+        self.ssh_boxes({})
+        for here, model in ((self.b1, "qwen3.8-flash-next-fp4"), (self.b2, "qwen3.8-27b")):
+            st, body = self.call_until_200(here, model)
+            self.assertEqual(st, 200, body[:300])
 
     def test_a_check_the_other_way_that_fails_keeps_nothing_either(self):
         # box2 reaches box1 at an address where box1 does not listen

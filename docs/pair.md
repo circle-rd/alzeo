@@ -23,9 +23,9 @@ On either box, one command, with the other box's address as this box reaches it:
 python3 ~/dgx-spark-qwen38/pair.py add 192.168.100.2
 ```
 
-It pairs both boxes at once, checks that each box reaches the other, and keeps nothing on either box
-when a check fails, with what to fix. Both proxies take the pair within a few seconds: nothing restarts.
-The two boxes' clocks need not agree.
+It pairs both boxes at once, checks that each box reaches the other, and leaves both boxes as they were
+when a check fails (a pair they already had included), with what to fix. Both proxies take the pair within
+a few seconds: nothing restarts. The two boxes' clocks need not agree.
 
 ```bash
 python3 ~/dgx-spark-qwen38/pair.py status          # this box's pair, and what each box serves now
@@ -47,11 +47,17 @@ one its SSH server sees, give that one: `--back 192.168.100.1`.
   sent to, as on a box alone.
 - `GET /v1/models` lists the models of both boxes, each with a `box` field. It never waits for the other
   box: its list is read in the background and kept for a few seconds.
-- A lane name that no box serves now gets a 404 `model_not_found`, in the client's dialect, with what
-  each box serves. When a box does not answer, or comes back from a switch with another lane, the client
-  gets a 503 `engine_unavailable` with `Retry-After`, and the request sent again goes to the right box.
-- A box never answers a request for one model with another. When the other box switched lanes since its
-  list was read, it refuses the request and the entry reads every list again before it answers.
+- A lane name that no box serves now is answered by the box it was sent to, by the lane it serves, as on
+  a box alone: a client set up for a lane that is not loaded keeps working once the boxes are paired, and
+  while the other box is off. When a box that may serve it does not answer (it served that model when last
+  asked, or it was never reached), or comes back from a switch with another lane, the client gets a 503
+  `engine_unavailable` with `Retry-After` and why, and the request sent again goes to the right box.
+- A box never answers a request for the other box's model with its own. When the other box switched lanes
+  since its list was read, it refuses the request and the entry reads every list again before it answers.
+- While this box's own engine does not answer (a lane switch under way), `GET /v1/models` says so with a
+  503, as on a box alone: tools that read its first row as this box's model, the cockpit's probe and
+  `claude-local.py`, are never handed the other box's. Requests that name the other box's model still go
+  there.
 
 ## The other box in the cockpit
 

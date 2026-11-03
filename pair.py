@@ -14,7 +14,7 @@ from then on the two proxies talk over TLS both ways on port 30002. The certific
 credential (decision 978): no box ever holds the other's API key, which is also its cockpit's login, and
 the pair port takes the generation routes, the model list and the summary of the tile only. Either box is then an entry: a request
 that names a model of one of this repo's lanes goes to the box that serves it. Both proxies read pair.json
-again within seconds: nothing restarts. `add` then checks both ways, and keeps nothing on either box when
+again within seconds: nothing restarts. `add` then checks both ways, and leaves both boxes as they were when
 one way fails (--no-check keeps the pair anyway). Nothing secret is ever on a command line, where ps shows
 it to every user, nor on the screen.
 
@@ -211,6 +211,71 @@ def drop_files(entries, keep=()):
             f.unlink(missing_ok=True)
 
 
+UNDO_KEEP_S = 3600
+
+
+def undo_file(token):
+    return PAIR_DIR / f"undo-{token}.json"
+
+
+def save_undo(token, name, gone):
+    """What a run of add is about to replace on this box (the entries, each with its certificate), kept under
+    the run's token, so that the run puts it back if it fails further on (decision 988): run again on a pair
+    that worked, a failure left it one way, this box's entry forgotten there and the other kept here (found in
+    review, 2026-11-03). Certificates and addresses only, nothing secret; older records are dropped."""
+    saved = []
+    for q in gone:
+        if not isinstance(q, dict):
+            continue                        # an entry edited into something else is not put back
+        rel = q.get("cert_file")
+        try:
+            pem = (CONFIG / os.path.expanduser(rel)).read_text() if isinstance(rel, str) and rel else None
+        except OSError:
+            pem = None
+        saved.append({"entry": q, "pem": pem})
+    write_atomic(undo_file(token), json.dumps({"name": name, "replaced": saved}), 0o600)
+    for f in PAIR_DIR.glob("undo-*.json"):
+        try:
+            if time.time() - f.stat().st_mtime > UNDO_KEEP_S:
+                f.unlink()
+        except OSError:
+            pass
+
+
+def undo(mod, token):
+    """pair.json as it was before the run of that token: the entry it wrote taken out, the ones it replaced put
+    back with their certificates. False when that run wrote nothing here."""
+    f = undo_file(token)
+    with pair_lock():
+        try:
+            rec = json.loads(f.read_text())
+        except (OSError, ValueError):
+            return False
+        conf = read_conf()
+        new, gone = without_peer(conf, rec.get("name"))
+        back = []
+        for item in rec.get("replaced") or []:
+            q = dict(item.get("entry") or {})
+            if not item.get("pem") or not isinstance(q.get("name"), str):
+                continue
+            q["cert_file"] = write_peer_cert(q["name"], item["pem"])
+            back.append(q)
+        new = dict(new, peers=new["peers"] + back)
+        write_pair(mod, new)
+        drop_files(gone, keep=new["peers"])
+        f.unlink(missing_ok=True)
+    return True
+
+
+def undo_there(dest, token):
+    """The other box as it was before this run, or the reason it could not be told; never raises."""
+    try:
+        ssh_call(dest, "undo", {"undo": token}, timeout=60)
+        return None
+    except SystemExit as e:
+        return str(e.code if e.code is not None else "")
+
+
 def url_host(addr):
     """An address as the host of a URL: an IPv6 one in brackets."""
     return f"[{addr}]" if ":" in addr and not addr.startswith("[") else addr
@@ -307,6 +372,7 @@ def do_accept(req):
         pem = ensure_identity(me)
         new, gone, _ = with_peer(mod, conf, req["name"], f"https://{url_host(back)}:{int(req['port'])}",
                                  req["cert"], ssh=back)
+        save_undo(token_of(req), req["name"], gone)
         try:
             write_pair(mod, new)
         except BaseException:
@@ -315,6 +381,18 @@ def do_accept(req):
         drop_files(gone, keep=new["peers"])
     return {"name": me, "cert": pem, "port": mod.PAIR_PORT, "back": back,
             "replaced": [q.get("name") for q in gone if isinstance(q, dict)]}
+
+
+def token_of(req):
+    tok = str(req.get("undo") or "")
+    if not re.fullmatch(r"[0-9a-f]{32}", tok):
+        raise SystemExit("pair.py: a run of add names itself with a token of 32 hex digits")
+    return tok
+
+
+def do_undo(req):
+    mod = proxy_module()
+    return {"undone": undo(mod, token_of(req))}
 
 
 def do_check(req):
@@ -333,7 +411,7 @@ def do_forget(req):
 def remote(req):
     """The other box's half (run there over SSH by ssh_call): one JSON line on standard output."""
     try:
-        out = {"accept": do_accept, "check": do_check, "forget": do_forget}[req["do"]](req)
+        out = {"accept": do_accept, "check": do_check, "forget": do_forget, "undo": do_undo}[req["do"]](req)
     except SystemExit as e:
         out = {"error": str(e.code if e.code is not None else "").removeprefix("pair.py: ")[:800]}
     except Exception as e:
@@ -430,15 +508,15 @@ def cmd_add(args, mod):
         conf = read_conf()
         me = my_name(mod, conf)
         pem = ensure_identity(me)
-    mine = fingerprint(mod, pem, "this certificate")
+    token = secrets.token_hex(16)
     print(f"pairing {me} (this box) with the box at {host}, over SSH ({dest})...")
     # 1. the other box writes its side and says who it is: its name, certificate and pair port. A failure
-    # once it may have written (an error after its write, SSH cut, a timeout, Ctrl-C) is undone there too:
-    # forget is nothing on a box that wrote nothing (found in review, 2026-11-03)
+    # once it may have written (an error after its write, SSH cut, a timeout, Ctrl-C) is undone there: what
+    # this run wrote taken out, what it replaced put back, nothing at all where it wrote nothing (decision 988)
     try:
-        r = ssh_call(dest, "accept", {"name": me, "port": mod.PAIR_PORT, "back": back, "cert": pem})
+        r = ssh_call(dest, "accept", {"name": me, "port": mod.PAIR_PORT, "back": back, "cert": pem, "undo": token})
     except BaseException:
-        forget_there(dest, me, mine)
+        undo_there(dest, token)
         raise
     name, their_pem = r.get("name"), r.get("cert")
     try:
@@ -451,23 +529,27 @@ def cmd_add(args, mod):
         their_back = address(r.get("back") or "", "the address it reaches this box at")
         replaced = [n for n in (r.get("replaced") or []) if isinstance(n, str) and mod.PAIR_NAME.fullmatch(n)]
     except (ValueError, TypeError, SystemExit) as e:
-        why = forget_there(dest, me, mine)
+        why = undo_there(dest, token)
         said = SAFE_TEXT.sub("?", str(getattr(e, "code", None) or e))[:200]
-        raise SystemExit(f"pair.py: {dest} answered with something this box does not take ({said}): nothing was kept"
-                         + (f" here, and it could not be told ({why}): run pair.py remove {me} there" if why else ""))
+        raise SystemExit(f"pair.py: {dest} answered with something this box does not take ({said}): both boxes are "
+                         f"as they were" if not why else
+                         f"pair.py: {dest} answered with something this box does not take ({said}): this box is as it "
+                         f"was, and {dest} could not be told ({why}): run pair.py remove {me} there")
     # 2. this box writes its side
     try:
         with pair_lock():
             conf = read_conf()
             new, gone, entry = with_peer(mod, conf, name, f"https://{url_host(host)}:{port}", their_pem, ssh=dest)
+            save_undo(token, name, gone)
             try:
                 write_pair(mod, new)
             except BaseException:
                 drop_files([entry], keep=conf["peers"])
+                undo_file(token).unlink(missing_ok=True)
                 raise
             drop_files(gone, keep=new["peers"])
     except BaseException:
-        forget_there(dest, me, mine)
+        undo_there(dest, token)
         raise
     # 3. both ways, as the proxies will: this box to its pair port, and that box to this one's
     if not args.no_check:
@@ -484,16 +566,16 @@ def cmd_add(args, mod):
             # undone on both boxes whatever fails on the way, and never in place of why the pair failed
             # (found in review, 2026-11-03)
             try:
-                unpair_here(mod, name)
+                undo(mod, token)
                 undone = None
             except BaseException as e:
                 undone = SAFE_TEXT.sub("?", str(getattr(e, "code", None) or e))[:200]
-            why = forget_there(dest, me, mine)
+            why = undo_there(dest, token)
             if why is None and undone is None:
-                kept = "Nothing was kept on either box"
+                kept = "Both boxes are as they were before this run"
             else:
-                kept = ("Nothing was kept here" if undone is None else
-                        f"This box keeps it ({undone}): run pair.py remove {name} here")
+                kept = ("This box is as it was" if undone is None else
+                        f"This box keeps the new pair ({undone}): run pair.py remove {name} here")
                 if why is not None:
                     kept += f", and {name} could not be told ({why}): run pair.py remove {me} there"
             if why_there is not None:
@@ -504,6 +586,7 @@ def cmd_add(args, mod):
             raise SystemExit(f"pair.py: {name} cannot reach the pair port of this box at {back_said}: {why_here}. "
                              f"{kept}. Check that no firewall stops {mod.PAIR_PORT}/tcp toward this box, and give "
                              f"this box's address as {name} reaches it with --back (--no-check keeps a pair anyway).")
+    undo_file(token).unlink(missing_ok=True)       # kept: the other box drops its record within the hour
     print(f"{me} and {name} are a pair: each box now sends a request for a model the other serves to that box.")
     if not args.no_check:
         print(f"  {me} -> {name} (https://{url_host(host)}:{port}): answers over TLS, serves {', '.join(there) or 'nothing now'}")

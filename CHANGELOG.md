@@ -8,12 +8,13 @@ box reach both models at one address. A request that names a model of one of thi
 that serves it, streamed or not, in the OpenAI and Anthropic dialects and on the Ollama and SageMaker routes.
 Any other name (Claude Code's background tasks, `gpt-*`) stays on the box it was sent to, as on a box alone.
 `GET /v1/models` lists the models of both boxes, each with a `box` field, and never waits for the other box. A
-lane name that no box serves gets a 404 that says what each box serves. docs/pair.md says it all.
+lane name that no box serves is answered by the box it was sent to, as on a box alone, so an agent set up for a
+lane that is not loaded keeps working once the boxes are paired. docs/pair.md says it all.
 
 **Paired in one command.** `python3 ~/dgx-spark-qwen38/pair.py add <the other box>` pairs both boxes over SSH (as
-step 4 of NVIDIA's connect-two-sparks playbook sets it up), checks that each box reaches the other,
-and keeps nothing on either box when a check fails, with what to fix. Both proxies take the pair within
-seconds: nothing restarts. `pair.py status`, `remove`, `name` and `identity` do the rest.
+step 4 of NVIDIA's connect-two-sparks playbook sets it up), checks that each box reaches the other, and leaves
+both boxes as they were when a check fails, a pair they already had included, with what to fix. Both proxies take
+the pair within seconds: nothing restarts. `pair.py status`, `remove`, `name` and `identity` do the rest.
 
 **Security.** The two boxes talk over TLS 1.3 both ways on port 30002, open only while the box is paired. Each
 box has a certificate of its own, made once by `pair.py`, and pins the other's by its SHA-256, as the nodes of

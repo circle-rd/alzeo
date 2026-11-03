@@ -573,20 +573,22 @@ class TwoBoxesBehindOneEndpoint(unittest.TestCase):
         st, rows = self.models_once_known(port=self.port2, key=KEY_2)
         self.assertEqual(rows, {"qwen3.8-flash-next-fp4": "spark2", "qwen3.8-27b": "spark1"})
 
-    # ---- refusals -------------------------------------------------------------------------------
-    def test_a_lane_no_box_serves_is_refused_with_what_each_box_serves(self):
+    # ---- a lane no box serves ---------------------------------------------------------------------
+    def test_a_lane_no_box_serves_is_answered_here_as_on_a_box_alone(self):
+        # decision 986 (2026-11-03): Claude Code, pi and Hermes as installed name lanes that are often not loaded,
+        # and a box alone answers any name with its lane; the 404 of 961 made them fail once the boxes were paired
         st, out, _ = self.call("/v1/chat/completions", self.chat("kolibri-1"))
-        self.assertEqual(st, 404, out[:300])
-        err = json.loads(out)["error"]
-        self.assertEqual(err["type"], "model_not_found")
-        self.assertEqual(err["served"], {"spark1": ["qwen3.8-27b"], "spark2": ["qwen3.8-flash-next-fp4"]})
-        self.assertEqual(self.E1.seen + self.E2.seen, [], "no engine is asked for a model it does not serve")
+        self.assertEqual(st, 200, out[:300])
+        self.assertIn(b"from spark1", out)
+        self.assertEqual([m for _, m, _, _ in self.E1.seen], ["kolibri-1"])
+        self.assertEqual(self.E2.seen, [], "never sent to the other box")
+        self.assertTrue(self.until_in_journal("spark1", "no box of the pair serves kolibri-1 now"))
 
-    def test_the_anthropic_refusal_is_in_its_own_shape(self):
+    def test_the_anthropic_dialect_of_a_lane_no_box_serves_is_answered_here_too(self):
         st, out, _ = self.call("/v1/messages", self.chat("ornith-1.5-122b"))
-        self.assertEqual(st, 404, out[:300])
-        j = json.loads(out)
-        self.assertEqual((j["type"], j["error"]["type"]), ("error", "model_not_found"))
+        self.assertEqual(st, 200, out[:300])
+        self.assertEqual(json.loads(out)["type"], "message")
+        self.assertIn(b"from spark1", out)
 
     def test_a_peer_that_switched_since_its_list_was_read_never_serves_the_wrong_model(self):
         st, _, _ = self.call("/v1/chat/completions", self.chat("qwen3.8-flash-next-fp4"))
@@ -601,7 +603,8 @@ class TwoBoxesBehindOneEndpoint(unittest.TestCase):
         self.write_pair(cfg2b, "spark2b", {"name": "spark2", "peers": [peer_entry(cfg2b, "spark1", self.pport1)]})
         self.repoint(self.pair_port("spark2b"))
         st, out, _ = self.call("/v1/chat/completions", self.chat("qwen3.8-flash-next-fp4"))
-        self.assertEqual(st, 404, out[:300])
+        self.assertEqual(st, 200, out[:300])           # served by no box now: this box's lane answers it (986)
+        self.assertIn(b"from spark1", out)
         self.assertEqual(self.E2.seen, [], "the peer's engine is never handed the old model's request")
         st, out, _ = self.call("/v1/chat/completions", self.chat("ornith-1.5-122b"))
         self.assertEqual(st, 200, out[:300])
@@ -1044,6 +1047,20 @@ class TwoBoxesBehindOneEndpoint(unittest.TestCase):
             self.E2.mode = "ok"
             time.sleep(PAIR_TTL + 0.5)
 
+    def test_a_lane_the_box_that_does_not_answer_never_served_is_answered_here(self):
+        # decision 986 holds while the other box is off: only a model it served at its last good read waits
+        # for it (503 above); a client set up for a lane loaded nowhere is answered here, as on a box alone
+        self.E2.mode = "down"
+        try:
+            time.sleep(PAIR_TTL + 0.5)
+            st, out, _ = self.call("/v1/chat/completions", self.chat("kolibri-1"))
+            self.assertEqual(st, 200, out[:300])
+            self.assertIn(b"from spark1", out)
+            self.assertEqual(self.E2.seen, [])
+        finally:
+            self.E2.mode = "ok"
+            time.sleep(PAIR_TTL + 0.5)
+
     def test_a_stream_the_peer_cuts_reaches_the_client_cut_never_ended(self):
         self.E2.mode = "cut"
         c = http.client.HTTPConnection("127.0.0.1", self.port1, timeout=60)
@@ -1125,10 +1142,10 @@ class TwoBoxesBehindOneEndpoint(unittest.TestCase):
         self.assertEqual((count("sym-a"), count("sym-b")), before, "no GET goes on once the client stopped")
         self.assertLessEqual(before[1], before[0], "each GET of the client reads the peer's own list once at most")
         st, out, _ = self.call("/v1/chat/completions", self.chat("kolibri-1"), port=pa)
-        self.assertEqual(st, 404, out[:300])
-        self.assertEqual(json.loads(out)["error"]["served"],
-                         {"sym-a": ["qwen3.8-27b"], "sym-b": ["qwen3.8-flash-next-fp4"]},
-                         "each box says what it serves itself, not the union it shows its clients")
+        self.assertEqual(st, 200, out[:300])           # served by no box: sym-a's own lane answers it (986)
+        st, out, _ = self.tls_call(self.pair_port("sym-b"), "/v1/models", me="sym-a", server="sym-b", method="GET")
+        self.assertEqual([r["id"] for r in json.loads(out)["data"]], ["qwen3.8-flash-next-fp4"],
+                         "a box asked over the pair says what it serves itself, not the union it shows its clients")
 
     # ---- what the code review of 2026-11-02 found -------------------------------------------------
     def test_a_box_that_cannot_read_its_own_key_sends_nothing_on(self):
@@ -1194,8 +1211,8 @@ class TwoBoxesBehindOneEndpoint(unittest.TestCase):
         self.assertEqual(st, 200, out[:300])          # its list is read and kept 300 s
         Switched.models = ["ornith-1.5-122b"]         # the peer switches; the entry's list is the old one
         st, out, _ = self.call("/v1/chat/completions", self.chat("qwen3.8-flash-next-fp4"), port=port)
-        self.assertEqual(st, 404, out[:300])          # its 409 had every list read again: served nowhere now
-        self.assertEqual(json.loads(out)["error"]["served"]["spark2"], ["ornith-1.5-122b"])
+        self.assertEqual(st, 200, out[:300])          # its 409 had every list read again: served by no box now,
+        self.assertIn(b"from spark1", out)            # so this box's lane answers it, as on a box alone (986)
         self.assertEqual(Switched.posts, ["qwen3.8-flash-next-fp4", "qwen3.8-flash-next-fp4"])
         self.assertIn("serves another model now; the lists are read again", self.journal("switch-409"))
         st, out, _ = self.call("/v1/chat/completions", self.chat("ornith-1.5-122b"), port=port)
@@ -1293,11 +1310,11 @@ class TwoBoxesBehindOneEndpointInProcess(TwoBoxesBehindOneEndpoint):
     def test_either_box_is_an_entry(self):
         super().test_either_box_is_an_entry()
 
-    def test_a_lane_no_box_serves_is_refused_with_what_each_box_serves(self):
-        super().test_a_lane_no_box_serves_is_refused_with_what_each_box_serves()
+    def test_a_lane_no_box_serves_is_answered_here_as_on_a_box_alone(self):
+        super().test_a_lane_no_box_serves_is_answered_here_as_on_a_box_alone()
 
-    def test_the_anthropic_refusal_is_in_its_own_shape(self):
-        super().test_the_anthropic_refusal_is_in_its_own_shape()
+    def test_the_anthropic_dialect_of_a_lane_no_box_serves_is_answered_here_too(self):
+        super().test_the_anthropic_dialect_of_a_lane_no_box_serves_is_answered_here_too()
 
     def test_a_peer_that_switched_since_its_list_was_read_never_serves_the_wrong_model(self):
         super().test_a_peer_that_switched_since_its_list_was_read_never_serves_the_wrong_model()
@@ -1382,6 +1399,9 @@ class TwoBoxesBehindOneEndpointInProcess(TwoBoxesBehindOneEndpoint):
 
     def test_a_peer_whose_engine_restarts_gets_a_503_to_try_again_not_a_404(self):
         super().test_a_peer_whose_engine_restarts_gets_a_503_to_try_again_not_a_404()
+
+    def test_a_lane_the_box_that_does_not_answer_never_served_is_answered_here(self):
+        super().test_a_lane_the_box_that_does_not_answer_never_served_is_answered_here()
 
     def test_a_stream_the_peer_cuts_reaches_the_client_cut_never_ended(self):
         super().test_a_stream_the_peer_cuts_reaches_the_client_cut_never_ended()
