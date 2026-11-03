@@ -516,7 +516,8 @@ on('repo', d => {
   setText('rp-tag', d.tag || 'n/a'); setText('rp-branch', d.branch || 'n/a');
   setText('rp-head', (d.head || '').split(' ')[0] || 'n/a'); setTitle('rp-head', d.head || '');
   setText('rp-dirty', d.dirty == null ? 'unknown (git did not answer)' : d.dirty ? 'modified, uncommitted changes' : d.untracked ? `clean, ${d.untracked} untracked` : 'clean');
-  setText('rp-proxy', F.proxy && F.proxy.version ? F.proxy.version + (F.proxy.same_as_repo === false ? ', differs from the repo copy' : ', the repo copy') : 'unknown');
+  const pv = F.proxy && F.proxy.version, ps = F.proxy && F.proxy.same_as_repo;
+  setText('rp-proxy', (pv || 'version unknown') + (ps === false ? ', differs from the repo copy' : ps ? ', the repo copy' : ''));
 });
 // This box against what its clone recommends (v1.36.0): the list install.sh prints before its
 // first step, one line per difference, what moves first.

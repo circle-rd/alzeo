@@ -2136,11 +2136,11 @@ def collect_repo():
     proxy = {"version": None, "same_as_repo": None}
     try:
         deployed = (CONFIG_DIR / "keepalive-proxy.py").read_bytes()
-        # the version its docstring names on its first line ("(v6.51)"): the history line read before sits past the
-        # first 4,000 bytes since v1.40.7, and Lanes and Settings said "unknown", the copy check's warning never shown
-        # (found in review, 2026-11-03). An older proxy, whose first line names none, by its history line
-        m = (re.search(rb'"""Keepalive proxy[^\n]*?\(v(\d+\.\d+)\)', deployed[:800])
-             or re.search(rb"\nv(\d+\.\d+):", deployed[:65536]))
+        # the first line of its history, the latest, wherever it sits: read in the first 4,000 bytes, it was past them
+        # since v1.40.7, and Lanes and Settings said "unknown" (found in review, 2026-11-03). Without one, the version
+        # its docstring names on its first line, which lagged the history in a few early releases
+        m = (re.search(rb"\nv(\d+\.\d+):", deployed)
+             or re.search(rb'"""Keepalive proxy[^\n]*?\(v(\d+\.\d+)\)', deployed[:800]))
         proxy["version"] = "v" + m.group(1).decode() if m else None
         repo_copy = (REPO_DIR / "keepalive-proxy.py").read_bytes()
         proxy["same_as_repo"] = hashlib.sha256(deployed).hexdigest() == hashlib.sha256(repo_copy).hexdigest()

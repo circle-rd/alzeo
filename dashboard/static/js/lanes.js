@@ -233,8 +233,9 @@ function renderProxy(){
   const u = F.units[PROXY_UNIT] || {};
   const onl = u.active === 'active';
   cap('px-state', onl ? 'running' : u.active || 'unknown', onl ? 'ok' : u.active === 'failed' ? 'err' : '');
-  const v = F.proxy && F.proxy.version, other = !!v && F.proxy.same_as_repo === false;
-  setText('px-ver', v ? v + (other ? ', not the repo’s copy' : ', the repo’s copy') : 'unknown');
+  // the copy check compares the files themselves: it needs no version, and a version not read hid it (review, 2026-11-03)
+  const v = F.proxy && F.proxy.version, other = !!F.proxy && F.proxy.same_as_repo === false;
+  setText('px-ver', (v || 'version unknown') + (other ? ', not the repo’s copy' : F.proxy && F.proxy.same_as_repo ? ', the repo’s copy' : ''));
   const b = $('px-btn'); setText(b, onl ? 'Stop the proxy' : 'Start the proxy');
   b.className = 'btn sm ' + (onl ? 'danger' : '');
   b.disabled = !!busyWhy(); b.title = busyWhy();

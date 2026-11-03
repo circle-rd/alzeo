@@ -2543,6 +2543,26 @@ class TheBoxItIs(unittest.TestCase):
         self.assertTrue(all("Download" in row for row in r["library"]), r["library"])
 
 
+class TheDeployedProxyIsSaidNotTheRepoCopyEvenWithoutItsVersion(unittest.TestCase):
+    """The copy check compares the files themselves, and needs no version: the warning hid behind a version the cockpit
+    could not read, from v1.40.7 to v1.42.0 (review, 2026-11-03)."""
+
+    def test_the_warning_shows_with_or_without_a_version(self):
+        for proxy, lanes, settings in (
+                ({"version": None, "same_as_repo": False}, "version unknown, not the repo’s copy",
+                 "version unknown, differs from the repo copy"),
+                ({"version": "v6.51", "same_as_repo": False}, "v6.51, not the repo’s copy", "v6.51, differs from the repo copy"),
+                ({"version": "v6.51", "same_as_repo": True}, "v6.51, the repo’s copy", "v6.51, the repo copy"),
+                ({"version": None, "same_as_repo": None}, "version unknown", "version unknown")):
+            with self.subTest(proxy=proxy):
+                r = run(self, r"""
+                feed({config: CONFIG, units: UNITS, lifecycle: life({'qwen38-sglang.service': eng('ready')}),
+                      repo: {head: 'abc', dirty: false, untracked: 0, proxy: %s}});
+                report({lanes: txt('px-ver'), settings: txt('rp-proxy')});
+                """ % json.dumps(proxy))
+                self.assertEqual((r["lanes"], r["settings"]), (lanes, settings), r)
+
+
 class AnEmptyTimelineReadsAsOneLine(unittest.TestCase):
     """The Timeline card of the Now view before any event: its one line of text was the only cell of an event's
     three-column grid, so it filled the time's 62 px column and read one word a line in a wide card (capture

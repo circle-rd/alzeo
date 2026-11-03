@@ -408,12 +408,12 @@ class Parse(Base):
         self.assertIs(out["guard"]["predates_abort"], False)
 
     def test_the_deployed_proxy_says_its_version(self):
-        # its history line is past the first 4,000 bytes the cockpit read since v6.50: Lanes and Settings said
+        # its history line is past the first 4,000 bytes the cockpit read since v1.40.7: Lanes and Settings said
         # "unknown", and the warning that the deployed proxy is not the repo's copy could never show (review,
         # 2026-11-03)
         self.box({"git": ""})
         repo = (REPO / "keepalive-proxy.py").read_bytes()
-        want = "v" + re.search(rb"\(v(\d+\.\d+)\)", repo[:800]).group(1).decode()
+        want = "v" + re.search(rb"\nv(\d+\.\d+):", repo).group(1).decode()
         deployed = pathlib.Path(self.cp.CONFIG_DIR) / "keepalive-proxy.py"
         self.addCleanup(deployed.unlink, missing_ok=True)
         deployed.write_bytes(repo)
@@ -421,9 +421,13 @@ class Parse(Base):
         self.assertEqual(out["proxy"], {"version": want, "same_as_repo": True})
         deployed.write_bytes(repo.replace(b"No content logging", b"No content logged", 1))
         self.assertEqual(self.cp.collect_repo()["proxy"], {"version": want, "same_as_repo": False})
-        # a proxy older than the version on its first line still says its own, by its history line
-        deployed.write_bytes(b'#!/usr/bin/env python3\n"""Keepalive proxy.\n' + b"x" * 5000 + b"\nv6.12: an old one\n")
-        self.assertEqual(self.cp.collect_repo()["proxy"]["version"], "v6.12")
+        # the history says the version where the first line lagged it (v1.5.4 to v1.5.7), and the first line where
+        # there is no history
+        deployed.write_bytes(b'#!/usr/bin/env python3\n"""Keepalive proxy in front of SGLang (v6.6).\n' + b"x" * 5000
+                             + b"\nv6.8: the latest\n\nv6.7: one before\n")
+        self.assertEqual(self.cp.collect_repo()["proxy"]["version"], "v6.8")
+        deployed.write_bytes(b'#!/usr/bin/env python3\n"""Keepalive proxy in front of SGLang (v6.6).\n')
+        self.assertEqual(self.cp.collect_repo()["proxy"]["version"], "v6.6")
 
     def test_an_untracked_file_is_not_a_modified_working_tree(self):
         """A screenshot dropped in the checkout is not the served code drifting.
