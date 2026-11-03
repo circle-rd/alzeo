@@ -2632,7 +2632,7 @@ class TheOtherBoxOfAPairIsShownInNow(unittest.TestCase):
         state = {"models": ["qwen3.8-27b"], "sent": {"affinity": 9, "balance": 3, "failover": 1, "rescued": 2}}
         r = run(self, self.BODY % json.dumps({"node_id": "local", "boxes": {"spark2": {"state": state}}}))
         self.assertIn("shared: 12 sent there (9 to stay with their conversation, 3 to even the load), 1 served here "
-                      "when it did not answer, 2 sent there when this box did not answer", r["rows"], r)
+                      "when it did not answer, 2 sent there when this box could not serve it", r["rows"], r)
         # none sent yet, or counts that are no counts: no row
         for sent in ({"affinity": 0, "balance": 0, "failover": 0}, {"affinity": "9", "balance": None}, "lots", None):
             r = run(self, self.BODY % json.dumps({"node_id": "local", "boxes": {"spark2": {"state": {

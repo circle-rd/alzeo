@@ -1939,6 +1939,28 @@ class TwoBoxesServeOneModel(PairFixture, unittest.TestCase):
         self.assertIn(b"from spark1", out)
         self.assertLess(took, 2.0, f"the next request waited {took:.1f} s again for the box that does not answer")
 
+    def test_a_refusal_served_here_is_counted_once_this_box_served_it(self):
+        # the tile counted "served here" before this box tried: a request this box then refused too was said served
+        # here (review, 2026-11-03)
+        Peer = fake_peer(["qwen3.8-27b", "marker-count-here"], (503, {"error": {"type": "engine_unavailable",
+                                                                                 "message": "away"}}))
+        entry = self.spare_proxy("spark1-count", KEY_1, peers=(("spark2", tls_peer(self, Peer)),),
+                                 extra={"PAIR_SPREAD_COOL_S": "0"})
+        self.until_listed("marker-count-here", port=entry)
+        held = self.busy(self.E1, entry, KEY_1, "local-only", 1, 4.0)       # one here, none there: it goes there
+        before = self.sent(entry)
+        self.E1.mode = "busy"                                               # and this box's engine says 503 too
+        st, out, _ = self.call("/v1/chat/completions", self.chat("qwen3.8-27b"), port=entry)
+        self.assertNotEqual(st, 200, out[:300])
+        self.assertEqual(self.moved(before, self.sent(entry)), {}, "a request no box served was counted served here")
+        self.E1.mode = "ok"
+        st, out, _ = self.call("/v1/chat/completions", self.chat("qwen3.8-27b"), port=entry)
+        self.assertEqual(st, 200, out[:300])
+        self.assertIn(b"from spark1", out)
+        self.assertEqual(self.moved(before, self.sent(entry)), {"failover": 1})
+        for th in held:
+            th.join(30)
+
     def test_a_box_held_by_its_memory_floor_sends_on_what_the_other_box_serves(self):
         # the cockpit's floor stopped a generation here: new ones wait here (v6.47), but the other box serves the model:
         # it answers, where this box said 503 or 529 for the whole hold (review, 2026-11-03)
@@ -1953,8 +1975,11 @@ class TwoBoxesServeOneModel(PairFixture, unittest.TestCase):
                 self.assertEqual(st, 200, out[:300])
                 self.assertIn(b"from spark2", out, "this box refused for memory what the other box serves")
         # sent there at the decision, this box held by its floor being no box to keep them: the take-over passed the
-        # test alone when the decision kept them here (review, 2026-11-03)
-        self.assertEqual(self.moved(before, self.sent()), {"balance": 2}, "kept here, then taken over")
+        # test alone when the decision kept them here (review, 2026-11-03). Counted as what this box could not serve,
+        # never "to even the load"
+        self.assertEqual(self.moved(before, self.sent()), {"rescued": 2})
+        self.assertFalse(self.until_in_journal("spark1", "this box is short of memory for qwen3.8-27b: trying spark2",
+                                               within=0.5), "kept here, then taken over")
         for th in held:
             th.join(30)
         time.sleep(3)                                                       # the hold is over
@@ -2624,6 +2649,9 @@ class TwoBoxesServeOneModelInProcess(TwoBoxesServeOneModel):
 
     def test_a_client_that_leaves_while_the_other_box_does_not_answer_still_pauses_it(self):
         super().test_a_client_that_leaves_while_the_other_box_does_not_answer_still_pauses_it()
+
+    def test_a_refusal_served_here_is_counted_once_this_box_served_it(self):
+        super().test_a_refusal_served_here_is_counted_once_this_box_served_it()
 
 
 class ThePairsPieces(unittest.TestCase):

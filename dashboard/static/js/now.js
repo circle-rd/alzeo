@@ -361,7 +361,7 @@ function sharedRow(sent){
   if (kept + even) parts.push(`${kept + even} sent there (${kept} to stay with their conversation, ${even} to even the load)`);
   if (back) parts.push(`${back} served here when it did not answer`);
   if (long) parts.push(`${long} served here as too long for its pool`);
-  if (saved) parts.push(`${saved} sent there when this box did not answer`);
+  if (saved) parts.push(`${saved} sent there when this box could not serve it`);
   return parts.length ? ['shared', parts.join(', ')] : null;
 }
 function renderPair(){

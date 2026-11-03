@@ -5489,6 +5489,9 @@ class H(BaseHTTPRequestHandler):
         _gen_discard(self)
         with _GEN_LOCK:
             _PAIR_HERE.discard(self)
+        here, self._pair_here_count = getattr(self, "_pair_here_count", None), None
+        if here and outcome.startswith("ok"):
+            pair_spread_count(*here)        # a refusal of the other box that this box served (role 10)
         self._say_tool_targets(outcome)
         self._note_gave_up(outcome)
         st = ""
@@ -6404,6 +6407,7 @@ class H(BaseHTTPRequestHandler):
         self._tool_calls = {}; self._tool_bytes = 0; self._answer_body = bytearray()   # role 8
         self._prompt_fp = None                                                         # role 9
         self._pair_alt = None                                                          # role 10, decision 998
+        self._pair_here_count = None                                                   # role 10, the tile
         self._answer_hit = False; self._answer_tail = b""; self._tool_last = {}; self._tool_seq = 0
         n0 = self.headers.get("Content-Length") or "0"
         self.path, suspect = canonical_path(self.path)
@@ -6864,7 +6868,8 @@ class H(BaseHTTPRequestHandler):
             return False
         # a box that refuses new generations for memory (its cockpit's floor, v6.47) takes none it could send on: it
         # said 529 while the other box idled (found in review, 2026-11-03)
-        boxes = ([] if floor_refusal() is not None else [me]) + [p["name"] for p in peers]
+        held = floor_refusal() is not None
+        boxes = ([] if held else [me]) + [p["name"] for p in peers]
         match = {b: affinity_of(b, blocks, now) for b in boxes}
         best = max(match.values())
         gap = {b: pair_spread_gap(pair_slots_of(b, conf)) for b in boxes}
@@ -6879,6 +6884,8 @@ class H(BaseHTTPRequestHandler):
             low = min(load.values())
             if load[pick] - low > gap[pick] and load[pick] > PAIR_SPREAD_REL * low:
                 pick, why = first(boxes), "balance"
+            if held:
+                why = "rescued"             # sent there because this box cannot serve it now, not to even the load
             if pick == me:
                 with _GEN_LOCK:
                     _PAIR_HERE.add(self)
@@ -6907,7 +6914,9 @@ class H(BaseHTTPRequestHandler):
         affinity_forget(pick, blocks)
         self._pair_refused(pick, name, res, "this box serves it")
         if res in ("fallback", "too long"):     # counted apart: a pool too small says nothing of the box's health
-            pair_spread_count(pick, "failover" if res == "fallback" else "too_long")
+            # once this box served it: counted before, a request this box then refused too was said served here (found
+            # in review of v1.43.0, 2026-11-03)
+            self._pair_here_count = (pick, "failover" if res == "fallback" else "too_long")
         with _GEN_LOCK:
             _PAIR_HERE.add(self)
         affinity_note(me, blocks, time.monotonic())

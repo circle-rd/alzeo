@@ -118,8 +118,9 @@ that says none, keep their own requests:
   sends it, to test its own box.
 - The tile of each cockpit says what it sent the other box, and why: to stay with a conversation, to even the
   load, what it served itself when that box did not answer or found the prompt too long for its pool, and what
-  that box served when this one could not. A request counts once the other box's answer begins, and the counts
-  stay on the tile while the other box does not answer.
+  that box served when this one could not (its memory floor, a prompt too long for its pool, a warming engine,
+  its engine away). A request sent there counts once the other box's answer begins, one served here once this
+  box served it, and the counts stay on the tile while the other box does not answer.
 
 ## The other box in the cockpit
 
