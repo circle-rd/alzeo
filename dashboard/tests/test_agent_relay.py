@@ -777,8 +777,8 @@ class PureHelpers(unittest.TestCase):
         class R:
             def __init__(self, out):
                 self.stdout = out
-        iface = "8: tailscale0    inet 100.114.54.60/32 scope global tailscale0\\       valid_lft forever\n"
-        self.assertEqual(ar.tailscale_ipv4(lambda *a, **k: R(iface)), "100.114.54.60")
+        iface = "8: tailscale0    inet 100.64.0.7/32 scope global tailscale0\\       valid_lft forever\n"
+        self.assertEqual(ar.tailscale_ipv4(lambda *a, **k: R(iface)), "100.64.0.7")
         calls = []
         def run(argv, **k):
             calls.append(argv[0])

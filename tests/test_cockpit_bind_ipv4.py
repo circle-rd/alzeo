@@ -27,7 +27,7 @@ def run(**env):
 class OnlyIPv4(unittest.TestCase):
     def test_ipv4_binds_pass(self):
         self.assertIn("BIND=0.0.0.0 PROBE=127.0.0.1", run(DASH_BIND="0.0.0.0"))
-        self.assertIn("BIND=100.114.54.60 PROBE=100.114.54.60", run(DASH_BIND="100.114.54.60"))
+        self.assertIn("BIND=100.64.0.7 PROBE=100.64.0.7", run(DASH_BIND="100.64.0.7"))
         self.assertIn("BIND=127.0.0.1", run())
 
     def test_ipv6_and_nonsense_are_refused(self):

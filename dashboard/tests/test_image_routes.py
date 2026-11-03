@@ -908,10 +908,10 @@ class TheBindIsReadNotAssumed(Base):
     def test_the_host_comes_from_the_installed_unit(self):
         unit = self.tmp / "qwen38-image.service"
         unit.write_text("[Service]\nExecStart=/x/sglang serve --model-path Q/M \\\n"
-                        "  --host 100.114.54.60 --port 31234\n")
+                        "  --host 100.64.0.7 --port 31234\n")
         self.ck.IMAGE_UNIT_PATH = unit
-        self.assertEqual(self.saved["image_base"](), "http://100.114.54.60:31234")
-        self.assertEqual(self.ck.image_status()["host"], "100.114.54.60")
+        self.assertEqual(self.saved["image_base"](), "http://100.64.0.7:31234")
+        self.assertEqual(self.ck.image_status()["host"], "100.64.0.7")
 
     def test_a_missing_unit_falls_back_to_loopback(self):
         self.ck.IMAGE_UNIT_PATH = Path("/nonexistent/qwen38-image.service")

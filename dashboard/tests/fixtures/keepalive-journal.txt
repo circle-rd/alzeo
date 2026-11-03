@@ -57,4 +57,4 @@
 2026-09-09T21:13:59+02:00 gx10-eff9 python3[886333]: [proxy] 127.0.0.1:58142 POST /v1/chat/completions CLIENT GONE on write in 93.3s [230545b relayed, first event at 2.4s, last at 93.2s]
 2026-09-09T21:26:50+02:00 gx10-eff9 python3[886333]: [proxy] 127.0.0.1:39166 -> POST /v1/chat/completions body=176b
 2026-09-09T21:26:50+02:00 gx10-eff9 python3[886333]: [proxy] 127.0.0.1:39166 POST /v1/chat/completions no outcome (client vanished mid-request) in 0.2s
-2026-09-09T21:43:39+02:00 gx10-eff9 python3[886333]: [proxy] 100.114.54.60:54712 -> POST /v1/messages body=938347b
+2026-09-09T21:43:39+02:00 gx10-eff9 python3[886333]: [proxy] 100.64.0.7:54712 -> POST /v1/messages body=938347b
