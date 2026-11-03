@@ -1926,6 +1926,22 @@ class TwoBoxesServeOneModel(PairFixture, unittest.TestCase):
         st, out, _ = self.call("/v1/chat/completions", a[2], port=entry)
         self.assertIn(b"from spark1", out, "the conversation went back to the box that lost its cache")
 
+    def test_a_token_count_stays_here_and_moves_no_conversation(self):
+        # Claude Code counts a conversation's tokens with its whole body: the count generates nothing and fills no
+        # prefix cache, so it is counted here (the same model, the same tokenizer) and places nothing
+        a = self.turns("conv-k", 2)
+        st, out, _ = self.call("/v1/chat/completions", a[0])
+        self.assertIn(b"from spark1", out, "two idle boxes: the entry serves the first turn")
+        held = self.busy(self.E1, self.port1, KEY_1, "local-only", 6, 3.0)     # 6 here, none there: far apart
+        count = {"model": "qwen3.8-27b", "messages": a[1]["messages"]}
+        st, out, _ = self.call("/v1/messages/count_tokens", count)
+        self.assertEqual(st, 200, out[:300])
+        self.assertNotIn("/v1/messages/count_tokens", [x[0] for x in self.E2.seen], "the count went to the other box")
+        for t in held:
+            t.join(30)
+        st, out, _ = self.call("/v1/chat/completions", a[1])
+        self.assertIn(b"from spark1", out, "a token count moved the conversation to the box that does not hold it")
+
     def test_a_box_tells_the_other_how_many_it_runs(self):
         st, out, _ = self.tls_call(self.pport1, "/v1/models", method="GET")
         self.assertEqual(st, 200, out[:300])
@@ -1976,6 +1992,9 @@ class TwoBoxesServeOneModelInProcess(TwoBoxesServeOneModel):
 
     def test_a_conversation_served_here_while_the_other_box_was_away_stays_here(self):
         super().test_a_conversation_served_here_while_the_other_box_was_away_stays_here()
+
+    def test_a_token_count_stays_here_and_moves_no_conversation(self):
+        super().test_a_token_count_stays_here_and_moves_no_conversation()
 
     def test_a_box_tells_the_other_how_many_it_runs(self):
         super().test_a_box_tells_the_other_how_many_it_runs()

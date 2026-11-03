@@ -6550,6 +6550,12 @@ class H(BaseHTTPRequestHandler):
         """A model this box serves, which a peer may serve too (decisions 996 to 998): False when this box serves the
         request, True once a peer answered it. Only the lists as kept are read, never waited for: this box serves the
         model, and its own requests do not wait for a slow box."""
+        if route in COUNT_ONLY_PATHS:
+            # a token count generates nothing and fills no prefix cache: counted here (the same model, the same
+            # tokenizer), it places no conversation. Shared as a generation (the Anthropic SDK's count went to the
+            # other box on the paired run of 2026-11-03), a count of a whole conversation took its next turn to the
+            # box that cached none of it
+            return False
         now = time.monotonic()
         me = conf["name"]
         blocks, size = prefix_blocks(body, route)

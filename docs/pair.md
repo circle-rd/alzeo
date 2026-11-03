@@ -89,6 +89,8 @@ one goes:
   model both serve for 30 s. When the entry's own engine does not answer (connection refused, or a 502, 503 or
   504 while its lane starts or stops), the other box serves it, at once rather than after a wait for the lane.
   A request whose answer began is never sent again.
+- A token count (`/v1/messages/count_tokens`) is answered by the box it was sent to: both boxes count the same
+  way, and a count fills no cache, so it moves no conversation.
 - The tile of each cockpit says how many requests it sent the other box, and why.
 
 ## The other box in the cockpit

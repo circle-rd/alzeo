@@ -24,14 +24,16 @@ first try (connection refused, or the 502, 503 or 504 of a lane that starts or s
 request at once, instead of a wait for the lane. A request whose answer began is never sent again. The tile of
 each cockpit says how many requests it sent the other box, and why. docs/pair.md says it all.
 
-**Reviews and tests.** An independent reviewer read the sharing before this release, and every finding was checked
-in the code. What it found and this release fixes: the other box's memory floor said its 529 to every Claude Code
-request for minutes while the entry idled, a prompt too long for the other box reached the client as a 400, a box
-that switched lanes got every request for 5 s and said 409 to each, only lists read in the last 15 s shared
-anything (a burst after a pause stayed on one box), a conversation the entry served while the other box was away
-went back to that box and its empty cache, and the hand-over kept a copy of the client's body for the whole
-request. tests/test_proxy_pair.py has two boxes that serve the 27B from their start, each rule its test, and each
-test fails on v1.42.0 or on the commit before its fix.
+**Reviews and tests.** An independent reviewer read the sharing before this release, and every finding was checked in
+the code. What it found and this release fixes: the other box's memory floor said its 529 to every Claude Code request
+for minutes while the entry idled, a prompt too long for the other box reached the client as a 400, a box that
+switched lanes got every request for 5 s and said 409 to each, only lists read in the last 15 s shared anything (a
+burst after a pause stayed on one box), a conversation the entry served while the other box was away went back to that
+box and its empty cache, and the hand-over kept a copy of the client's body for the whole request. The paired run with
+the real clients found one more: a token count was shared as a generation is (the Anthropic SDK's went to the other
+box), and a count of a whole conversation, as Claude Code sends, could take the conversation to the box that caches
+nothing for a count. A count is answered by the box it was sent to now. tests/test_proxy_pair.py has two boxes that
+serve the 27B from their start, each rule its test, and each test fails on v1.42.0 or on the commit before its fix.
 
 **What an update does.** The proxy (v6.52) and the cockpit restart. No engine, no lane and no unit file changes. A
 box without a pair, or a pair that serves two models, works as before.
