@@ -1786,6 +1786,20 @@ class TwoBoxesServeOneModel(PairFixture, unittest.TestCase):
         self.assertIn(b"from spark1", out, "the entry answered the box that dropped it instead of serving it")
         self.assert_said("spark1-drop", "spark2 does not answer for qwen3.8-27b: this box serves it")
 
+    def test_this_box_hands_a_request_its_engine_refuses_to_the_other(self):
+        self.E1.mode = "busy"                   # spark1's engine answers 503 to generations: a lane stopping or starting
+        for stream in (False, True):
+            with self.subTest(stream=stream):
+                body = dict(self.turns(f"conv-g-{stream}", 1)[0], stream=stream)
+                st, out, _ = self.call("/v1/chat/completions", body)
+                self.assertEqual(st, 200, out[:300])
+                self.assertIn(b"spark2", out, "the entry held or refused a request the other box serves too")
+                if stream:
+                    self.assertIn(b"data: [DONE]", out)
+        self.assert_said("spark1", "this box's engine does not answer for qwen3.8-27b: spark2 serves it")
+        st, out, _ = self.call("/proxy/pair/spark2/state", method="GET")
+        self.assertGreaterEqual(json.loads(out)["sent"]["rescued"], 2, out[:300])
+
     def test_the_tile_says_what_this_box_sent_the_other(self):
         self.busy(self.E1, self.port1, KEY_1, "local-only", 1, 3.0)     # one here, none there
         st, out, _ = self.call("/v1/chat/completions", self.turns("conv-f", 1)[0])
@@ -1793,7 +1807,7 @@ class TwoBoxesServeOneModel(PairFixture, unittest.TestCase):
         st, out, _ = self.call("/proxy/pair/spark2/state", method="GET")
         self.assertEqual(st, 200, out[:300])
         sent = json.loads(out).get("sent")
-        self.assertEqual(set(sent), {"affinity", "balance", "failover"}, sent)
+        self.assertEqual(set(sent), {"affinity", "balance", "failover", "rescued"}, sent)
         self.assertGreaterEqual(sent["balance"], 1, sent)
 
     def test_a_box_tells_the_other_how_many_it_runs(self):
@@ -1828,6 +1842,9 @@ class TwoBoxesServeOneModelInProcess(TwoBoxesServeOneModel):
 
     def test_the_tile_says_what_this_box_sent_the_other(self):
         super().test_the_tile_says_what_this_box_sent_the_other()
+
+    def test_this_box_hands_a_request_its_engine_refuses_to_the_other(self):
+        super().test_this_box_hands_a_request_its_engine_refuses_to_the_other()
 
     def test_a_box_tells_the_other_how_many_it_runs(self):
         super().test_a_box_tells_the_other_how_many_it_runs()

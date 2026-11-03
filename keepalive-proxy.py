@@ -3740,7 +3740,7 @@ _SPREAD_LOCK = threading.Lock()         # one decision at a time, its box reserv
 _PAIR_HERE = set()                      # the handlers the sharing kept here, from its decision to their _done
 _PAIR_SENT: dict = {}                   # peer -> requests sent there since its list was read, less those that ended
 _PAIR_OUT: dict = {}                    # peer -> requests of this box in flight there now
-_PAIR_SPREAD: dict = {}                 # peer -> {"affinity": n, "balance": n, "failover": n}, for the tile
+_PAIR_SPREAD: dict = {}                 # peer -> {"affinity", "balance", "failover", "rescued": n}, for the tile
 
 
 def prefix_blocks(body, route):
@@ -3840,7 +3840,7 @@ def pair_sent(peer, n):
 
 def pair_spread_count(peer, why):
     with _PAIR_LOCK:
-        row = _PAIR_SPREAD.setdefault(peer, {"affinity": 0, "balance": 0, "failover": 0})
+        row = _PAIR_SPREAD.setdefault(peer, {"affinity": 0, "balance": 0, "failover": 0, "rescued": 0})
         row[why] += 1
 
 
@@ -6134,6 +6134,7 @@ class H(BaseHTTPRequestHandler):
         self._bytes = 0; self._first = None; self._last = None
         self._tool_calls = {}; self._tool_bytes = 0; self._answer_body = bytearray()   # role 8
         self._prompt_fp = None                                                         # role 9
+        self._pair_alt = None                                                          # role 10, decision 998
         self._answer_hit = False; self._answer_tail = b""; self._tool_last = {}; self._tool_seq = 0
         n0 = self.headers.get("Content-Length") or "0"
         self.path, suspect = canonical_path(self.path)
@@ -6303,6 +6304,8 @@ class H(BaseHTTPRequestHandler):
             if gone is None:
                 return
             kind, why, detail = gone
+            if kind in ("unreachable", "upstream") and self._pair_take_over():
+                return
             if self._hold(why, streamed):
                 # The engine answers again, and it may be another lane: the body is judged
                 # again for it (2026-10-16), against a vocabulary learned since the hold began.
@@ -6423,7 +6426,8 @@ class H(BaseHTTPRequestHandler):
                 clean = _pair_summary_clean(summary)                        # its fields alone, rebuilt
                 with _PAIR_LOCK:
                     # and what this box sent it of a model both serve, for the tile (decision 996)
-                    clean["sent"] = dict(_PAIR_SPREAD.get(name) or {"affinity": 0, "balance": 0, "failover": 0})
+                    clean["sent"] = dict(_PAIR_SPREAD.get(name) or {"affinity": 0, "balance": 0, "failover": 0,
+                                                                      "rescued": 0})
                 data = json.dumps(clean).encode()
         except urllib.error.HTTPError as e:
             why = f"HTTP {e.code}"
@@ -6553,6 +6557,9 @@ class H(BaseHTTPRequestHandler):
                 pair_sent(pick, 1)
         affinity_note(pick, blocks, now)
         if pick == me:
+            # the other boxes that serve it, the fewest in flight first: they take it if this box's engine does not
+            # answer it (_pair_take_over), with the body as the client wrote it
+            self._pair_alt = (sorted(peers, key=lambda p: load[p["name"]]), name, conf, local, body, blocks)
             return False
         peer = next(p for p in peers if p["name"] == pick)
         pair_spread_count(pick, why)
@@ -6568,6 +6575,26 @@ class H(BaseHTTPRequestHandler):
         with _GEN_LOCK:
             _PAIR_HERE.add(self)
         affinity_note(me, blocks, time.monotonic())
+        return False
+
+    def _pair_take_over(self):
+        """Decision 998, this box's side: its engine did not answer (connection refused, or an HTTP error while it
+        starts or stops) a request of a model the other box serves too, at its first try: no byte went out, no hold
+        opened a stream. True once the other box answered it; False when none could (this box then holds it, or says
+        503, as before)."""
+        alt, self._pair_alt = getattr(self, "_pair_alt", None), None
+        if alt is None or self._hold_until is not None or getattr(self, "_held_sse", False):
+            return False
+        peers, name, conf, local, raw, blocks = alt
+        with _GEN_LOCK:
+            _PAIR_HERE.discard(self)
+        for peer in peers:
+            log(f"{self._peer} pair: this box's engine does not answer for {name}: {peer['name']} serves it")
+            pair_spread_count(peer["name"], "rescued")
+            if self._forward_peer(raw, peer, name, conf, local, fallback=True) is None:
+                affinity_forget(conf["name"], blocks)
+                affinity_note(peer["name"], blocks, time.monotonic())
+                return True
         return False
 
     def _pair_served_nowhere(self, name, conf, local):

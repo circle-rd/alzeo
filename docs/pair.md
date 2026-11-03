@@ -79,9 +79,11 @@ one goes:
   in flight more than the other, and more than 1.5 times as many, its next turn goes to the other box: a long
   wait for one agent costs more than its prefix computed again. These are the thresholds of SGLang's router
   (64 and 1.5), brought to the 8 requests a lane runs at once.
-- **A box that does not answer hands the request back.** When the box chosen does not answer, or answers 503,
+- **A box that does not answer hands the request on.** When the other box does not answer, or answers 503,
   before a byte of its answer went out, the entry serves the request itself, and the conversation stays with
-  the entry from then on. A request whose answer began is never sent again.
+  the entry from then on. When the entry's own engine does not answer (connection refused, or a 502, 503 or
+  504 while its lane starts or stops), the other box serves it, at once rather than after a wait for the lane.
+  A request whose answer began is never sent again.
 - The tile of each cockpit says how many requests it sent the other box, and why.
 
 ## The other box in the cockpit

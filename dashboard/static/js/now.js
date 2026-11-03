@@ -379,10 +379,11 @@ function renderPair(){
     if (s.version) rows.push(['Alzeo', 'v' + s.version]);
     // a model both boxes serve: what this box sent there, and why (docs/pair.md, decisions 996 to 998)
     const sent = s.sent || {}, num = v => Number.isFinite(v) && v > 0 ? Math.floor(v) : 0;
-    const kept = num(sent.affinity), even = num(sent.balance), back = num(sent.failover);
-    if (kept + even + back)
+    const kept = num(sent.affinity), even = num(sent.balance), back = num(sent.failover), saved = num(sent.rescued);
+    if (kept + even + back + saved)
       rows.push(['shared', `${kept + even} sent there (${kept} to stay with their conversation, ${even} to even the load)` +
-                           (back ? `, ${back} served here when it did not answer` : '')]);
+                           (back ? `, ${back} served here when it did not answer` : '') +
+                           (saved ? `, ${saved} sent there when this box did not answer` : '')]);
   }
   $('pair-facts').replaceChildren(...rows.flatMap(([k, v]) => {
     const dt = document.createElement('dt'), dd = document.createElement('dd');

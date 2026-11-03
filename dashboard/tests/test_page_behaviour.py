@@ -2629,10 +2629,10 @@ class TheOtherBoxOfAPairIsShownInNow(unittest.TestCase):
         self.assertEqual(r["rows"], ["spark2: serves qwen3.8-27b", "cockpit: does not answer: Connection refused"], r)
 
     def test_what_this_box_sent_the_other_of_a_model_both_serve_is_said(self):
-        state = {"models": ["qwen3.8-27b"], "sent": {"affinity": 9, "balance": 3, "failover": 1}}
+        state = {"models": ["qwen3.8-27b"], "sent": {"affinity": 9, "balance": 3, "failover": 1, "rescued": 2}}
         r = run(self, self.BODY % json.dumps({"node_id": "local", "boxes": {"spark2": {"state": state}}}))
         self.assertIn("shared: 12 sent there (9 to stay with their conversation, 3 to even the load), 1 served here "
-                      "when it did not answer", r["rows"], r)
+                      "when it did not answer, 2 sent there when this box did not answer", r["rows"], r)
         # none sent yet, or counts that are no counts: no row
         for sent in ({"affinity": 0, "balance": 0, "failover": 0}, {"affinity": "9", "balance": None}, "lots", None):
             r = run(self, self.BODY % json.dumps({"node_id": "local", "boxes": {"spark2": {"state": {
