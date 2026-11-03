@@ -6662,25 +6662,30 @@ class H(BaseHTTPRequestHandler):
         # the peer did not answer, or serves another model now: this box serves it, no byte of an answer having gone
         # out (decision 998: never a request whose answer began), and the conversation is this box's from now on
         affinity_forget(pick, blocks)
-        if res == "fallback":
+        self._pair_refused(pick, name, res, "this box serves it")
+        if res != "moved":
             pair_spread_count(pick, "failover")
-            _PAIR_COOL[pick] = time.monotonic() + PAIR_SPREAD_COOL_S
-            log(f"{self._peer} pair: {pick} does not answer for {name}: this box serves it, and sends it nothing of "
-                f"a model both serve for {PAIR_SPREAD_COOL_S:g} s")
-        elif res == "too long":
-            pair_spread_count(pick, "failover")
-            log(f"{self._peer} pair: the prompt is too long for {pick}'s pool: this box serves it")
-        else:
-            # "moved": it serves another model now. Its list, kept without that model, is read again at the next
-            # request: each request until then went there for another 409 (found in review, 2026-11-03)
-            with _PAIR_LOCK:
-                row = _PAIR_MODELS.get(pick)
-                if row:
-                    _PAIR_MODELS[pick] = dict(row, models=tuple(m for m in row["models"] if m != name), ts=0.0)
         with _GEN_LOCK:
             _PAIR_HERE.add(self)
         affinity_note(me, blocks, time.monotonic())
         return False
+
+    def _pair_refused(self, pick, name, res, then):
+        """What a refusal of box pick teaches, the request's own course apart: no answer or 503/529 ("fallback"), no
+        shared request there for PAIR_SPREAD_COOL_S; a switch ("moved"), its kept list without that model, read again
+        at the next request (each request until then went there for another 409, found in review, 2026-11-03); a
+        prompt too long ("too long"), nothing more, the shorter ones still go there."""
+        if res == "fallback":
+            _PAIR_COOL[pick] = time.monotonic() + PAIR_SPREAD_COOL_S
+            log(f"{self._peer} pair: {pick} does not answer for {name}: {then}, and {pick} gets nothing of a model "
+                f"both serve for {PAIR_SPREAD_COOL_S:g} s")
+        elif res == "too long":
+            log(f"{self._peer} pair: the prompt is too long for {pick}'s pool: {then}")
+        elif res == "moved":
+            with _PAIR_LOCK:
+                row = _PAIR_MODELS.get(pick)
+                if row:
+                    _PAIR_MODELS[pick] = dict(row, models=tuple(m for m in row["models"] if m != name), ts=0.0)
 
     def _pair_take_over(self, asked):
         """Decision 998, this box's side: its engine did not answer (connection refused, or an HTTP error while it
@@ -6694,15 +6699,21 @@ class H(BaseHTTPRequestHandler):
         with _GEN_LOCK:
             _PAIR_HERE.discard(self)
         for peer in peers:
-            log(f"{self._peer} pair: this box's engine does not answer for {name}: {peer['name']} serves it")
-            pair_spread_count(peer["name"], "rescued")
+            if _PAIR_COOL.get(peer["name"], 0) > time.monotonic():
+                continue                    # it refused a request moments ago (found in review, 2026-11-03)
+            log(f"{self._peer} pair: this box's engine does not answer for {name}: trying {peer['name']}")
             # the body as this box has it: the client's, with fixes this proxy makes and the other one makes again the
             # same way (tool schemas, reasoning effort), not a copy of the client's kept for the whole request, which
             # held one body more in memory on a paired box (found in review, 2026-11-03)
-            if self._forward_peer(asked, peer, name, conf, local, fallback=True) is None:
+            res = self._forward_peer(asked, peer, name, conf, local, fallback=True)
+            if res is None:
+                # counted once the other box answered it, not before (the tile said "sent there" for requests that
+                # bounced, same review)
+                pair_spread_count(peer["name"], "rescued")
                 affinity_forget(conf["name"], blocks)
                 affinity_note(peer["name"], blocks, time.monotonic())
                 return True
+            self._pair_refused(peer["name"], name, res, "this box keeps it")
         return False
 
     def _pair_served_nowhere(self, name, conf, local):

@@ -1898,7 +1898,7 @@ class TwoBoxesServeOneModel(PairFixture, unittest.TestCase):
                 self.assertIn(b"spark2", out, "the entry held or refused a request the other box serves too")
                 if stream:
                     self.assertIn(b"data: [DONE]", out)
-        self.assert_said("spark1", "this box's engine does not answer for qwen3.8-27b: spark2 serves it")
+        self.assert_said("spark1", "this box's engine does not answer for qwen3.8-27b: trying spark2")
         st, out, _ = self.call("/proxy/pair/spark2/state", method="GET")
         self.assertGreaterEqual(json.loads(out)["sent"]["rescued"], 2, out[:300])
 
@@ -1963,7 +1963,7 @@ class TwoBoxesServeOneModel(PairFixture, unittest.TestCase):
             self.assertEqual(st, 200, out[:300])
             self.assertIn(b"from spark1", out, "the other box's 529 went to the client while this box idled")
         self.assertEqual(len(Peer.seen), 1, "the box that said 529 got the next request too")
-        self.assert_said("spark1-529", "spark2 does not answer for qwen3.8-27b: this box serves it, and sends it nothing")
+        self.assert_said("spark1-529", "spark2 does not answer for qwen3.8-27b: this box serves it, and spark2 gets nothing")
 
     def test_a_prompt_too_long_for_the_other_box_is_served_here_and_the_next_ones_still_go_there(self):
         Peer = fake_peer(["qwen3.8-27b", "marker-long"], (400, {"error": {
