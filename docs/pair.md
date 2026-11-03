@@ -89,10 +89,14 @@ one goes:
   lane runs at once in its unit (`--max-running-requests`, `--max-num-seqs`) and says it to the other. A box
   that says nothing of it counts as a lane of 8.
 - **A box that cannot serve a request hands it on**, before a byte of its answer went out:
-  - When the other box does not answer (it gets 3 s to take the connection), or answers 503 (its engine
+  - When the other box cannot be reached (it gets 3 s to take the connection), or answers 503 (its engine
     away, or its memory floor) or 529 (the floor, in the Anthropic dialect), the entry serves the request
     itself, the conversation stays with the entry from then on, and that box gets no request of a model
     both serve for 30 s.
+  - When the other box had the request and closed the connection with no answer (an Abort all there, its
+    memory floor, a restart of its proxy, its power), the client gets a 503 and the request runs nowhere
+    else: an Abort all on the other box is not undone, and a request that took that box down does not take
+    the entry down too. That box gets no request of a model both serve for 30 s either.
   - When the other box refuses a prompt too long for its pool (a 64 GB box paired with a 128 GB one), the
     entry serves it, and the other box still gets the shorter ones.
   - When the entry cannot serve a request, the other box does: the entry's memory floor refuses new

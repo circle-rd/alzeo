@@ -6776,6 +6776,10 @@ class H(BaseHTTPRequestHandler):
         res = self._forward_peer(body, peer, name, conf, local, fallback=True, reserved=True, count=why)
         if res is None:
             return True
+        if res == "lost":                   # it had it whole (decision 1017): its client is told so, nothing runs here
+            self._pair_refused(pick, name, res, "its client is told 503")
+            self._pair_lost(pick, name, conf, local)
+            return True
         # the peer did not answer, or serves another model now: this box serves it, no byte of an answer having gone
         # out (decision 998: never a request whose answer began), and the conversation is this box's from now on
         affinity_forget(pick, blocks)
@@ -6792,9 +6796,10 @@ class H(BaseHTTPRequestHandler):
         shared request there for PAIR_SPREAD_COOL_S; a switch ("moved"), its kept list without that model, read again
         at the next request (each request until then went there for another 409, found in review, 2026-11-03); a
         prompt too long ("too long"), nothing more, the shorter ones still go there."""
-        if res == "fallback":
+        if res in ("fallback", "lost"):
             _PAIR_COOL[pick] = time.monotonic() + PAIR_SPREAD_COOL_S
-            log(f"{self._peer} pair: {pick} does not answer for {name}: {then}, and {pick} gets nothing of a model "
+            what = "closed the connection on a request of" if res == "lost" else "does not answer for"
+            log(f"{self._peer} pair: {pick} {what} {name}: {then}, and {pick} gets nothing of a model "
                 f"both serve for {PAIR_SPREAD_COOL_S:g} s")
         elif res == "too long":
             log(f"{self._peer} pair: the prompt is too long for {pick}'s pool: {then}")
@@ -6803,6 +6808,14 @@ class H(BaseHTTPRequestHandler):
                 row = _PAIR_MODELS.get(pick)
                 if row:
                     _PAIR_MODELS[pick] = dict(row, models=tuple(m for m in row["models"] if m != name), ts=0.0)
+
+    def _pair_lost(self, pick, name, conf, local):
+        """A 503 for a request box pick had whole and closed the connection on with no answer: it is not run here
+        too (decision 1017)."""
+        self._pair_refuse(503, "engine_unavailable", f"box {pick}, which serves {name}, had this request and closed "
+                          "the connection without an answer (an Abort all there, its memory floor, a restart, its "
+                          "power): it is not run on this box too; send it again", pair_served_map(conf, local))
+        self._done("503 pair request lost")
 
     def _pair_take_over(self, asked, why="this box's engine does not answer"):
         """Decision 998, this box's side: its engine did not answer (connection refused, or an HTTP error while it
@@ -6828,6 +6841,10 @@ class H(BaseHTTPRequestHandler):
             if res is None:
                 affinity_forget(conf["name"], blocks)
                 affinity_note(peer["name"], blocks, time.monotonic())
+                return True
+            if res == "lost":               # it had it whole (decision 1017): no other box, its client is told so
+                self._pair_refused(peer["name"], name, res, "its client is told 503")
+                self._pair_lost(peer["name"], name, conf, local)
                 return True
             self._pair_refused(peer["name"], name, res, "this box keeps it")
         with _GEN_LOCK:                     # no box took it: this box's again, for a stop and for its count
@@ -6988,9 +7005,17 @@ class H(BaseHTTPRequestHandler):
                 if left.is_set():
                     self._done("CLIENT GONE during pair"); return None
                 why = _pair_why(e)
-                log(f"{self._peer} pair: {peer['name']} does not answer ({why})")
+                # urllib wraps in a URLError what h.request raised (the connection, its TLS, the send): the other box
+                # never had the request whole. What getresponse raised comes bare: it had it, and closed the
+                # connection with no answer (an Abort all there, its memory floor, a restart of its proxy, its power).
+                # That one runs nowhere else: an abort there is not undone here, and a request that took that box down
+                # does not take this one down too (decision 1017, review of v1.43.0, 2026-11-03)
+                had = not isinstance(e, urllib.error.URLError)
+                log(f"{self._peer} pair: {peer['name']} "
+                    + (f"had the request and closed the connection with no answer ({why})" if had
+                       else f"does not answer ({why})"))
                 if fallback:
-                    return "fallback"
+                    return "lost" if had else "fallback"
                 self._pair_refuse(503, "engine_unavailable", f"box {peer['name']} ({peer['proxy']}), which "
                                   f"serves {name}, does not answer: {why}", pair_served_map(conf, local))
                 self._done("503 pair peer unreachable")

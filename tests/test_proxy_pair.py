@@ -2058,7 +2058,10 @@ class TwoBoxesServeOneModel(PairFixture, unittest.TestCase):
         # served here, never "sent there" too (the tile counted both, review of 2026-11-03)
         self.assertEqual(self.moved(before, self.sent()), {"failover": 1})
 
-    def test_a_box_that_drops_the_request_hands_it_back(self):
+    def test_a_request_the_other_box_drops_runs_nowhere_else(self):
+        # decision 1017: the other box had it whole and closed the connection with no answer (an Abort all there, its
+        # floor, a restart, its power). It was run here again: an abort there undone, and a request that took that box
+        # down sent to this one (review, 2026-11-03)
         class Drops(http.server.BaseHTTPRequestHandler):
             """A box that lists the 27B and goes as a request arrives (its power, its cable)."""
             protocol_version = "HTTP/1.1"
@@ -2083,9 +2086,11 @@ class TwoBoxesServeOneModel(PairFixture, unittest.TestCase):
         self.until_listed("marker-drop", port=entry)
         self.busy(self.E1, entry, KEY_1, "local-only", 1, 3.0)     # one here, none there: the turn goes there
         st, out, _ = self.call("/v1/chat/completions", self.turns("conv-e", 1)[0], port=entry)
-        self.assertEqual(st, 200, out[:300])
-        self.assertIn(b"from spark1", out, "the entry answered the box that dropped it instead of serving it")
-        self.assert_said("spark1-drop", "spark2 does not answer for qwen3.8-27b: this box serves it")
+        self.assertEqual(st, 503, out[:300])
+        self.assertIn(b"had this request and closed the connection", out)
+        self.assertNotIn("conv-e-0", self.E1.users, "a request the other box had was run on this box's engine too")
+        self.assert_said("spark1-drop", "spark2 closed the connection on a request of qwen3.8-27b: its client is told "
+                                        "503, and spark2 gets nothing of a model both serve")
 
     def test_this_box_hands_a_request_its_engine_refuses_to_the_other(self):
         self.E1.mode = "busy"                   # spark1's engine answers 503 to generations: a lane stopping or starting
@@ -2313,8 +2318,8 @@ class TwoBoxesServeOneModelInProcess(TwoBoxesServeOneModel):
     def test_a_box_that_refuses_hands_its_share_back(self):
         super().test_a_box_that_refuses_hands_its_share_back()
 
-    def test_a_box_that_drops_the_request_hands_it_back(self):
-        super().test_a_box_that_drops_the_request_hands_it_back()
+    def test_a_request_the_other_box_drops_runs_nowhere_else(self):
+        super().test_a_request_the_other_box_drops_runs_nowhere_else()
 
     def test_the_tile_says_what_this_box_sent_the_other(self):
         super().test_the_tile_says_what_this_box_sent_the_other()

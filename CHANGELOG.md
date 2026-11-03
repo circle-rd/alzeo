@@ -18,10 +18,11 @@ Each box says in the list it gives the other how many generations it runs, how m
 and how many its lane runs at once, read in its unit, and the entry adds its requests in flight there: eight new
 conversations sent at once went 4 to each box, three times in three.
 
-**A box that cannot serve a request hands it on.** When the other box does not answer (it gets 3 s to take the
+**A box that cannot serve a request hands it on.** When the other box cannot be reached (it gets 3 s to take the
 connection), or answers 503 (its engine away, or its memory floor) or 529 (the floor, in the Anthropic dialect),
 before a byte of its answer went out, the entry serves the request itself, and that box gets no request of a model
-both serve for 30 s. A prompt too long for the other box's pool (a 64 GB box paired with a 128 GB one) is served by
+both serve for 30 s. When the other box had the request and closed the connection with no answer (an Abort all
+there, its floor, a restart, its power), the client gets a 503 and the request runs nowhere else (decision 1017). A prompt too long for the other box's pool (a 64 GB box paired with a 128 GB one) is served by
 the entry, with no pause. What the entry cannot serve goes to the other box at once: a request its memory floor
 refuses, a prompt too long for its pool, a long prompt its warming engine cannot measure yet, or one its engine does
 not answer at the first try (connection refused, or the 502, 503 or 504 of a lane that starts or stops), instead of
