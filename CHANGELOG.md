@@ -1,5 +1,59 @@
 # Changelog
 
+## v1.42.0 (2026-11-03): two boxes behind one endpoint, paired in one command, the other box in the cockpit, and non-streamed answers half a second sooner
+
+**Two boxes behind one endpoint.** Two DGX Spark that each run Alzeo can answer as one (discussion #45). One
+box can keep the 27B for the agents while the other serves Flash or another lane, and the clients of either
+box reach both models at one address. A request that names a model of one of this repo's lanes goes to the box
+that serves it, streamed or not, in the OpenAI and Anthropic dialects and on the Ollama and SageMaker routes.
+Any other name (Claude Code's background tasks, `gpt-*`) stays on the box it was sent to, as on a box alone.
+`GET /v1/models` lists the models of both boxes, each with a `box` field, and never waits for the other box. A
+lane name that no box serves gets a 404 that says what each box serves. docs/pair.md says it all.
+
+**Paired in one command.** `python3 ~/dgx-spark-qwen38/pair.py add <the other box>` pairs both boxes over SSH (as
+step 4 of NVIDIA's connect-two-sparks playbook sets it up), checks that each box reaches the other,
+and keeps nothing on either box when a check fails, with what to fix. Both proxies take the pair within
+seconds: nothing restarts. `pair.py status`, `remove`, `name` and `identity` do the rest.
+
+**Security.** The two boxes talk over TLS 1.3 both ways on port 30002, open only while the box is paired. Each
+box has a certificate of its own, made once by `pair.py`, and pins the other's by its SHA-256, as the nodes of
+NVIDIA's Personal AI Router trust each other. The certificate is the pair's only credential: no box holds the
+other's API key, which is also the login of its cockpit. Port 30002 takes the generation routes, `GET
+/v1/models` and the summary the tile shows, and the box that serves a request admits it to its own engine
+with its own key. Clients' keys and cookies never cross. SECURITY.md has the details.
+
+**The other box in the cockpit.** The Now view shows the other box of the pair: what it serves, its memory,
+its GPU, the job under way and its version, or why it does not answer. Its proxy sums its own cockpit up and
+sends that summary alone, over the pair's TLS. To switch the other box's lane, use its own cockpit for now.
+
+**Non-streamed answers half a second sooner, on every box.** The proxy watched the caller of a request in a
+select() of 0.5 s, and relayed the answer once that watch had ended, at its next tick: a one-token answer the
+engine gave in 35 ms took 503 ms through the proxy, eight times in eight (measured on the reference box,
+v1.41.0). Every non-streamed request paid it (Claude Code's token counts, the SDKs' default calls), and a
+stream whose engine took more than a second lost up to 0.45 s more before its first byte. The watch now ends
+the moment the answer comes. Found by the code review of the pair.
+
+**Reviews and tests.** Two independent reviewers, then a code review at max effort, read the pair before this
+release, and every finding was checked in the code. What they found and this release fixes: an API key swapped
+as a second lock would have handed the other box the login of this one's cockpit (the certificate is the only
+credential now), a client that left a TLS connection was never seen, an answer cut by the other box went out
+as a whole one, a box that lost power held the requests in flight to it for up to an hour (TCP keepalive
+between the boxes now sees it within 25 s), `pair.py add` undid a working pair while an engine was loading,
+and the tile's reads every 5 s pushed a paired box's real requests out of the cockpit's view in half an hour.
+tests/test_proxy_pair.py runs two proxies over real TLS, as processes and in this one, tests/test_pair_tool.py
+pairs two proxies through a fake ssh, and the tile and its collector have tests of their own. Each fix has a
+test that fails on the code before it.
+
+**Proven on the reference box.** One DGX Spark, two proxies of this release paired over TLS: the entry served
+a model of its own, the other one the box's real lane, Flash FP4-Local. The OpenAI and Anthropic SDKs, fetch in
+Node and Bun, LiteLLM, Claude Code, opencode, Hermes and pi all went through the pair (24 requests sent on, 24
+answered), and the tile read the box's real cockpit through the pair. Two physical boxes: not yet, the first
+pair of discussion #45 gets its second box this week.
+
+**Also.** No test file has the same name in tests/ and dashboard/tests/: a twin was loaded in place of the
+other in the single-process step, and 19 tests never ran on a branch (2026-11-02). Ornith's installer tests
+lose their twin.
+
 ## v1.41.0 (2026-11-01): the project is Alzeo, at github.com/hasso5703/alzeo, its command is get.alzeo.ai, and the cockpit is the Alzeo cockpit
 
 **Why.** The repository was renamed hasso5703/alzeo on 2026-11-01, once v1.40.8 had made get.sh take a clone of either
