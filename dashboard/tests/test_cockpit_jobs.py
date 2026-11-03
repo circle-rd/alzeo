@@ -13,6 +13,7 @@ Also here: the bounded job registry, the log tail that cannot grow without
 bound, and the job snapshot every browser tab shares.
 """
 import importlib.util
+import io
 import json
 import os
 import shutil
@@ -223,6 +224,27 @@ class PythonJobs(Base):
                 self.assertTrue(job.lines, "a failed job with no explanation")
                 self.assertTrue(any("[cockpit]" in ln for ln in job.lines), job.lines)
                 self.assertIsNotNone(job.ended)
+
+    def test_the_smoke_asks_this_box_itself(self):
+        # on a pair that shares a model, the other box answered the smoke, which then said this box's engine was fine
+        # (review of v1.43.0, 2026-11-03): X-Alzeo-Here keeps it on this box
+        seen = []
+
+        class Answer(io.BytesIO):
+            pass
+
+        def urlopen(req, timeout=None):
+            seen.append(dict(req.header_items()))
+            return Answer(json.dumps({"choices": [{"message": {"content": "COCKPIT-SMOKE-OK"}}]}).encode())
+        real = self.cp.urllib.request.urlopen
+        self.cp.urllib.request.urlopen = urlopen
+        try:
+            self.cp.JOB_LOCK.acquire(blocking=False)
+            self._drive("smoke", self.cp.job_smoke)
+        finally:
+            self.cp.urllib.request.urlopen = real
+        self.assertTrue(seen, "the smoke sent nothing")
+        self.assertEqual({k.lower(): v for k, v in seen[0].items()}.get("x-alzeo-here"), "1", seen[0])
 
     def test_the_lock_is_released_by_a_job_that_raises(self):
         self.cp.JOB_LOCK.acquire(blocking=False)

@@ -164,7 +164,8 @@ def fake_engine(name, model):
         bodies: list = []           # every POST's body, parsed
         delay = 0.0
         mode = "ok"                 # "down": /v1/models answers 503 (a boot) ; "cut": a stream dies mid-way ;
-                                    # "busy": every POST answers 503
+                                    # "busy": every POST answers 503 ; "die": every POST is read, then the
+                                    # connection closed without an answer (an engine that died on it)
 
         def log_message(self, *a):
             pass
@@ -196,6 +197,10 @@ def fake_engine(name, model):
             Handler.bodies.append(body)
             if Handler.mode == "busy":
                 return self.reply({"error": {"message": "busy", "type": "server_error"}}, 503)
+            if Handler.mode == "die":
+                self.close_connection = True
+                self.connection.shutdown(socket.SHUT_RDWR)
+                return
             time.sleep(body.get("x_delay", Handler.delay))
             if self.path.startswith("/v1/messages"):
                 return self.reply({"id": "m", "type": "message", "role": "assistant", "model": Handler.served[0],
@@ -291,9 +296,10 @@ def tls_peer(test, handler, me="spark2", trusts=("spark1",)):
     return port
 
 
-def fake_peer(listed, post):
+def fake_peer(listed, post, running=0):
     """The pair port of another box, for a spare entry: it lists `listed` (ids, or None: its list fails with a 503)
-    and answers every POST with `post` ((status, body)); both may change during a test (state). `seen`: its POSTs."""
+    and answers every POST with `post` ((status, body)); both may change during a test (state). `seen`: its POSTs.
+    running: the count its list says (x_alzeo_running), None for none, as a box of v1.42.0."""
     class Peer(http.server.BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
         state = {"listed": listed, "post": post}
@@ -314,7 +320,10 @@ def fake_peer(listed, post):
             ids = Peer.state["listed"]
             if ids is None:
                 return self.reply(503, {"error": {"type": "engine_unavailable", "message": "its engine is away"}})
-            self.reply(200, {"object": "list", "data": [{"id": i, "object": "model"} for i in ids], "x_alzeo_running": 0})
+            listing = {"object": "list", "data": [{"id": i, "object": "model"} for i in ids]}
+            if running is not None:
+                listing["x_alzeo_running"] = running
+            self.reply(200, listing)
 
         def do_POST(self):
             self.rfile.read(int(self.headers.get("Content-Length") or 0))
@@ -577,6 +586,17 @@ class PairFixture:
     # ---- routing --------------------------------------------------------------------------------
 class TwoBoxesBehindOneEndpoint(PairFixture, unittest.TestCase):
     """Two boxes that serve two models: each request goes to the box that serves its model."""
+
+    def test_a_box_serving_its_own_model_writes_no_line_on_the_other(self):
+        # each request of a model this box serves reads the other box's list again every PAIR_TTL_S (v6.51): those
+        # reads must not push the other box's real requests out of the lines its cockpit reads (review of v1.43.0)
+        listed = lambda: self.journal_of("spark2").count("GET /v1/models ok get")
+        before = listed()
+        for _ in range(4):
+            st, out, _ = self.call("/v1/chat/completions", self.chat("qwen3.8-27b"))
+            self.assertEqual(st, 200, out[:300])
+            time.sleep(1.5)                 # past PAIR_TTL (2 s) twice: the list is read again
+        self.assertEqual(listed(), before, "the other box's list reads wrote lines in its journal")
 
     def test_a_lane_this_box_serves_stays_here(self):
         st, out, _ = self.call("/v1/chat/completions", self.chat("qwen3.8-27b"))
@@ -1530,6 +1550,9 @@ class TwoBoxesBehindOneEndpoint(PairFixture, unittest.TestCase):
 class TwoBoxesBehindOneEndpointInProcess(TwoBoxesBehindOneEndpoint):
     INPROC = True
 
+    def test_a_box_serving_its_own_model_writes_no_line_on_the_other(self):
+        super().test_a_box_serving_its_own_model_writes_no_line_on_the_other()
+
     def test_a_lane_this_box_serves_stays_here(self):
         super().test_a_lane_this_box_serves_stays_here()
 
@@ -1845,6 +1868,44 @@ class TwoBoxesServeOneModel(PairFixture, unittest.TestCase):
         st, out, _ = self.call("/proxy/pair/spark2/state", method="GET")
         self.assertGreaterEqual(json.loads(out)["sent"]["rescued"], 2, out[:300])
 
+    def test_a_request_this_boxs_engine_died_on_goes_to_no_other_engine(self):
+        # the request may be what took the engine down: sent on, it could take the other box's down too (security
+        # review of v1.43.0, 2026-11-03). Decision 998 hands over a refused connection or a 502, 503 or 504 only
+        self.E1.mode = "die"
+        st, out, _ = self.call("/v1/chat/completions", self.turns("conv-m", 1)[0])
+        self.assertEqual(st, 503, out[:300])
+        self.assertEqual(self.E2.users, [], "the request that the engine died on went to the other box's engine")
+
+    def test_the_other_box_whose_engine_died_on_a_request_says_502_and_it_goes_no_further(self):
+        self.busy(self.E1, self.port1, KEY_1, "local-only", 1, 3.0)         # one here, none there: it goes there
+        self.E2.mode = "die"
+        st, out, _ = self.call("/v1/chat/completions", self.turns("conv-n", 1)[0])
+        self.assertEqual(st, 502, out[:300])
+        self.assertEqual([u for u in self.E1.users if u and not u.startswith("busy-")], [],
+                         "the request that the other box's engine died on was served here after it")
+        self.assert_said("spark2", "502 engine closed a hop")
+
+    def test_a_request_asked_of_this_box_is_never_shared_nor_handed_over(self):
+        # the cockpit's smoke test asks whether THIS box's engine answers (X-Alzeo-Here: 1)
+        here = {"X-Alzeo-Here": "1"}
+        self.busy(self.E1, self.port1, KEY_1, "local-only", 1, 3.0)         # one here, none there
+        st, out, _ = self.call("/v1/chat/completions", self.chat("qwen3.8-27b"), headers=here)
+        self.assertIn(b"from spark1", out, "a request asked of this box was shared")
+        self.E1.mode = "busy"                                               # this box's engine says 503
+        st, out, _ = self.call("/v1/chat/completions", self.chat("qwen3.8-27b"), headers=here)
+        self.assertEqual(st, 503, "a request asked of this box was handed to the other one")
+        self.assertEqual(self.E2.users, [], self.E2.users)
+
+    def test_a_box_that_does_not_say_what_it_runs_gets_nothing_shared(self):
+        # a box of v1.42.0 lists no x_alzeo_running: its load is unknown, and its own clients may fill it
+        Peer = fake_peer(["qwen3.8-27b", "marker-old"], PEER_ANSWER, running=None)
+        entry = self.spare_proxy("spark1-old", KEY_1, peers=(("spark2", tls_peer(self, Peer)),))
+        self.until_listed("marker-old", port=entry)
+        self.busy(self.E1, entry, KEY_1, "local-only", 1, 4.0)
+        st, out, _ = self.call("/v1/chat/completions", self.chat("qwen3.8-27b"), port=entry)
+        self.assertIn(b"from spark1", out, "a box that says nothing of its load was sent a request")
+        self.assertEqual(Peer.seen, [])
+
     def test_the_tile_says_what_this_box_sent_the_other(self):
         self.busy(self.E1, self.port1, KEY_1, "local-only", 1, 3.0)     # one here, none there
         st, out, _ = self.call("/v1/chat/completions", self.turns("conv-f", 1)[0])
@@ -1995,6 +2056,18 @@ class TwoBoxesServeOneModelInProcess(TwoBoxesServeOneModel):
 
     def test_a_token_count_stays_here_and_moves_no_conversation(self):
         super().test_a_token_count_stays_here_and_moves_no_conversation()
+
+    def test_a_request_this_boxs_engine_died_on_goes_to_no_other_engine(self):
+        super().test_a_request_this_boxs_engine_died_on_goes_to_no_other_engine()
+
+    def test_the_other_box_whose_engine_died_on_a_request_says_502_and_it_goes_no_further(self):
+        super().test_the_other_box_whose_engine_died_on_a_request_says_502_and_it_goes_no_further()
+
+    def test_a_request_asked_of_this_box_is_never_shared_nor_handed_over(self):
+        super().test_a_request_asked_of_this_box_is_never_shared_nor_handed_over()
+
+    def test_a_box_that_does_not_say_what_it_runs_gets_nothing_shared(self):
+        super().test_a_box_that_does_not_say_what_it_runs_gets_nothing_shared()
 
     def test_a_box_tells_the_other_how_many_it_runs(self):
         super().test_a_box_tells_the_other_how_many_it_runs()

@@ -3112,6 +3112,16 @@ class RidUnreadable(Exception):
     write again): sent as it came, the engine might read the id in it."""
 
 
+def engine_refused(e):
+    """True when the engine never had the request: its connection was refused (a lane stopped, or not listening yet).
+    Not when the engine closed the connection after the request went (it died on it, or under it): the request may
+    be what took it down, and it is then handed to no other engine (found in the security review of v1.43.0,
+    2026-11-03: a request that killed one box's engine went on to kill the other's)."""
+    seen = [e, getattr(e, "reason", None), getattr(e, "__cause__", None)]
+    seen.append(getattr(seen[2], "reason", None))
+    return any(isinstance(x, ConnectionRefusedError) for x in seen)
+
+
 def strip_rid(body, path=""):
     """The body without an id of its own for the engine's request: (body, True) when one was dropped. SGLang takes
     it from a body's "rid" (a batch's list too), from /v1/responses' "request_id", and from the Vertex route's
@@ -3229,6 +3239,10 @@ COCKPIT_UNIT_FILE = "/etc/systemd/system/qwen38-dashboard.service"
 PAIR_ROUTES = frozenset({"/v1/chat/completions", "/v1/completions", "/v1/messages",
                          "/v1/messages/count_tokens", "/v1/responses", "/api/chat", "/api/generate", "/invocations"})
 PAIR_HOP = "X-Alzeo-Pair-Hop"
+# A request with this header at "1" is served by the box it was sent to, never shared nor handed over (decision 996's
+# sharing): the cockpit's smoke test sends it, which says whether THIS box's engine answers, and which the other box
+# answered on a pair that shares a model (found in review of v1.43.0, 2026-11-03).
+PAIR_HERE = "X-Alzeo-Here"
 PAIR_TTL_S = float(os.environ.get("PAIR_TTL_S", "5") or 5)
 PAIR_CONNECT_S = float(os.environ.get("PAIR_CONNECT_S", "10") or 10)
 PAIR_CONNECT_S = PAIR_CONNECT_S if PAIR_CONNECT_S > 0 else 10.0    # 0 made the connect non-blocking: every forward failed
@@ -6329,8 +6343,19 @@ class H(BaseHTTPRequestHandler):
             if gone is None:
                 return
             kind, why, detail = gone
-            if kind in ("unreachable", "upstream") and self._pair_take_over(asked):
+            # decision 998, as Hasan worded it: a box that does not answer, its connection refused or its lane's 502, 503
+            # or 504; never an engine that closed the connection while it had the request
+            if (kind == "upstream" or (kind == "unreachable" and detail == "refused")) and self._pair_take_over(asked):
                 return
+            if self._pair_hop() and kind == "unreachable" and detail != "refused":
+                # a request the other box sent on, whose engine here closed the connection while it had it: a 502, not
+                # the 503 the other box takes back to its own engine, which the same request could take down too
+                log(f"{self._peer} the engine closed the connection while it had this request ({why[:120]}): "
+                    f"the other box is told 502, and does not send it on")
+                self._plain(502, {"Content-Type": "application/json"},
+                            json.dumps({"error": {"type": "upstream_closed", "message": "keepalive-proxy: this box's "
+                                                  "engine closed the connection while it had the request"}}).encode())
+                self._done("502 engine closed a hop"); return
             if self._hold(why, streamed):
                 # The engine answers again, and it may be another lane: the body is judged
                 # again for it (2026-10-16), against a vocabulary learned since the hold began.
@@ -6550,6 +6575,8 @@ class H(BaseHTTPRequestHandler):
         """A model this box serves, which a peer may serve too (decisions 996 to 998): False when this box serves the
         request, True once a peer answered it. Only the lists as kept are read, never waited for: this box serves the
         model, and its own requests do not wait for a slow box."""
+        if (self.headers.get(PAIR_HERE) or "").strip() == "1":
+            return False                    # asked of this box itself (the cockpit's smoke test)
         if route in COUNT_ONLY_PATHS:
             # a token count generates nothing and fills no prefix cache: counted here (the same model, the same
             # tokenizer), it places no conversation. Shared as a generation (the Anthropic SDK's count went to the
@@ -6566,7 +6593,10 @@ class H(BaseHTTPRequestHandler):
             # again; one whose read failed lists nothing. Those kept only while fresh made a burst after a pause stay
             # here whole, its first requests before the list's read (found in review, 2026-11-03)
             row = _PAIR_MODELS.get(p["name"]) or {}
-            if name in (row.get("models") or ()) and _PAIR_COOL.get(p["name"], 0) <= now:
+            # and only a box that says what it runs: one of v1.42.0 does not, and got requests while its own clients
+            # filled it (found in review of v1.43.0, 2026-11-03); it is shared with once updated
+            if name in (row.get("models") or ()) and row.get("running") is not None \
+                    and _PAIR_COOL.get(p["name"], 0) <= now:
                 peers.append(p)
         if not peers or (not CLIENT_KEYS and not _door_key()):
             # a box alone for this model now, or one that sends nothing on (_pair_routed): this box serves it, and the
@@ -6969,7 +6999,7 @@ class H(BaseHTTPRequestHandler):
                 except EngineUnreachable as e:
                     invalidate_pool()   # this engine is restarting; its pool is not ours
                     _gen_discard(self)  # held, it is not in flight, as on the other returns that hold
-                    return ("unreachable", str(e), None)
+                    return ("unreachable", str(e), "refused" if engine_refused(e) else None)
                 except TooLongToCount as e:
                     count, uncounted = None, e.args[0]
                 if uncounted is not None:
@@ -7076,7 +7106,7 @@ class H(BaseHTTPRequestHandler):
         if cerr is not None:
             invalidate_pool()           # same: the next pool must be read fresh
             _gen_discard(self)          # held, it is not in flight
-            return ("unreachable", str(cerr), None)
+            return ("unreachable", str(cerr), "refused" if engine_refused(cerr) else None)
         if herr is not None and herr.code in (502, 503, 504):
             try: herr.read(); herr.close()
             except Exception: pass
@@ -7383,7 +7413,10 @@ class H(BaseHTTPRequestHandler):
         if resp.status == 200 and self.path.split("?")[0].rstrip("/") in SERVER_INFO_ROUTES:
             data = strip_key_fields(data)
         self._plain(resp.status, dict(resp.headers), data)
-        self._done("ok get")
+        # the other box's reads of the list (each request of a model this box serves reads it again every PAIR_TTL_S)
+        # write no line: 12 a minute pushed this box's real requests out of the 800 lines its cockpit reads (found in
+        # review of v1.43.0, 2026-11-03, as the tile's reads were in v1.42.0's)
+        self._done("ok get", quiet=self._pair_box is not None)
 
     def _label_peer(self):
         """Name a listed client on every journal line of its request, the first one
