@@ -31,6 +31,23 @@ that fails on the code before it.
 is cut, those the other box of a pair sent here too. The cockpit restarts once, which drops its open pages and the
 Agent tab's connection. No engine, no lane and no unit file changes.
 
+**After the push.** The reference box updated at 2af376a on 2026-11-03 with the command of this release,
+`cd ~/dgx-spark-qwen38 && curl -fsSL https://get.alzeo.ai | bash`, once GitHub's CI had passed on that commit (7 jobs,
+89 steps, none skipped) and get.alzeo.ai served its get.sh byte for byte: the run ended whole in 93 s. The proxy
+(v6.51) and the cockpit restarted. Flash FP4-Local, the lane that served, kept running, and no unit file changed. The
+8 real clients (Claude Code, opencode, Hermes, pi, the OpenAI and Anthropic SDKs, fetch under Node and Bun, LiteLLM)
+answered through the proxy on Flash FP4-Local, and the production checks passed. The cockpit showed no banner on any
+of its 5 views, with no JavaScript error, and Lanes and Settings read the proxy as "v6.51, the repo's copy", where
+they said "unknown" since v1.40.7. The matrix then ran the 8 clients on each of the 7 lanes, each lane loaded as the
+cockpit loads it: 54 of 56. The two misses are pi on the two Flash lanes, in the first matrix where pi runs without
+the skills installed on the box (`--no-skills`, since its first run on v1.42.0 took a skill's description for the
+file). On Flash, its read tool gave the model the file and its number, and the model answered 3.14159. On Flash
+FP4-Local, the model called a tool that pi does not have, then said it had no tool to read the file. Nothing in this
+release changes what pi sends. Each Flash lane loaded again as the cockpit loads it, the 8 clients passed on both,
+then pi got the number 8 times in 10 on Flash, where its two misses answered 42 with no call to a tool, and 10 times
+in 10 on Flash FP4-Local, after 26 times in 26 with `--no-skills` and 6 times in 6 without on the Flash FP4-Local
+that served before the reloads.
+
 ## v1.42.0 (2026-11-03): two boxes behind one endpoint, paired in one command, the other box in the cockpit, and non-streamed answers half a second sooner
 
 **Two boxes behind one endpoint.** Two DGX Spark that each run Alzeo can answer as one (discussion #45). One
