@@ -66,6 +66,7 @@ class Engine(http.server.BaseHTTPRequestHandler):
         body = self.rfile.read(int(self.headers.get("Content-Length") or 0))
         if self.server.mode == "starting":
             return self._empty(503)
+        time.sleep(getattr(self.server, "delay", 0))
         if self.path == "/tokenize":
             return self._json(200, {"count": len(body) // 4})
         self.server.generations.append(self.path)
@@ -99,7 +100,7 @@ class Box:
     """One engine port, one proxy, one systemctl state file. The proxy runs as its own
     process, or (inproc) in this one, where the coverage gate of CI can see its lines."""
 
-    def __init__(self, test, units=UNITS, hold_max="30", state="activating", inproc=False):
+    def __init__(self, test, units=UNITS, hold_max="30", state="activating", inproc=False, keepalive="1"):
         self.test = test
         self.t = Path(tempfile.mkdtemp(prefix="proxy-hold-"))
         test.addCleanup(shutil.rmtree, self.t, True)
@@ -125,7 +126,7 @@ class Box:
         self.srv = None
         self.generations = []
         env = dict(os.environ, UPSTREAM=f"http://127.0.0.1:{self.engine_port}", HOME=str(self.t / "home"),
-                   PATH=f"{self.t / 'bin'}:{os.environ.get('PATH', '')}", KEEPALIVE_S="1",
+                   PATH=f"{self.t / 'bin'}:{os.environ.get('PATH', '')}", KEEPALIVE_S=keepalive,
                    PROXY_HOLD_MAX_S=hold_max, PROXY_HOLD_POLL_S="0.2")
         env.pop("PROXY_HOLD_UNITS", None)
         if units:
@@ -157,12 +158,13 @@ class Box:
         """What `systemctl list-jobs --no-legend` prints: JOB UNIT TYPE STATE."""
         self.jobs_file.write_text("".join(ln + "\n" for ln in lines))
 
-    def start_engine(self, mode="up", pool=200000, info_mode=None):
+    def start_engine(self, mode="up", pool=200000, info_mode=None, delay=0.0):
         if self.srv is None:
             self.srv = localports.serve(self.engine_port, http.server.ThreadingHTTPServer, Engine)
             self.srv.generations = self.generations
             threading.Thread(target=self.srv.serve_forever, daemon=True).start()
         self.srv.mode, self.srv.pool, self.srv.info_mode = mode, pool, info_mode or mode
+        self.srv.delay = delay              # seconds before each generation is answered
 
     def stop_engine(self):
         if self.srv is not None:
@@ -302,6 +304,40 @@ class ANonStreamedRequestWaitsInSilence(unittest.TestCase):
         self.assertTrue(reply.done.wait(15))
         self.assertEqual(reply.status, 200)
         self.assertEqual(json.loads(reply.raw)["choices"][0]["message"]["content"], "four")
+
+
+class AnAnswerIsRelayedTheMomentItComes(unittest.TestCase):
+    """The keepers watched the caller in a select() of 0.5 s and the relay waited for their next tick: a
+    non-streamed answer took 503 ms through the proxy for 35 ms at the engine, and a stream whose engine took
+    over a second lost up to 0.5 s more (measured on the reference box, v1.41.0, 2026-11-03)."""
+    INPROC = False
+
+    def box(self, **kw):
+        return Box(self, inproc=self.INPROC, **kw)
+
+    def test_a_non_streamed_answer_is_relayed_at_once(self):
+        box = self.box()
+        box.start_engine()
+        took = []
+        for _ in range(3):
+            reply = box.send(stream=False)
+            self.assertTrue(reply.done.wait(15))
+            self.assertEqual((reply.status, json.loads(reply.raw)["choices"][0]["message"]["content"]), (200, "four"))
+            took.append(reply.first_at)
+        self.assertLess(min(took), 0.25, took)
+
+    def test_a_stream_whose_engine_took_over_a_second_is_relayed_at_once(self):
+        # no keepalive is due in the meantime (5 s), so the headers the client gets are the engine's
+        box = self.box(keepalive="5")
+        box.start_engine(delay=1.05)
+        took = []
+        for _ in range(3):
+            reply = box.send(stream=True)
+            self.assertTrue(reply.done.wait(15))
+            self.assertEqual(reply.status, 200)
+            self.assertTrue(any('"four"' in e for e in reply.content()), reply.events)
+            took.append(reply.first_at - 1.05)
+        self.assertLess(min(took), 0.25, took)
 
 
 class WhatIsNotWaitedFor(unittest.TestCase):
@@ -620,6 +656,16 @@ class ANonStreamedRequestWaitsInSilenceInProcess(ANonStreamedRequestWaitsInSilen
         super().test_it_gets_its_answer_when_the_engine_is_back()
 
 
+class AnAnswerIsRelayedTheMomentItComesInProcess(AnAnswerIsRelayedTheMomentItComes):
+    INPROC = True
+
+    def test_a_non_streamed_answer_is_relayed_at_once(self):
+        super().test_a_non_streamed_answer_is_relayed_at_once()
+
+    def test_a_stream_whose_engine_took_over_a_second_is_relayed_at_once(self):
+        super().test_a_stream_whose_engine_took_over_a_second_is_relayed_at_once()
+
+
 class WhatIsNotWaitedForInProcess(WhatIsNotWaitedFor):
     INPROC = True
 
@@ -679,7 +725,7 @@ class AHoldEndsInProcess(AHoldEnds):
 class EveryCaseHasItsInProcessTwin(unittest.TestCase):
     def test_each_twin_declares_every_case_of_its_class(self):
         for twin in (AStreamedRequestWaitsForItsEngineInProcess, ANonStreamedRequestWaitsInSilenceInProcess,
-                     WhatIsNotWaitedForInProcess, AHoldEndsInProcess):
+                     AnAnswerIsRelayedTheMomentItComesInProcess, WhatIsNotWaitedForInProcess, AHoldEndsInProcess):
             base = twin.__bases__[0]
             cases = {n for n in vars(base) if n.startswith("test_")}
             self.assertTrue(cases, base.__name__)

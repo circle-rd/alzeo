@@ -4345,6 +4345,36 @@ def _peek(sock):
     return sock.recv(1, socket.MSG_PEEK | socket.MSG_DONTWAIT)
 
 
+class _Wake(threading.Event):
+    """The end of a request's wait, as an Event a select() also waits on: set() makes its pipe readable. The
+    keepers watched the caller in a select() of 0.5 s and _forward joins them before relaying, so every
+    non-streamed answer, and every stream whose engine took more than a second, waited for the keeper's next
+    tick: 503 ms through the proxy for an answer the engine gave in 35 ms (measured on the reference box,
+    v1.41.0, 2026-11-03)."""
+
+    def __init__(self):
+        super().__init__()
+        self._r, self._w = os.pipe()
+        os.set_blocking(self._w, False)
+
+    def fileno(self):
+        return self._r
+
+    def set(self):
+        super().set()
+        try:
+            os.write(self._w, b"x")
+        except OSError:
+            pass                            # already written, or closed: the Event says it
+
+    def close(self):
+        for fd in (self._r, self._w):
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+
+
 def _counted_peer(addr):
     """True for a peer whose connections count against the network's ceilings: any but loopback."""
     try:
@@ -5396,9 +5426,11 @@ class H(BaseHTTPRequestHandler):
             if self._stopped_while_routed(done):
                 return
             try:
-                readable, _, _ = select.select([sock], [], [], 0.5)
+                readable, _, _ = select.select([sock, done] if isinstance(done, _Wake) else [sock], [], [], 0.5)
             except (OSError, ValueError):
                 return
+            if done.is_set():
+                return                   # the answer came: woken at once (_Wake), not at the next tick
             if not readable:
                 continue
             try:
@@ -5506,9 +5538,12 @@ class H(BaseHTTPRequestHandler):
                 done.wait(min(0.5, max(0.0, next_ka - time.time())))
                 continue
             try:
-                readable, _, _ = select.select([sock], [], [], min(0.5, max(0.0, next_ka - time.time())))
+                readable, _, _ = select.select([sock, done] if isinstance(done, _Wake) else [sock], [], [],
+                                               min(0.5, max(0.0, next_ka - time.time())))
             except (OSError, ValueError):
                 return
+            if done.is_set():
+                return                   # the engine answered: woken at once (_Wake)
             if not readable:
                 continue
             try:
@@ -6451,7 +6486,7 @@ class H(BaseHTTPRequestHandler):
             if not self._floor_refused():
                 self._cut_stopped()
             return None
-        done = threading.Event()
+        done = _Wake()
         self._wlock = threading.Lock()      # the keeper writes into the stream until _open returns
         whole = bool(body) and answered_whole(body)
         keeper = None
@@ -6465,6 +6500,8 @@ class H(BaseHTTPRequestHandler):
             done.set()                      # headers, or an error: the generation is over
             if keeper is not None:
                 keeper.join(timeout=CLIENT_IO_S)
+            if keeper is None or not keeper.is_alive():
+                done.close()                # a keeper still in select() keeps its pipe: never a reused fd there
             with self._wlock:               # and nothing is half-written into the stream
                 pass
         if getattr(self, "_caller_left", False):
