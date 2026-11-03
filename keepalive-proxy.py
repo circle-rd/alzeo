@@ -3087,19 +3087,32 @@ VLLM_MODEL_ROUTES = ("/v1/chat/completions", "/v1/completions", "/v1/messages",
                      "/invocations")
 
 
-def strip_rid(body):
-    """The body without a rid of its own (top level): (body, True) when one was dropped. SGLang takes a rid from
-    the body of a generation, and aborts every request whose rid starts with one it aborts (when its client
-    leaves, too)."""
-    if not body or b'"rid"' not in body:
+def strip_rid(body, path=""):
+    """The body without an id of its own for the engine's request: (body, True) when one was dropped. SGLang takes
+    it from a body's "rid" (a batch's list too), from /v1/responses' "request_id", and from the Vertex route's
+    "parameters", which it spreads into the request; and it aborts every request whose rid starts with one it
+    aborts (when its client leaves, too). The body is read whenever it may hold one: a key written with escapes
+    ("r\\u0069d") is the same key once parsed, and the bytes alone did not show it (found in a security review,
+    2026-11-03, with the two other names)."""
+    if not body or (b"rid" not in body and b"request_id" not in body and b"\\u" not in body):
         return body, False
     try:
         j = json.loads(body)
     except Exception:
         return body, False
-    if not isinstance(j, dict) or "rid" not in j:
+    if not isinstance(j, dict):
         return body, False
-    j.pop("rid")
+    route, dropped = path.split("?", 1)[0], False
+    for key in ("rid", "request_id") if route == "/v1/responses" else ("rid",):
+        if key in j:
+            j.pop(key)
+            dropped = True
+    params = j.get("parameters") if route == "/vertex_generate" else None
+    if isinstance(params, dict) and "rid" in params:
+        params.pop("rid")
+        dropped = True
+    if not dropped:
+        return body, False
     try:
         return rewritten(j), True
     except Exception:
@@ -6547,7 +6560,7 @@ class H(BaseHTTPRequestHandler):
             # the rid is this box's to give. The other box of a pair, or a client of a listed key, naming rids "0" to
             # "f" in its bodies and leaving ended every generation here, SGLang aborting by prefix (found in review,
             # 2026-11-03)
-            body, dropped = strip_rid(body)
+            body, dropped = strip_rid(body, self.path)
             if dropped:
                 _say_once_a_minute("hop rid", f"{self._peer} a rid in the body of a request of the other box or of a "
                                               f"listed key is dropped: this box names its engine's requests")

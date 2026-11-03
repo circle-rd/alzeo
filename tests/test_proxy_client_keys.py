@@ -62,6 +62,7 @@ class Engine(http.server.BaseHTTPRequestHandler):
     last_auth = None
     last_path = None          # the path the proxy sent upstream, decoded or not
     last_rid = None           # (the body's rid, the x-override-rid header) of the last POST
+    last_body = None          # the body of the last POST, parsed
 
     def log_message(self, *a):
         pass
@@ -86,8 +87,9 @@ class Engine(http.server.BaseHTTPRequestHandler):
         n = int(self.headers.get("Content-Length") or "0")
         sent = self.rfile.read(n)
         try:
-            rid = json.loads(sent or b"{}").get("rid")
-        except ValueError:
+            Engine.last_body = json.loads(sent or b"{}")
+            rid = Engine.last_body.get("rid")
+        except (ValueError, AttributeError):
             rid = None
         Engine.last_rid = (rid, self.headers.get("x-override-rid"))
         body = json.dumps({"id": "chatcmpl-test", "choices": []}).encode()
@@ -292,6 +294,23 @@ class ClientKeys(unittest.TestCase):
                 rid, header = Engine.last_rid
                 self.assertIsNone(rid, "no rid of the client's in the body")
                 self.assertNotEqual(header, "0", "nor in the header")
+        # every other form SGLang takes one in (security review, 2026-11-03): a key written with escapes,
+        # which the bytes do not show, a batch's list, /v1/responses' request_id, the Vertex route's parameters
+        forms = [("/v1/completions", b'{"model": "m", "prompt": "hi", "r\\u0069d": "0"}', lambda j: j.get("rid")),
+                 ("/invocations", b'{"model": "m", "messages": [], "\\u0072id": "0"}', lambda j: j.get("rid")),
+                 ("/generate", b'{"text": ["a", "b"], "rid": ["0", "1"]}', lambda j: j.get("rid")),
+                 ("/v1/responses", b'{"model": "m", "input": "hi", "request_id": "0"}', lambda j: j.get("request_id")),
+                 ("/v1/responses", b'{"model": "m", "input": "hi", "r\\u0065quest_id": "0"}',
+                  lambda j: j.get("request_id")),
+                 ("/vertex_generate", b'{"instances": [{"text": "hi"}], "parameters": {"rid": "0"}}',
+                  lambda j: (j.get("parameters") or {}).get("rid"))]
+        for path, raw, rid_of in forms:
+            with self.subTest(path=path, body=raw):
+                Engine.last_body = None
+                status, _ = post(port, path, "tok-alice", body=raw)
+                self.assertEqual(status, 200)
+                self.assertIsNotNone(Engine.last_body, "the request reached the engine")
+                self.assertIsNone(rid_of(Engine.last_body), f"the client's id reached the engine: {Engine.last_body}")
 
     def test_the_scheme_is_read_in_any_case_as_the_engine_reads_it(self):
         """The wall read the scheme as "Bearer " only, where SGLang, vLLM's middleware and the

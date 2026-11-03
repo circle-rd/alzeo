@@ -160,6 +160,7 @@ def fake_engine(name, model):
         served = [model]
         seen: list = []
         rids: list = []             # (the body's rid, the x-override-rid header) of every POST
+        bodies: list = []           # every POST's body, parsed
         delay = 0.0
         mode = "ok"                 # "down": /v1/models answers 503 (a boot) ; "cut": a stream dies mid-way
 
@@ -189,6 +190,7 @@ def fake_engine(name, model):
             Handler.seen.append((self.path, body.get("model"), self.headers.get("Authorization"),
                                  self.headers.get("X-Alzeo-Pair-Hop")))
             Handler.rids.append((body.get("rid"), self.headers.get("x-override-rid")))
+            Handler.bodies.append(body)
             time.sleep(Handler.delay)
             if self.path.startswith("/v1/messages"):
                 return self.reply({"id": "m", "type": "message", "role": "assistant", "model": Handler.served[0],
@@ -437,6 +439,7 @@ class TwoBoxesBehindOneEndpoint(unittest.TestCase):
 
     def setUp(self):
         self.E1.seen.clear(); self.E2.seen.clear(); self.E1.rids.clear(); self.E2.rids.clear()
+        self.E1.bodies.clear(); self.E2.bodies.clear()
         self.E1.served[:] = ["qwen3.8-27b"]; self.E2.served[:] = ["qwen3.8-flash-next-fp4"]
         self.E1.delay = self.E2.delay = 0.0
         self.E1.mode = self.E2.mode = "ok"
@@ -456,7 +459,8 @@ class TwoBoxesBehindOneEndpoint(unittest.TestCase):
         c = http.client.HTTPSConnection("127.0.0.1", port, timeout=60, context=client_ctx(me, server))
         try:
             h = {"Content-Type": "application/json", **(headers or {})}
-            c.request(method, path, json.dumps(body).encode() if body is not None else None, h)
+            c.request(method, path, body if isinstance(body, bytes) else json.dumps(body).encode()
+                      if body is not None else None, h)
             r = c.getresponse()
             return r.status, r.read(), dict(r.getheaders())
         finally:
@@ -844,6 +848,15 @@ class TwoBoxesBehindOneEndpoint(unittest.TestCase):
                 self.assertNotEqual(header, "0", "nor in the header")
                 if path == "/v1/chat/completions":
                     self.assertRegex(header or "", r"^[0-9a-f]{32}$", "this box names it")
+        # a key written with escapes, which the bytes do not show, and /v1/responses' request_id (security review,
+        # 2026-11-03)
+        for path, raw, key in (("/v1/completions", b'{"model": "qwen3.8-27b", "prompt": "hi", "r\\u0069d": "0"}', "rid"),
+                               ("/v1/responses", b'{"model": "qwen3.8-27b", "input": "hi", "request_id": "0"}',
+                                "request_id")):
+            with self.subTest(path=path, body=raw):
+                st, out, _ = self.tls_call(self.pport1, path, raw)
+                self.assertEqual(st, 200, out[:300])
+                self.assertNotIn(key, self.E1.bodies[-1], f"the other box's id reached the engine: {self.E1.bodies[-1]}")
 
     def test_the_cockpits_stop_is_never_taken_from_the_pair_port(self):
         # the other box's connection may come from loopback (a tunnel's end, these tests): POST /proxy/stop is
