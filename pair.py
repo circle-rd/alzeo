@@ -200,15 +200,15 @@ def write_peer_cert(name, pem):
 
 
 def drop_files(entries, keep=()):
-    """The certificate files of these pair.json entries (and a key file of an earlier version), those under
-    pair/ and in no entry kept."""
-    kept = {(CONFIG / os.path.expanduser(q.get(k, ""))).resolve() for q in keep for k in ("key_file", "cert_file")
-            if isinstance(q, dict) and q.get(k)}
-    for p in entries:
-        for k in ("key_file", "cert_file"):
-            f = (CONFIG / os.path.expanduser(p.get(k) or "")).resolve()
-            if p.get(k) and f.parent == PAIR_DIR.resolve() and f not in kept:
-                f.unlink(missing_ok=True)
+    """The certificate files of these pair.json entries, those under pair/ and in no entry kept (an entry
+    edited by hand into something else is passed over)."""
+    def cert(q):
+        rel = q.get("cert_file") if isinstance(q, dict) else None
+        return (CONFIG / os.path.expanduser(rel)).resolve() if isinstance(rel, str) and rel else None
+    kept = {cert(q) for q in keep} - {None}
+    for f in map(cert, entries):
+        if f is not None and f.parent == PAIR_DIR.resolve() and f not in kept:
+            f.unlink(missing_ok=True)
 
 
 def url_host(addr):

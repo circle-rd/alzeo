@@ -378,7 +378,8 @@ class PairTool(unittest.TestCase):
         self.assertIn("box2 had a pair with box1 under that name or certificate: replaced", out)
         again = self.b1.pair()["peers"]
         self.assertEqual(len(again), 1)
-        self.assertNotEqual((again[0]["key_file"], again[0]["cert_file"]), (first["key_file"], first["cert_file"]))
+        self.assertNotEqual(again[0]["cert_file"], first["cert_file"])
+        self.assertNotIn("key_file", again[0], "a pair holds no key of the other box")
         self.assertEqual(self.b1.peer_files(), [pathlib.Path(again[0]["cert_file"]).name], "the earlier one dropped")
         self.assertEqual(len(self.b2.peer_files()), 1, "box2 too: one certificate, no key")
         st, body = self.call(self.b1, "qwen3.8-flash-next-fp4")

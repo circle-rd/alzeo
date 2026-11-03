@@ -469,6 +469,12 @@ class TwoBoxesBehindOneEndpoint(unittest.TestCase):
             time.sleep(0.1)
         return text in self.journal_of(label)
 
+    def assert_said(self, label, text):
+        """An outcome line of the journal, waited for: it is written after the answer's last byte, and read at
+        once it was not there yet now and then (a run of 2026-11-03)."""
+        if not self.until_in_journal(label, text):
+            self.fail(f"{text!r} not in the journal of {label}: ...{self.journal_of(label)[-1200:]}")
+
     def spare_proxy(self, label, key, peers=(), name="spark1", pair=None, who="spark1", upstream=None, extra=None,
                     keyfile=True):
         """A proxy of its own for one test: its pair.json names `peers` ((name, port, key), each with its own
@@ -738,14 +744,14 @@ class TwoBoxesBehindOneEndpoint(unittest.TestCase):
         self.assertIn(b"from spark1", out)
         st, out, _ = self.tls_call(self.pport1, "/v1/models", method="GET")
         self.assertEqual([r["id"] for r in json.loads(out)["data"]], ["qwen3.8-27b"], "its own list, not the union")
-        self.assertIn("sent on by spark2", self.journal("spark1"))
+        self.assert_said("spark1", "sent on by spark2")
 
     def test_the_cockpits_stop_is_never_taken_from_the_pair_port(self):
         # the other box's connection may come from loopback (a tunnel's end, these tests): POST /proxy/stop is
         # this machine's operator's, never a pair's
         st, out, _ = self.tls_call(self.pport1, "/proxy/stop", {"why": "a pair's stop", "kind": "operator"})
         self.assertEqual(st, 403, out[:300])
-        self.assertIn("403 pair route refused", self.journal("spark1"))
+        self.assert_said("spark1", "403 pair route refused")
 
     def test_the_pair_port_refuses_a_box_without_a_pinned_certificate(self):
         for me in (None, "rogue"):
@@ -872,7 +878,7 @@ class TwoBoxesBehindOneEndpoint(unittest.TestCase):
         st, out, _ = self.call("/v1/chat/completions", self.chat("qwen3.8-flash-next-fp4"), port=port)
         self.assertEqual(st, 502, out[:300])
         self.assertEqual(json.loads(out)["error"]["type"], "upstream_too_large")
-        self.assertIn("502 pair answer too large", self.journal("huge"))
+        self.assert_said("huge", "502 pair answer too large")
 
     def test_an_error_answer_the_other_box_cuts_is_said_cut(self):
         # its error answer cut on the way escaped the relay before (review, 2026-11-03)
@@ -898,7 +904,34 @@ class TwoBoxesBehindOneEndpoint(unittest.TestCase):
         st, out, _ = self.call("/v1/chat/completions", self.chat("qwen3.8-flash-next-fp4"), port=port)
         self.assertEqual(st, 502, out[:300])
         self.assertEqual(json.loads(out)["error"]["type"], "upstream_cut")
-        self.assertIn("UPSTREAM CUT pair", self.journal("cut-error"))
+        self.assert_said("cut-error", "UPSTREAM CUT pair")
+
+    def test_an_answer_the_other_box_cuts_is_said_cut(self):
+        # a 200 whose body ended before its Content-Length went to the client whole, half a document as a
+        # complete one: http.client's read(n) says nothing of a body cut short (found by the tests, 2026-11-03)
+        class CutAnswer(http.server.BaseHTTPRequestHandler):
+            protocol_version = "HTTP/1.1"
+
+            def log_message(self, *a):
+                pass
+
+            def do_GET(self):
+                out = json.dumps({"object": "list", "data": [{"id": "qwen3.8-flash-next-fp4"}]}).encode()
+                self.send_response(200); self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(out))); self.end_headers(); self.wfile.write(out)
+
+            def do_POST(self):
+                self.rfile.read(int(self.headers.get("Content-Length") or 0))
+                self.send_response(200); self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", "400"); self.end_headers()
+                self.wfile.write(b'{"choices": [{"message": {"content": "half'); self.wfile.flush()
+                self.close_connection = True
+                self.connection.shutdown(socket.SHUT_RDWR)
+        port = self.spare_proxy("cut-answer", KEY_1, peers=[("spark2", tls_peer(self, CutAnswer))])
+        st, out, _ = self.call("/v1/chat/completions", self.chat("qwen3.8-flash-next-fp4"), port=port)
+        self.assertEqual(st, 502, out[:300])
+        self.assertEqual(json.loads(out)["error"]["type"], "upstream_cut")
+        self.assert_said("cut-answer", "UPSTREAM CUT pair")
 
     def test_a_certificate_whose_dates_this_clock_does_not_hold_still_pairs(self):
         # a new certificate is valid from the second it is made: two boxes whose clocks disagree could not pair
@@ -977,7 +1010,7 @@ class TwoBoxesBehindOneEndpoint(unittest.TestCase):
                 r.read()
         finally:
             c.close()
-        self.assertIn("UPSTREAM CUT pair", self.journal("spark1"))
+        self.assert_said("spark1", "UPSTREAM CUT pair")
 
     def test_a_request_sent_on_to_a_box_whose_engine_restarts_is_told_to_try_again_not_held(self):
         # a box whose engine does not answer while its unit starts again (a switch): its own clients are held for
@@ -1283,6 +1316,9 @@ class TwoBoxesBehindOneEndpointInProcess(TwoBoxesBehindOneEndpoint):
     def test_an_error_answer_the_other_box_cuts_is_said_cut(self):
         super().test_an_error_answer_the_other_box_cuts_is_said_cut()
 
+    def test_an_answer_the_other_box_cuts_is_said_cut(self):
+        super().test_an_answer_the_other_box_cuts_is_said_cut()
+
     def test_a_certificate_whose_dates_this_clock_does_not_hold_still_pairs(self):
         super().test_a_certificate_whose_dates_this_clock_does_not_hold_still_pairs()
 
@@ -1368,8 +1404,7 @@ class ThePairsPieces(unittest.TestCase):
         return self.mod._pair_parse(json.dumps(conf))
 
     def peer(self, name="spark2", proxy="https://127.0.0.1:30002", who="spark2"):
-        return {"name": name, "proxy": proxy, "key_file": f"pair/{name}.key", "cert_file": f"pair/{name}.crt",
-                "sha256": ident(who)[1]}
+        return {"name": name, "proxy": proxy, "cert_file": f"pair/{name}.crt", "sha256": ident(who)[1]}
 
     def conf_now(self, conf):
         """conf written as pair.json and read by the proxy at once."""
@@ -1385,8 +1420,8 @@ class ThePairsPieces(unittest.TestCase):
         self.assertEqual([p["proxy"] for p in ok["peers"]],
                          ["https://127.0.0.1:30002", "https://[fe80::1]:30002", "https://spark2.local:30002"])
         self.assertEqual(ok["peers"][2]["sha256"], ident("spark3")[1], "openssl's form, with colons, is taken")
-        self.assertTrue(ok["peers"][0]["key_file"].endswith("/.config/qwen38/pair/spark2.key"))
         self.assertTrue(ok["peers"][0]["cert_file"].endswith("/.config/qwen38/pair/spark2.crt"))
+        self.assertNotIn("key_file", ok["peers"][0], "the certificate is the pair's only credential")
         self.assertTrue(self.mod.PAIR_NAME.fullmatch(self.parse({"peers": []})["name"]), "the host's name, made safe")
 
     def test_what_pair_json_may_not_say(self):

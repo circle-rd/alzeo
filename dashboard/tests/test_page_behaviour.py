@@ -2543,5 +2543,50 @@ class TheBoxItIs(unittest.TestCase):
         self.assertTrue(all("Download" in row for row in r["library"]), r["library"])
 
 
+class TheOtherBoxOfAPairIsShownInNow(unittest.TestCase):
+    """The tile of the other box of a pair (docs/pair.md, decision 975), as the captures of 2026-11-03 read
+    it: hidden on a box alone, the other box's figures as this box says its own, its words as text only."""
+
+    BODY = r"""
+    feed({config: CONFIG, units: UNITS, lifecycle: life({'qwen38-sglang.service': eng('ready')}), pair: %s});
+    report({hidden: $('now-pair').hidden, title: txt('pair-title'),
+            rows: [...document.querySelectorAll('#pair-facts dt')].map(dt => dt.textContent + ': ' + dt.nextElementSibling.textContent),
+            elements: document.querySelectorAll('#pair-facts *').length});
+    """
+    GIB = 2 ** 30
+
+    def test_a_box_alone_shows_no_tile(self):
+        r = run(self, self.BODY % json.dumps({"node_id": "local", "boxes": {}}))
+        self.assertTrue(r["hidden"], r)
+
+    def test_the_other_box_is_said_with_the_figures_this_box_gives_its_own(self):
+        state = {"name": "spark2", "version": "1.42.0", "models": ["qwen3.8-27b"], "mem_total": 121.6 * self.GIB,
+                 "mem_available": 18.2 * self.GIB, "gpu_temp_c": 61, "gpu_power_w": 42,
+                 "job": {"action": "switch to qwen3.8-flash-next-fp4", "status": "running", "elapsed": 95}}
+        r = run(self, self.BODY % json.dumps({"node_id": "local", "boxes": {"spark2": {"state": state}}}))
+        self.assertFalse(r["hidden"], r)
+        self.assertEqual(r["title"], "The other box: spark2")
+        self.assertEqual(r["rows"][:3], ["spark2: serves qwen3.8-27b", "memory: 103.4 GiB of 121.6 GiB in use",
+                                         "GPU: 61 °C, 42 W"], r)
+        self.assertIn("Alzeo: v1.42.0", r["rows"])
+        self.assertTrue(any(x.startswith("job: switch to qwen3.8-flash-next-fp4, running, ") for x in r["rows"]), r)
+
+    def test_a_box_that_does_not_answer_is_said_once(self):
+        # the row read "does not answer: box spark9 does not answer: ..." (captures, 2026-11-03)
+        why = "nothing listens on its pair port: its proxy is stopped, or older than this pair"
+        r = run(self, self.BODY % json.dumps({"node_id": "local", "boxes": {
+            "spark9": {"error": f"box spark9 does not answer: {why}"}}}))
+        self.assertEqual(r["rows"], [f"spark9: does not answer: {why}"], r)
+        r = run(self, self.BODY % json.dumps({"node_id": "local", "boxes": {"spark9": {"error": "HTTP 401"}}}))
+        self.assertEqual(r["rows"], ["spark9: does not answer: HTTP 401"], r)
+
+    def test_what_the_other_box_says_is_text_never_markup(self):
+        hostile = '<img src=x onerror="alert(1)">'
+        r = run(self, self.BODY % json.dumps({"node_id": "local", "boxes": {"spark2": {"state": {
+            "models": [hostile], "version": hostile, "job": {"action": hostile}}}}}))
+        self.assertIn(f"spark2: serves {hostile}", r["rows"])
+        self.assertEqual(r["elements"], 2 * len(r["rows"]), "a dt and a dd per row, nothing else")
+
+
 if __name__ == "__main__":
     unittest.main()

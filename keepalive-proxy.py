@@ -3398,6 +3398,18 @@ def _pair_why(e):
     return re.sub(r"[\x00-\x1f\x7f]", "?", s)[:160] or type(r).__name__
 
 
+def _pair_read_whole(r, cap):
+    """An answer of the other box that is not streamed, at most cap + 1 bytes, or the cut it is: http.client's
+    read(n) hands over a body its sender ended early as if it were whole and leaves the bytes still owed in
+    .length (read() alone raises IncompleteRead), as the engine's relay already knows (2026-09-24); an error
+    answer cut on the way was relayed as complete (found by the tests, 2026-11-03)."""
+    data = r.read(cap + 1)
+    owed = getattr(r, "length", None)
+    if isinstance(owed, int) and owed > 0 and len(data) <= cap:
+        raise http.client.IncompleteRead(data, owed)
+    return data
+
+
 def _cockpit_base():
     """Where this box's cockpit answers: its unit's COCKPIT_BIND and COCKPIT_PORT, 127.0.0.1 for a bind on every
     interface (QWEN38_COCKPIT_URL names it outright, the tests)."""
@@ -6181,7 +6193,7 @@ class H(BaseHTTPRequestHandler):
                 resp = peer["opener"].open(req)
             except urllib.error.HTTPError as e:
                 try:
-                    data = e.read(1 << 20)
+                    data = _pair_read_whole(e.fp, (1 << 20) - 1) if e.fp is not None else b""
                 except (OSError, ValueError, http.client.HTTPException) as cut:
                     # its error answer cut on the way (the box went, or this client left): it escaped this
                     # function before (found in review, 2026-11-03)
@@ -6218,7 +6230,7 @@ class H(BaseHTTPRequestHandler):
             try:
                 if "text/event-stream" not in (resp.headers.get("Content-Type") or ""):
                     try:
-                        data = resp.read(PAIR_ANSWER_MAX + 1)
+                        data = _pair_read_whole(resp, PAIR_ANSWER_MAX)
                     except (OSError, http.client.HTTPException) as e:
                         if left.is_set():
                             self._done("CLIENT GONE during pair"); return None

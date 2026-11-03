@@ -361,10 +361,16 @@ function renderPair(){
   const rows = [];
   for (const n of names){
     const b = boxes[n] || {}, s = b.state || {};
-    if (b.error){ rows.push([n, `does not answer: ${b.error}`]); continue; }
+    if (b.error){
+      // the proxy's own words already name the box: "box spark2 does not answer: <why>"
+      const said = `box ${n} does not answer: `, why = String(b.error);
+      rows.push([n, `does not answer: ${why.startsWith(said) ? why.slice(said.length) : why}`]);
+      continue;
+    }
     const models = (Array.isArray(s.models) ? s.models : []).join(', ');
     rows.push([n, models ? `serves ${models}` : 'serves nothing now']);
-    if (s.mem_total) rows.push(['memory', `${fmtGiB(s.mem_total - (s.mem_available || 0))} of ${fmtGiB(s.mem_total, 0)} in use`]);
+    // the same figures as this box's own memory card: 121.6 GiB, not 122
+    if (s.mem_total) rows.push(['memory', `${fmtGiB(s.mem_total - (s.mem_available || 0))} of ${fmtGiB(s.mem_total)} in use`]);
     if (s.gpu_temp_c != null || s.gpu_power_w != null)
       rows.push(['GPU', [s.gpu_temp_c != null ? `${Number(s.gpu_temp_c).toFixed(0)} °C` : '', s.gpu_power_w != null ? `${Number(s.gpu_power_w).toFixed(0)} W` : ''].filter(Boolean).join(', ')]);
     if (s.job && s.job.action) rows.push(['job', `${s.job.action}${s.job.status ? ', ' + s.job.status : ''}${s.job.elapsed != null ? ', ' + fmtDur(s.job.elapsed) : ''}`]);
