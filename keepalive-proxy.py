@@ -3246,6 +3246,10 @@ PAIR_HERE = "X-Alzeo-Here"
 PAIR_TTL_S = float(os.environ.get("PAIR_TTL_S", "5") or 5)
 PAIR_CONNECT_S = float(os.environ.get("PAIR_CONNECT_S", "10") or 10)
 PAIR_CONNECT_S = PAIR_CONNECT_S if PAIR_CONNECT_S > 0 else 10.0    # 0 made the connect non-blocking: every forward failed
+# A request this box could serve itself (a model both serve) waits less for the other box's connection: a box gone without
+# a reset (its power, its cable) held each such request PAIR_CONNECT_S before this box served it (found in review,
+# 2026-11-03). A connection and its TLS take well under a second on a LAN or a tailnet.
+PAIR_SHARE_CONNECT_S = float(os.environ.get("PAIR_SHARE_CONNECT_S", "3") or 3)
 # A stream from a peer's proxy carries a byte at least every KEEPALIVE_S (role 1 on its side): this much
 # silence is a box that went (a power cut sends no FIN), and the client's stream is cut instead of waiting
 # MAX_SILENCE_S with nothing (found in review, 2026-11-02)
@@ -6820,7 +6824,7 @@ class H(BaseHTTPRequestHandler):
         threading.Thread(target=watch, daemon=True).start()
         try:
             try:
-                resp = peer["opener"].open(req)
+                resp = peer["opener"].open(req, timeout=PAIR_SHARE_CONNECT_S) if fallback else peer["opener"].open(req)
             except urllib.error.HTTPError as e:
                 try:
                     # the cap of a 200: an error answer over 1 MiB went out cut to 1 MiB as if whole (a validation

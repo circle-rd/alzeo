@@ -1833,6 +1833,27 @@ class TwoBoxesServeOneModel(PairFixture, unittest.TestCase):
         self.assertIn(b"from spark2", out, "this box refused as too long what the other box's pool holds")
         self.assert_said("spark1", "the prompt is too long for this box's pool for qwen3.8-27b: trying spark2")
 
+    def test_a_box_gone_without_a_reset_holds_a_shared_request_seconds_not_ten(self):
+        # its power or its cable gone: its port answers no TLS. A request this box could serve itself waited the whole
+        # connection timeout (10 s) for it (review, 2026-11-03)
+        if not self.INPROC:
+            self.skipTest("the kept list is set in this test's process")
+        hole = socket.socket()
+        hole.bind(("127.0.0.1", 0))
+        hole.listen(16)                     # takes the connection, never answers its TLS
+        self.addCleanup(hole.close)
+        self.repoint(hole.getsockname()[1])
+        self.mod._PAIR_MODELS["spark2"] = {"ts": time.monotonic(), "models": ("qwen3.8-27b",), "rows": [],
+                                           "error": None, "answered": True, "known": ("qwen3.8-27b",),
+                                           "known_ts": time.monotonic(), "read_s": 0.01, "running": 0}
+        self.busy(self.E1, self.port1, KEY_1, "local-only", 1, 9.0)         # one here, none there: it goes there
+        t0 = time.monotonic()
+        st, out, _ = self.call("/v1/chat/completions", self.chat("qwen3.8-27b"))
+        took = time.monotonic() - t0
+        self.assertEqual(st, 200, out[:300])
+        self.assertIn(b"from spark1", out)
+        self.assertLess(took, 6.0, f"a shared request waited {took:.1f} s for a box gone without a reset")
+
     def test_a_box_held_by_its_memory_floor_sends_on_what_the_other_box_serves(self):
         # the cockpit's floor stopped a generation here: new ones wait here (v6.47), but the other box serves the model:
         # it answers, where this box said 503 or 529 for the whole hold (review, 2026-11-03)
@@ -2121,6 +2142,9 @@ class TwoBoxesServeOneModelInProcess(TwoBoxesServeOneModel):
 
     def test_a_box_held_by_its_memory_floor_sends_on_what_the_other_box_serves(self):
         super().test_a_box_held_by_its_memory_floor_sends_on_what_the_other_box_serves()
+
+    def test_a_box_gone_without_a_reset_holds_a_shared_request_seconds_not_ten(self):
+        super().test_a_box_gone_without_a_reset_holds_a_shared_request_seconds_not_ten()
 
     def test_a_prompt_too_long_for_this_boxs_pool_goes_to_the_other_box(self):
         super().test_a_prompt_too_long_for_this_boxs_pool_goes_to_the_other_box()
