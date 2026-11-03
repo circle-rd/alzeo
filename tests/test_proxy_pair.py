@@ -1906,6 +1906,39 @@ class TwoBoxesServeOneModel(PairFixture, unittest.TestCase):
         self.assertIn(b"from spark1", out)
         self.assertLess(took, 6.0, f"a shared request waited {took:.1f} s for a box gone without a reset")
 
+    def test_a_client_that_leaves_while_the_other_box_does_not_answer_still_pauses_it(self):
+        # its client gave up during the connection wait to a box gone without a reset: that box was neither paused nor
+        # forgotten, and each retry waited the 3 s again (review, 2026-11-03)
+        if not self.INPROC:
+            self.skipTest("the kept list is set in this test's process")
+        hole = socket.socket()
+        hole.bind(("127.0.0.1", 0))
+        hole.listen(16)                     # takes the connection, never answers its TLS
+        self.addCleanup(hole.close)
+        self.repoint(hole.getsockname()[1])
+        self.mod._PAIR_MODELS["spark2"] = {"ts": time.monotonic(), "models": ("qwen3.8-27b",), "rows": [],
+                                           "error": None, "answered": True, "known": ("qwen3.8-27b",),
+                                           "known_ts": time.monotonic(), "read_s": 0.01, "running": 0,
+                                           "revision": TEST_REV}
+        self.addCleanup(self.mod._PAIR_COOL.pop, "spark2", None)
+        self.busy(self.E1, self.port1, KEY_1, "local-only", 1, 9.0)         # one here, none there: it goes there
+        c = http.client.HTTPConnection("127.0.0.1", self.port1, timeout=1.0)    # a client that gives up after 1 s
+        try:
+            c.request("POST", "/v1/chat/completions", json.dumps(self.chat("qwen3.8-27b")).encode(),
+                      {"Content-Type": "application/json", "Authorization": f"Bearer {KEY_1}"})
+            with self.assertRaises(OSError):
+                c.getresponse()
+        finally:
+            c.close()
+        self.assertTrue(self.until_in_journal("spark1", "its client left, and spark2 gets nothing of a model both "
+                                                        "serve", within=6.0), "the box that did not answer was not paused")
+        t0 = time.monotonic()
+        st, out, _ = self.call("/v1/chat/completions", self.chat("qwen3.8-27b"))
+        took = time.monotonic() - t0
+        self.assertEqual(st, 200, out[:300])
+        self.assertIn(b"from spark1", out)
+        self.assertLess(took, 2.0, f"the next request waited {took:.1f} s again for the box that does not answer")
+
     def test_a_box_held_by_its_memory_floor_sends_on_what_the_other_box_serves(self):
         # the cockpit's floor stopped a generation here: new ones wait here (v6.47), but the other box serves the model:
         # it answers, where this box said 503 or 529 for the whole hold (review, 2026-11-03)
@@ -2588,6 +2621,9 @@ class TwoBoxesServeOneModelInProcess(TwoBoxesServeOneModel):
 
     def test_the_other_boxs_list_reads_write_a_line_a_minute_while_this_engine_is_away(self):
         super().test_the_other_boxs_list_reads_write_a_line_a_minute_while_this_engine_is_away()
+
+    def test_a_client_that_leaves_while_the_other_box_does_not_answer_still_pauses_it(self):
+        super().test_a_client_that_leaves_while_the_other_box_does_not_answer_still_pauses_it()
 
 
 class ThePairsPieces(unittest.TestCase):

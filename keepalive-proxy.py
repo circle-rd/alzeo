@@ -6898,6 +6898,10 @@ class H(BaseHTTPRequestHandler):
             self._pair_refused(pick, name, res, "its client is told 503")
             self._pair_lost(pick, name, conf, local)
             return True
+        if res == "gone":                   # its client left while that box did not answer: nothing to serve here
+            affinity_forget(pick, blocks)
+            self._pair_refused(pick, name, "fallback", "its client left")
+            return True
         # the peer did not answer, or serves another model now: this box serves it, no byte of an answer having gone
         # out (decision 998: never a request whose answer began), and the conversation is this box's from now on
         affinity_forget(pick, blocks)
@@ -6963,6 +6967,9 @@ class H(BaseHTTPRequestHandler):
             if res == "lost":               # it had it whole (decision 1017): no other box, its client is told so
                 self._pair_refused(peer["name"], name, res, "its client is told 503")
                 self._pair_lost(peer["name"], name, conf, local)
+                return True
+            if res == "gone":               # its client left while that box did not answer
+                self._pair_refused(peer["name"], name, "fallback", "its client left")
                 return True
             self._pair_refused(peer["name"], name, res, "this box keeps it")
         with _GEN_LOCK:                     # no box took it: this box's again, for a stop and for its count
@@ -7123,7 +7130,11 @@ class H(BaseHTTPRequestHandler):
                 return None
             except (urllib.error.URLError, OSError, http.client.HTTPException) as e:
                 if left.is_set():
-                    self._done("CLIENT GONE during pair"); return None
+                    self._done("CLIENT GONE during pair")
+                    # its client left while that box did not answer: still a box that does not answer, paused and its
+                    # conversations forgotten as after any refusal, where each retry waited for it again (found in
+                    # review of v1.43.0, 2026-11-03)
+                    return "gone" if fallback and isinstance(e, urllib.error.URLError) else None
                 why = _pair_why(e)
                 # urllib wraps in a URLError what h.request raised (the connection, its TLS, the send): the other box
                 # never had the request whole. What getresponse raised comes bare: it had it, and closed the
