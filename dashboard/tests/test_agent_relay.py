@@ -777,8 +777,9 @@ class PureHelpers(unittest.TestCase):
         class R:
             def __init__(self, out):
                 self.stdout = out
-        iface = "8: tailscale0    inet 100.64.0.7/32 scope global tailscale0\\       valid_lft forever\n"
-        self.assertEqual(ar.tailscale_ipv4(lambda *a, **k: R(iface)), "100.64.0.7")
+        # 100.100 to 100.119, the regex's branch the reference box's own address is in, with an address no box has
+        iface = "8: tailscale0    inet 100.101.0.7/32 scope global tailscale0\\       valid_lft forever\n"
+        self.assertEqual(ar.tailscale_ipv4(lambda *a, **k: R(iface)), "100.101.0.7")
         calls = []
         def run(argv, **k):
             calls.append(argv[0])
