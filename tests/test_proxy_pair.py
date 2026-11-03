@@ -291,12 +291,52 @@ def tls_peer(test, handler, me="spark2", trusts=("spark1",)):
     return port
 
 
+def fake_peer(listed, post):
+    """The pair port of another box, for a spare entry: it lists `listed` (ids, or None: its list fails with a 503)
+    and answers every POST with `post` ((status, body)); both may change during a test (state). `seen`: its POSTs."""
+    class Peer(http.server.BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.1"
+        state = {"listed": listed, "post": post}
+        seen: list = []
+
+        def log_message(self, *a):
+            pass
+
+        def reply(self, code, obj):
+            out = json.dumps(obj).encode()
+            self.send_response(code)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(out)))
+            self.end_headers()
+            self.wfile.write(out)
+
+        def do_GET(self):
+            ids = Peer.state["listed"]
+            if ids is None:
+                return self.reply(503, {"error": {"type": "engine_unavailable", "message": "its engine is away"}})
+            self.reply(200, {"object": "list", "data": [{"id": i, "object": "model"} for i in ids], "x_alzeo_running": 0})
+
+        def do_POST(self):
+            self.rfile.read(int(self.headers.get("Content-Length") or 0))
+            Peer.seen.append(self.path)
+            code, obj = Peer.state["post"]
+            if code == 409:                 # a box that switched lists its new lane from then on
+                Peer.state["listed"] = ["ornith-1.5-122b"] + [i for i in (Peer.state["listed"] or []) if i.startswith("marker")]
+            self.reply(code, obj)
+    return Peer
+
+
+PEER_ANSWER = (200, {"id": "c", "object": "chat.completion", "model": "qwen3.8-27b", "choices": [
+    {"index": 0, "message": {"role": "assistant", "content": "from the peer"}, "finish_reason": "stop"}]})
+
+
 class PairFixture:
     """Two proxies paired over TLS, each with a fake engine (MODELS: what each serves), and their helpers. The entry
     runs as a process of its own, and in this test's process in each class's twin (INPROC), where the coverage gate
     of CI sees its lines (as test_proxy_hold.py does for role 6)."""
     INPROC = False
     MODELS = (("qwen3.8-27b",), ("qwen3.8-flash-next-fp4",))
+    ENTRY_ENV: dict = {}            # more of the entry's environment, for one class
 
     @classmethod
     def setUpClass(cls):
@@ -320,7 +360,8 @@ class PairFixture:
             if cls.INPROC:
                 cls.port1 = cls.start_inproc(cls.home1, cls.engines[0])
             else:
-                cls.port1 = cls.start_proxy(cls.home1, cls.engines[0], "spark1", PAIR_TTL_S=str(PAIR_TTL))
+                cls.port1 = cls.start_proxy(cls.home1, cls.engines[0], "spark1", PAIR_TTL_S=str(PAIR_TTL),
+                                            **cls.ENTRY_ENV)
             cls.pport1, cls.pport2 = cls.pair_up(cls.home1, "spark1", cls.home2, "spark2")
         except BaseException:
             cls.tearDownClass()
@@ -329,7 +370,8 @@ class PairFixture:
     @classmethod
     def start_inproc(cls, home, engine):
         cls.saved_env = dict(os.environ)
-        os.environ.update({"HOME": str(home), "PROXY_BIND": "127.0.0.1", "PAIR_TTL_S": str(PAIR_TTL), "PAIR_PORT": "0",
+        os.environ.update({**cls.ENTRY_ENV, "HOME": str(home), "PROXY_BIND": "127.0.0.1", "PAIR_TTL_S": str(PAIR_TTL),
+                           "PAIR_PORT": "0",
                            "QWEN38_COCKPIT_URL": cls.cockpit_url,
                            "UPSTREAM": f"http://127.0.0.1:{engine.server_address[1]}",
                            "PROMPT_CEILING_TOKENS": "0", "FLASH_PROMPT_CEILING_TOKENS": "0"})
@@ -1661,28 +1703,30 @@ class TwoBoxesServeOneModel(PairFixture, unittest.TestCase):
     serve the 27B from their start, as two boxes that loaded it do (a proxy learns what its engine serves at a
     lane's start); spark2 lists a marker beside it, which shows in the entry's list once it read spark2's."""
     MODELS = (("qwen3.8-27b",), ("qwen3.8-27b", "marker-27b"))
+    ENTRY_ENV = {"PAIR_SPREAD_COOL_S": "2"}     # a refusal's pause, short: the tests after it share again
 
     def setUp(self):
         super().setUp()
         self.until_listed("marker-27b")
 
 
-    def until_listed(self, model, within=15.0, port=None):
-        """Until the entry's own list shows model: the union of its list and what it kept of spark2's."""
+    def until_listed(self, model, within=15.0, port=None, gone=False):
+        """Until the entry's own list shows model (or no longer does): the union of its list and what it kept of the
+        other box's."""
         deadline = time.monotonic() + within
         while time.monotonic() < deadline:
             st, out, _ = self.call("/v1/models", method="GET", port=port)
-            if st == 200 and model in [m.get("id") for m in json.loads(out).get("data", [])]:
+            if st == 200 and (model in [m.get("id") for m in json.loads(out).get("data", [])]) != gone:
                 return
             time.sleep(0.2)
-        self.fail(f"the entry's list never showed {model}")
+        self.fail(f"the entry's list never {'lost' if gone else 'showed'} {model}")
 
-    def turns(self, tag, n, size=9000):
+    def turns(self, tag, n, size=9000, turn=1500):
         """n turns of one conversation, as an agent sends them: each body is the one before plus a turn."""
         msgs = [{"role": "system", "content": (tag + " ") * (size // (len(tag) + 1))}]
         out = []
         for i in range(n):
-            msgs = msgs + [{"role": "user", "content": f"turn {i} " + "x" * 1500}]
+            msgs = msgs + [{"role": "user", "content": f"turn {i} " + "x" * turn}]
             out.append({"model": "qwen3.8-27b", "max_tokens": 8, "messages": list(msgs), "user": f"{tag}-{i}"})
             msgs = msgs + [{"role": "assistant", "content": "ok " * 100}]
         return out
@@ -1752,6 +1796,7 @@ class TwoBoxesServeOneModel(PairFixture, unittest.TestCase):
     def test_a_box_that_refuses_hands_its_share_back(self):
         self.busy(self.E1, self.port1, KEY_1, "local-only", 2, 3.0)
         self.E2.mode = "busy"                   # spark2's engine answers 503: spark2 relays it
+        self.addCleanup(time.sleep, 2.5)        # its pause (ENTRY_ENV) over before the next test
         st, out, _ = self.call("/v1/chat/completions", self.turns("conv-d", 1)[0])
         self.assertEqual(st, 200, out[:300])
         self.assertIn(b"from spark1", out, "the entry answered the peer's 503 instead of serving it")
@@ -1810,6 +1855,77 @@ class TwoBoxesServeOneModel(PairFixture, unittest.TestCase):
         self.assertEqual(set(sent), {"affinity", "balance", "failover", "rescued"}, sent)
         self.assertGreaterEqual(sent["balance"], 1, sent)
 
+    def test_a_box_that_said_529_gets_nothing_shared_for_a_while(self):
+        # its cockpit hit the memory floor: 529 on /v1/messages, the floor's word in the Anthropic dialect
+        Peer = fake_peer(["qwen3.8-27b", "marker-529"], (529, {"type": "error", "error": {
+            "type": "overloaded_error", "message": "the memory floor"}}))
+        entry = self.spare_proxy("spark1-529", KEY_1, peers=(("spark2", tls_peer(self, Peer)),))
+        self.until_listed("marker-529", port=entry)
+        self.busy(self.E1, entry, KEY_1, "local-only", 1, 6.0)          # one here, none there
+        msg = {"model": "qwen3.8-27b", "max_tokens": 8, "messages": [{"role": "user", "content": "hi"}]}
+        for _ in range(2):
+            st, out, _ = self.call("/v1/messages", msg, port=entry)
+            self.assertEqual(st, 200, out[:300])
+            self.assertIn(b"from spark1", out, "the other box's 529 went to the client while this box idled")
+        self.assertEqual(len(Peer.seen), 1, "the box that said 529 got the next request too")
+        self.assert_said("spark1-529", "spark2 does not answer for qwen3.8-27b: this box serves it, and sends it nothing")
+
+    def test_a_prompt_too_long_for_the_other_box_is_served_here_and_the_next_ones_still_go_there(self):
+        Peer = fake_peer(["qwen3.8-27b", "marker-long"], (400, {"error": {
+            "type": "context_too_long", "code": "context_length_exceeded", "message": "too long for this lane"}}))
+        entry = self.spare_proxy("spark1-long", KEY_1, peers=(("spark2", tls_peer(self, Peer)),))
+        self.until_listed("marker-long", port=entry)
+        self.busy(self.E1, entry, KEY_1, "local-only", 1, 6.0)
+        st, out, _ = self.call("/v1/chat/completions", self.chat("qwen3.8-27b"), port=entry)
+        self.assertEqual(st, 200, out[:300])
+        self.assertIn(b"from spark1", out, "the other box's pool refused it and the client got that refusal")
+        self.assert_said("spark1-long", "the prompt is too long for spark2's pool: this box serves it")
+        Peer.state["post"] = PEER_ANSWER
+        st, out, _ = self.call("/v1/chat/completions", self.chat("qwen3.8-27b"), port=entry)
+        self.assertIn(b"from the peer", out, "one prompt too long for it kept the other box out")
+
+    def test_a_box_that_switched_is_not_sent_the_next_request(self):
+        Peer = fake_peer(["qwen3.8-27b", "marker-moved"], (409, {"error": {
+            "type": "model_not_served", "message": "this box (spark2) serves ornith-1.5-122b, not qwen3.8-27b"}}))
+        entry = self.spare_proxy("spark1-moved", KEY_1, peers=(("spark2", tls_peer(self, Peer)),))
+        self.until_listed("marker-moved", port=entry)
+        self.busy(self.E1, entry, KEY_1, "local-only", 1, 6.0)
+        for _ in range(3):
+            st, out, _ = self.call("/v1/chat/completions", self.chat("qwen3.8-27b"), port=entry)
+            self.assertEqual(st, 200, out[:300])
+            self.assertIn(b"from spark1", out)
+        self.assertEqual(len(Peer.seen), 1, "each request went to the box that switched, for another 409")
+
+    def test_a_list_read_long_ago_still_shares(self):
+        Peer = fake_peer(["qwen3.8-27b", "marker-pause"], PEER_ANSWER)
+        entry = self.spare_proxy("spark1-pause", KEY_1, peers=(("spark2", tls_peer(self, Peer)),),
+                                 extra={"PAIR_TTL_S": "1"})
+        self.until_listed("marker-pause", port=entry)
+        time.sleep(4)                       # after a pause: the list was read more than 3 reads' time ago
+        self.busy(self.E1, entry, KEY_1, "local-only", 1, 6.0)
+        st, out, _ = self.call("/v1/chat/completions", self.chat("qwen3.8-27b"), port=entry)
+        self.assertEqual(st, 200, out[:300])
+        self.assertIn(b"from the peer", out, "a burst after a pause stayed here, before the list's read")
+
+    def test_a_conversation_served_here_while_the_other_box_was_away_stays_here(self):
+        Peer = fake_peer(["qwen3.8-27b", "marker-away"], PEER_ANSWER)
+        entry = self.spare_proxy("spark1-away", KEY_1, peers=(("spark2", tls_peer(self, Peer)),),
+                                 extra={"PAIR_TTL_S": "1"})
+        self.until_listed("marker-away", port=entry)
+        # turns of 3,000 bytes after 12,000: the first is 15 KB, the second 18 KB, its 16 KiB block the first's not
+        a = self.turns("conv-h", 3, size=12000, turn=3000)
+        self.busy(self.E1, entry, KEY_1, "local-only", 1, 25.0)         # one here the whole test, none there
+        st, out, _ = self.call("/v1/chat/completions", a[0], port=entry)
+        self.assertIn(b"from the peer", out, "a new conversation, to the box with none in flight")
+        Peer.state["listed"] = None                                     # the other box goes (its list fails)
+        self.until_listed("marker-away", port=entry, gone=True)
+        st, out, _ = self.call("/v1/chat/completions", a[1], port=entry)
+        self.assertIn(b"from spark1", out, "served here while the other box was away")
+        Peer.state["listed"] = ["qwen3.8-27b", "marker-back"]           # back, its prefix cache empty
+        self.until_listed("marker-back", port=entry)
+        st, out, _ = self.call("/v1/chat/completions", a[2], port=entry)
+        self.assertIn(b"from spark1", out, "the conversation went back to the box that lost its cache")
+
     def test_a_box_tells_the_other_how_many_it_runs(self):
         st, out, _ = self.tls_call(self.pport1, "/v1/models", method="GET")
         self.assertEqual(st, 200, out[:300])
@@ -1845,6 +1961,21 @@ class TwoBoxesServeOneModelInProcess(TwoBoxesServeOneModel):
 
     def test_this_box_hands_a_request_its_engine_refuses_to_the_other(self):
         super().test_this_box_hands_a_request_its_engine_refuses_to_the_other()
+
+    def test_a_box_that_said_529_gets_nothing_shared_for_a_while(self):
+        super().test_a_box_that_said_529_gets_nothing_shared_for_a_while()
+
+    def test_a_prompt_too_long_for_the_other_box_is_served_here_and_the_next_ones_still_go_there(self):
+        super().test_a_prompt_too_long_for_the_other_box_is_served_here_and_the_next_ones_still_go_there()
+
+    def test_a_box_that_switched_is_not_sent_the_next_request(self):
+        super().test_a_box_that_switched_is_not_sent_the_next_request()
+
+    def test_a_list_read_long_ago_still_shares(self):
+        super().test_a_list_read_long_ago_still_shares()
+
+    def test_a_conversation_served_here_while_the_other_box_was_away_stays_here(self):
+        super().test_a_conversation_served_here_while_the_other_box_was_away_stays_here()
 
     def test_a_box_tells_the_other_how_many_it_runs(self):
         super().test_a_box_tells_the_other_how_many_it_runs()

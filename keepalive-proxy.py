@@ -3732,7 +3732,7 @@ PAIR_AFFINITY_FIRST = 4096              # the first block, in bytes; each next o
 PAIR_AFFINITY_KEEP_S = float(os.environ.get("PAIR_AFFINITY_KEEP_S") or 600)    # an agent's pause
 PAIR_AFFINITY_MAX = 8192                # the blocks kept per box, the oldest dropped first
 PAIR_SPREAD_ABS, PAIR_SPREAD_REL = 4, 1.5
-PAIR_SPREAD_FRESH_S = 3 * PAIR_TTL_S    # a peer's list older than this shares nothing: it may have switched
+PAIR_SPREAD_COOL_S = float(os.environ.get("PAIR_SPREAD_COOL_S") or 30)   # a box that refused one gets none so long
 PAIR_RUNNING_MAX = 100000               # what a peer may say it runs; past it, its word is not taken
 _AFFINITY: dict = {}                    # box -> OrderedDict(block fingerprint -> when a request with it went there)
 _AFFINITY_LOCK = threading.Lock()
@@ -3741,6 +3741,7 @@ _PAIR_HERE = set()                      # the handlers the sharing kept here, fr
 _PAIR_SENT: dict = {}                   # peer -> requests sent there since its list was read, less those that ended
 _PAIR_OUT: dict = {}                    # peer -> requests of this box in flight there now
 _PAIR_SPREAD: dict = {}                 # peer -> {"affinity", "balance", "failover", "rescued": n}, for the tile
+_PAIR_COOL: dict = {}                   # peer -> the monotonic time until which it gets no shared request
 
 
 def prefix_blocks(body, route):
@@ -3836,6 +3837,19 @@ def pair_sent(peer, n):
     with _PAIR_LOCK:
         _PAIR_SENT[peer] = _PAIR_SENT.get(peer, 0) + n
         _PAIR_OUT[peer] = max(0, _PAIR_OUT.get(peer, 0) + n)
+
+
+def _pair_refused_here(code, data):
+    """A refusal of the other box this box serves instead (decision 998), or None: "away" for its engine away or its
+    proxy's memory floor (503, and 529 on /v1/messages, the floor's word in the Anthropic dialect: a box whose cockpit
+    hit the floor said its 529 to every Claude Code request for minutes while this one idled, found in review,
+    2026-11-03), "too long" for a prompt too long for its pool (400 context_length_exceeded: a 64 GB box paired with a
+    128 GB one, same review), which says nothing of the shorter ones."""
+    if code in (503, 529):
+        return "away"
+    if code == 400 and b'"context_length_exceeded"' in (data or b""):
+        return "too long"
+    return None
 
 
 def pair_spread_count(peer, why):
@@ -6304,7 +6318,7 @@ class H(BaseHTTPRequestHandler):
             if gone is None:
                 return
             kind, why, detail = gone
-            if kind in ("unreachable", "upstream") and self._pair_take_over():
+            if kind in ("unreachable", "upstream") and self._pair_take_over(asked):
                 return
             if self._hold(why, streamed):
                 # The engine answers again, and it may be another lane: the body is judged
@@ -6526,16 +6540,23 @@ class H(BaseHTTPRequestHandler):
         request, True once a peer answered it. Only the lists as kept are read, never waited for: this box serves the
         model, and its own requests do not wait for a slow box."""
         now = time.monotonic()
+        me = conf["name"]
+        blocks, size = prefix_blocks(body, route)
         peers = []
         for p in conf["peers"]:
             _peer_models_soon(p)
+            # the list as kept at its last read, however old: a box that switched lanes since says 409 and is read
+            # again; one whose read failed lists nothing. Those kept only while fresh made a burst after a pause stay
+            # here whole, its first requests before the list's read (found in review, 2026-11-03)
             row = _PAIR_MODELS.get(p["name"]) or {}
-            if name in (row.get("models") or ()) and now - row.get("ts", 0) < PAIR_SPREAD_FRESH_S:
+            if name in (row.get("models") or ()) and _PAIR_COOL.get(p["name"], 0) <= now:
                 peers.append(p)
         if not peers or (not CLIENT_KEYS and not _door_key()):
-            return False                    # a box alone for this model, or one that sends nothing on (_pair_routed)
-        me = conf["name"]
-        blocks, size = prefix_blocks(body, route)
+            # a box alone for this model now, or one that sends nothing on (_pair_routed): this box serves it, and the
+            # conversation is noted as this box's, or the other box, back with the model, got its next turn on its
+            # cache of the turns before (found in review, 2026-11-03)
+            affinity_note(me, blocks, now)
+            return False
         boxes = [me] + [p["name"] for p in peers]
         match = {b: affinity_of(b, blocks, now) for b in boxes}
         best = max(match.values())
@@ -6558,8 +6579,8 @@ class H(BaseHTTPRequestHandler):
         affinity_note(pick, blocks, now)
         if pick == me:
             # the other boxes that serve it, the fewest in flight first: they take it if this box's engine does not
-            # answer it (_pair_take_over), with the body as the client wrote it
-            self._pair_alt = (sorted(peers, key=lambda p: load[p["name"]]), name, conf, local, body, blocks)
+            # answer it (_pair_take_over)
+            self._pair_alt = (sorted(peers, key=lambda p: load[p["name"]]), name, conf, local, blocks)
             return False
         peer = next(p for p in peers if p["name"] == pick)
         pair_spread_count(pick, why)
@@ -6571,13 +6592,25 @@ class H(BaseHTTPRequestHandler):
         affinity_forget(pick, blocks)
         if res == "fallback":
             pair_spread_count(pick, "failover")
-            log(f"{self._peer} pair: {pick} does not answer for {name}: this box serves it")
+            _PAIR_COOL[pick] = time.monotonic() + PAIR_SPREAD_COOL_S
+            log(f"{self._peer} pair: {pick} does not answer for {name}: this box serves it, and sends it nothing of "
+                f"a model both serve for {PAIR_SPREAD_COOL_S:g} s")
+        elif res == "too long":
+            pair_spread_count(pick, "failover")
+            log(f"{self._peer} pair: the prompt is too long for {pick}'s pool: this box serves it")
+        else:
+            # "moved": it serves another model now. Its list, kept without that model, is read again at the next
+            # request: each request until then went there for another 409 (found in review, 2026-11-03)
+            with _PAIR_LOCK:
+                row = _PAIR_MODELS.get(pick)
+                if row:
+                    _PAIR_MODELS[pick] = dict(row, models=tuple(m for m in row["models"] if m != name), ts=0.0)
         with _GEN_LOCK:
             _PAIR_HERE.add(self)
         affinity_note(me, blocks, time.monotonic())
         return False
 
-    def _pair_take_over(self):
+    def _pair_take_over(self, asked):
         """Decision 998, this box's side: its engine did not answer (connection refused, or an HTTP error while it
         starts or stops) a request of a model the other box serves too, at its first try: no byte went out, no hold
         opened a stream. True once the other box answered it; False when none could (this box then holds it, or says
@@ -6585,13 +6618,16 @@ class H(BaseHTTPRequestHandler):
         alt, self._pair_alt = getattr(self, "_pair_alt", None), None
         if alt is None or self._hold_until is not None or getattr(self, "_held_sse", False):
             return False
-        peers, name, conf, local, raw, blocks = alt
+        peers, name, conf, local, blocks = alt
         with _GEN_LOCK:
             _PAIR_HERE.discard(self)
         for peer in peers:
             log(f"{self._peer} pair: this box's engine does not answer for {name}: {peer['name']} serves it")
             pair_spread_count(peer["name"], "rescued")
-            if self._forward_peer(raw, peer, name, conf, local, fallback=True) is None:
+            # the body as this box has it: the client's, with fixes this proxy makes and the other one makes again the
+            # same way (tool schemas, reasoning effort), not a copy of the client's kept for the whole request, which
+            # held one body more in memory on a paired box (found in review, 2026-11-03)
+            if self._forward_peer(asked, peer, name, conf, local, fallback=True) is None:
                 affinity_forget(conf["name"], blocks)
                 affinity_note(peer["name"], blocks, time.monotonic())
                 return True
@@ -6659,8 +6695,9 @@ class H(BaseHTTPRequestHandler):
         (the certificate is the pair's: the peer admits it with its own key); its answer relayed as it
         comes. "moved" when the peer answers that it serves another model now (409 model_not_served),
         None once the caller has its answer. With fallback (this box serves the model too, decision 998),
-        "fallback" when the peer does not answer, or answers 503, before a byte went to the caller. reserved: the
-        caller counted it in flight already (_pair_spread)."""
+        "fallback" when the peer does not answer, or refuses it as away (503, 529), and "too long" when its pool is too
+        small for the prompt, before a byte went to the caller. reserved: the caller counted it in flight already
+        (_pair_spread)."""
         if not reserved:
             pair_sent(peer["name"], 1)
         try:
@@ -6724,8 +6761,9 @@ class H(BaseHTTPRequestHandler):
                 if e.code == 409 and b'"model_not_served"' in data:
                     log(f"{self._peer} pair: {peer['name']} serves another model now; the lists are read again")
                     return "moved"
-                if e.code == 503 and fallback:
-                    return "fallback"
+                refused = _pair_refused_here(e.code, data) if fallback else None
+                if refused:
+                    return "fallback" if refused == "away" else "too long"
                 self._plain(e.code, {k: v for k, v in e.headers.items() if k.lower() not in PAIR_DROP_IN}, data)
                 self._done(f"{e.code} pair upstream")
                 return None

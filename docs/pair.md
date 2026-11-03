@@ -70,18 +70,23 @@ one goes:
   but the new turn. Sent to the other box, all of it would be computed again: 100,000 tokens take tens of
   seconds on the 27B. So the entry keeps fingerprints of the first 4 KiB, 8 KiB, 16 KiB and so on of every
   request it sent to each box in the last 10 minutes, and a request goes to the box it shares its longest one
-  with, when that covers at least 30 % of it (the `cache_threshold` of SGLang's own router).
-- **A new conversation goes to the box with the fewest requests in flight**, the entry itself when they tie,
-  so a single client working alone never pays a hop. Each box says how many generations it runs in the list it
-  gives the other one, and the entry counts what it sent since it last read it: a burst of requests is shared
-  as it comes, not sent all to one box between two reads.
+  with, when that covers at least 30 % of it (the `cache_threshold` of SGLang's own router). New conversations
+  that begin with one long text (a system prompt that covers 30 % of them) go where that text went first, as
+  in SGLang's router, until the boxes are far apart (below).
+- **A new conversation goes to the box with the fewest requests in flight**, the entry itself when they tie:
+  two idle boxes, the entry serves it. Every generation counts, Claude Code's short background requests too.
+  Each box says how many generations it runs in the list it gives the other one, and the entry counts what it
+  sent since it last read it: a burst of requests is shared as it comes, not sent all to one box between two
+  reads.
 - **Boxes far apart share even a conversation.** When the box a conversation is on has more than 4 requests
   in flight more than the other, and more than 1.5 times as many, its next turn goes to the other box: a long
   wait for one agent costs more than its prefix computed again. These are the thresholds of SGLang's router
   (64 and 1.5), brought to the 8 requests a lane runs at once.
-- **A box that does not answer hands the request on.** When the other box does not answer, or answers 503,
-  before a byte of its answer went out, the entry serves the request itself, and the conversation stays with
-  the entry from then on. When the entry's own engine does not answer (connection refused, or a 502, 503 or
+- **A box that does not answer hands the request on.** When the other box does not answer, answers 503 (its
+  engine away, or its memory floor) or 529 (the floor, in the Anthropic dialect), or refuses a prompt too long
+  for its pool (a 64 GB box paired with a 128 GB one), before a byte of its answer went out, the entry serves
+  the request itself, the conversation stays with the entry from then on, and that box gets no request of a
+  model both serve for 30 s. When the entry's own engine does not answer (connection refused, or a 502, 503 or
   504 while its lane starts or stops), the other box serves it, at once rather than after a wait for the lane.
   A request whose answer began is never sent again.
 - The tile of each cockpit says how many requests it sent the other box, and why.
@@ -123,6 +128,8 @@ cockpit for now.
   boxes), and that request gets a 503.
 - A conversation is known to the box it was sent to: two clients that continue one conversation through two
   entries each have it placed by its own entry.
+- Abort all, in a box's cockpit, stops the generations of that box's engine. The requests it sent the other
+  box run there: they end when their client leaves, or from that box's cockpit.
 - `GET /v1/models/<id>` answers for the box's own models only.
 - To switch the other box's lane, use its own cockpit for now: the tile only shows it.
 
