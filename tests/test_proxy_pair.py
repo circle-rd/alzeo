@@ -3364,6 +3364,34 @@ class ThePairsPieces(unittest.TestCase):
         m.HOLD_UNITS = ()
         self.assertIsNone(m.unit_revision(), "no unit and no PAIR_CHECKPOINT: nothing said, nothing shared")
 
+    def test_the_load_a_box_says_counts_system_one_and_what_it_holds(self):
+        # a box busy with System One's branches, or with requests held while its engine comes back, said it ran none,
+        # and the other box sent it more (review, 2026-11-03)
+        m = self.mod
+        conf = {"name": "me", "peers": []}
+        data = json.dumps({"object": "list", "data": [{"id": "qwen3.8-27b"}]}).encode()
+        seen = []
+        saved = (m.systemone_call, m.systemone_read, m.SYSTEMONE_THINK_TOKENS)
+
+        def call(*a, **k):
+            seen.append((m.busy_here(), m.pair_load("me", conf), json.loads(m.running_said(data, "b"))["x_alzeo_running"]))
+            return {}
+
+        def restore():
+            m.systemone_call, m.systemone_read, m.SYSTEMONE_THINK_TOKENS = saved
+        self.addCleanup(restore)
+        m.systemone_call, m.systemone_read, m.SYSTEMONE_THINK_TOKENS = call, lambda r, labels: ([1.0], 1.0, 1, 1, None), 0
+        plan = {"branches": [(None, "q", ["a", "b"], 5, None)], "prefix": "p", "warm_first": False}
+        m.systemone_run("Bearer x", "qwen3.8-27b", plan)
+        self.assertEqual(seen, [(1, 1, 1)], "a branch at the engine is load, said and weighed")
+        self.assertEqual(m.busy_here(), 0, "and no more once it ended")
+        held = object()
+        with m._GEN_LOCK:
+            m._HELD.add(held)
+        self.addCleanup(m._HELD.discard, held)
+        self.assertEqual((m.busy_here(), m.pair_load("me", conf)), (1, 1), "a request held is load too")
+        self.assertEqual(json.loads(m.running_said(data, "b"))["x_alzeo_running"], 1)
+
     def test_a_request_an_engine_closed_on_is_kept_with_its_box_for_a_while(self):
         m = self.mod
         self.addCleanup(m._KILLERS.clear)

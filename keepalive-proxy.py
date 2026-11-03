@@ -3799,8 +3799,8 @@ def running_said(data, box):
         j["x_alzeo_slots"] = slots          # what its lane runs at once: the gap that box allows here (decision 1014)
     if revision is not None:
         j["x_alzeo_revision"] = revision    # the checkpoint it serves: shared with the same one only (decision 1018)
+    j["x_alzeo_running"] = busy_here()
     with _GEN_LOCK:
-        j["x_alzeo_running"] = len(_GENERATIONS)
         j["x_alzeo_running_yours"] = sum(1 for h in _GENERATIONS if getattr(h, "_pair_box", None) == box)
     return rewritten(j)
 
@@ -3852,6 +3852,7 @@ _AFFINITY: dict = {}                    # box -> OrderedDict(block fingerprint -
 _AFFINITY_LOCK = threading.Lock()
 _SPREAD_LOCK = threading.Lock()         # one decision at a time, its box reserved before the next one weighs them
 _PAIR_HERE = set()                      # the handlers the sharing kept here, from its decision to their _done
+_HELD = set()                           # the handlers held while this box's engine comes back (role 6)
 _PAIR_OUT: dict = {}                    # peer -> requests of this box in flight there now
 _PAIR_SPREAD: dict = {}                 # peer -> {"affinity", "balance", "failover", "too_long", "rescued": n}, for the tile
 _PAIR_COOL: dict = {}                   # peer -> the monotonic time until which it gets no shared request
@@ -3924,14 +3925,23 @@ def affinity_note(box, blocks, now):
             seen.popitem(last=False)
 
 
+def busy_here():
+    """The generations this box runs or holds now, as the pair weighs them: its own and the other box's, the ones the
+    sharing kept here, the ones held while its engine comes back, and System One's branches. A box busy with System One,
+    or with requests held through a restart, said it ran none, and the other box sent it more (found in review of
+    v1.43.0, 2026-11-03)."""
+    with _GEN_LOCK:
+        n = len(_GENERATIONS | _PAIR_HERE | _HELD)
+    return n + _SYSTEMONE_SENT[0]
+
+
 def pair_load(box, conf):
     """The requests in flight on box as this one sees them: its own generations for this box; for a peer, what it
     runs for its own clients as it said at its last list read, plus this box's requests there now, counted as they
     go (reserved at the decision: a burst between two reads does not all go to the same box, the reservation of
     NVIDIA's PAIR) and as they end."""
     if box == conf["name"]:
-        with _GEN_LOCK:
-            return len(_GENERATIONS | _PAIR_HERE)       # kept here and not yet out to the engine: counted already
+        return busy_here()                  # kept here and not yet out to the engine: counted already
     with _PAIR_LOCK:
         row = _PAIR_MODELS.get(box) or {}
         return (row.get("running") or 0) + _PAIR_OUT.get(box, 0)
@@ -4113,6 +4123,7 @@ def systemone_guard(plan):
 # thread of the same call; iterating it while another thread adds to it is a RuntimeError,
 # so both sides take this lock. One lock for every call: it is held for a set operation.
 _systemone_live_lock = threading.Lock()
+_SYSTEMONE_SENT = [0]       # System One's branches at the engine now, generations too for the pair's load (v6.52)
 
 
 def systemone_abort(auth, rids):
@@ -4196,11 +4207,13 @@ def systemone_run(auth, model, plan, cancel=None, live=None):
         rid = uuid.uuid4().hex
         with _systemone_live_lock:
             live.add(rid)
+            _SYSTEMONE_SENT[0] += 1
         try:
             return systemone_call(auth, body_bytes, rid, cancel)
         finally:
             with _systemone_live_lock:
                 live.discard(rid)
+                _SYSTEMONE_SENT[0] -= 1
 
     def one(i):
         try:
@@ -6596,7 +6609,14 @@ class H(BaseHTTPRequestHandler):
                     f"the other box is told 502, and does not send it on")
                 self._pair_refuse(502, "upstream_closed", HOP_CLOSED, {})
                 self._done("502 engine closed a hop"); return
-            if self._hold(why, streamed):
+            with _GEN_LOCK:
+                _HELD.add(self)             # held, it is still this box's work for the pair's load
+            try:
+                came = self._hold(why, streamed)
+            finally:
+                with _GEN_LOCK:
+                    _HELD.discard(self)
+            if came:
                 # The engine answers again, and it may be another lane: the body is judged
                 # again for it (2026-10-16), against a vocabulary learned since the hold began.
                 # It was judged once, before, and went to the engine that came back as it was:

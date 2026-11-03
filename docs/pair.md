@@ -79,7 +79,8 @@ that says none, keep their own requests:
   with one long text (a system prompt that covers 30 % of them) go where that text went first, as in SGLang's
   router, until the boxes are far apart (below).
 - **A new conversation goes to the box with the fewest requests in flight**, the entry itself when they tie:
-  two idle boxes, the entry serves it. Every generation counts, Claude Code's short background requests too.
+  two idle boxes, the entry serves it. Every generation counts, Claude Code's short background requests too,
+  System One's branches, and the requests a box holds while its engine comes back.
   Each box says, in the list it gives the other one, how many generations it runs and how many of them the
   other box sent it, and the entry adds the requests it has in flight there now: a burst of requests is shared
   as it comes, not sent all to one box between two reads. A box that does not say it, one of a version before
