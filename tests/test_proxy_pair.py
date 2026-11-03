@@ -196,12 +196,15 @@ def fake_engine(name, model):
                                  self.headers.get("X-Alzeo-Pair-Hop")))
             Handler.rids.append((body.get("rid"), self.headers.get("x-override-rid")))
             if self.path == "/tokenize":            # the size guard's count: two characters a token
+                if Handler.mode == "count_fails":       # an engine stopping: its count says 503
+                    return self.reply({"error": {"message": "stopping", "type": "server_error"}}, 503)
                 return self.reply({"tokens": [], "count": len(json.dumps(body)) // 2, "max_model_len": 9990})
             Handler.users.append(body.get("user"))
             Handler.bodies.append(body)
             if Handler.mode == "busy":
                 return self.reply({"error": {"message": "busy", "type": "server_error"}}, 503)
             if Handler.mode == "die":
+                time.sleep(body.get("x_die_after", 0))  # an engine that dies on it, at once or after a while
                 self.close_connection = True
                 self.connection.shutdown(socket.SHUT_RDWR)
                 return
@@ -2033,6 +2036,43 @@ class TwoBoxesServeOneModel(PairFixture, unittest.TestCase):
         self.assertIn(b"from spark2", out, "a request kept here was held by the floor while the other box serves it")
         self.assertEqual(self.moved(before, self.sent()), {"rescued": 1})
 
+    def test_a_count_this_box_failed_is_no_engine_that_closed_on_a_request(self):
+        # the size guard's own count failed (a 5xx of a stopping engine), the generation never went: the other box gets
+        # a 503 it serves the request on, not the 502 of an engine that closed the connection while it had it, and
+        # this box's own client is served by the other box (review, 2026-11-03)
+        if not self.INPROC:
+            self.skipTest("this box's pool is set in this test's process")
+        self.mod._POOL.update(tokens=10000, window=9990, ts=time.time())
+        self.addCleanup(self.mod._POOL.update, tokens=None, window=None, ts=0.0)
+        self.E1.mode = "count_fails"
+        body = dict(self.chat("qwen3.8-27b"), messages=[{"role": "user", "content": "count " * 12000}])
+        st, out = self.tls_call(self.pport1, "/v1/chat/completions", body)[:2]
+        self.assertEqual(st, 503, out[:300])
+        self.assertNotIn(b"upstream_closed", out, "a failed count was said to be an engine that died on the request")
+        self.mod._POOL.update(tokens=10000, window=9990, ts=time.time())    # the failed count dropped the pool read
+        st, out, _ = self.call("/v1/chat/completions", body)
+        self.assertEqual(st, 200, out[:300])
+        self.assertIn(b"from spark2", out, "a request whose count failed here was not handed to the other box")
+
+    def test_a_hop_whose_engine_dies_in_an_open_stream_gets_an_error_event(self):
+        # the other box's hold opened the stream (200 and keepalives after KEEPALIVE_S), then its engine died on the
+        # request: its 502 was a status line written inside the stream, which cut this box's client with no error
+        # event (review, 2026-11-03)
+        held = self.busy(self.E1, self.port1, KEY_1, "local-only", 1, 16.0)       # one here, none there: it goes there
+        self.E2.mode = "die"
+        body = dict(self.turns("conv-held", 1)[0], stream=True, x_die_after=12.0)
+        try:
+            st, out, _ = self.call("/v1/chat/completions", body)
+        except http.client.HTTPException as e:
+            self.fail(f"the stream was cut with no error event: {e!r}")
+        self.assertEqual(st, 200, out[:300])
+        self.assertIn(b"closed the connection while it had the request", out, out[-400:])
+        self.assertNotIn(b"HTTP/1.1 502", out)
+        self.assertFalse(self.until_in_journal("spark1", "UPSTREAM CUT pair", within=1.0),
+                         "the relay of the other box's stream broke")
+        for th in held:
+            th.join(30)
+
     def test_a_burst_of_new_conversations_is_shared(self):
         self.E1.delay = self.E2.delay = 1.0
         out = []
@@ -2377,6 +2417,12 @@ class TwoBoxesServeOneModelInProcess(TwoBoxesServeOneModel):
 
     def test_a_request_kept_here_goes_over_when_the_floor_holds_this_box(self):
         super().test_a_request_kept_here_goes_over_when_the_floor_holds_this_box()
+
+    def test_a_count_this_box_failed_is_no_engine_that_closed_on_a_request(self):
+        super().test_a_count_this_box_failed_is_no_engine_that_closed_on_a_request()
+
+    def test_a_hop_whose_engine_dies_in_an_open_stream_gets_an_error_event(self):
+        super().test_a_hop_whose_engine_dies_in_an_open_stream_gets_an_error_event()
 
 
 class ThePairsPieces(unittest.TestCase):

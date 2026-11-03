@@ -3118,6 +3118,11 @@ class RidUnreadable(Exception):
     write again): sent as it came, the engine might read the id in it."""
 
 
+# What a box writes when its engine closed the connection on a request the other box sent it (its 502, or the error
+# event of a stream its hold opened): the other box knows by it that this request may be what took an engine down.
+HOP_CLOSED = "this box's engine closed the connection while it had the request"
+
+
 def engine_refused(e):
     """True when the engine never had the request: its connection was refused (a lane stopped, or not listening yet).
     Not when the engine closed the connection after the request went (it died on it, or under it): the request may
@@ -6483,18 +6488,19 @@ class H(BaseHTTPRequestHandler):
             kind, why, detail = gone
             # decision 998, as Hasan worded it: a box that does not answer, its connection refused or its lane's 502, 503
             # or 504; never an engine that closed the connection while it had the request
-            if (kind == "upstream" or (kind == "unreachable" and detail == "refused")) and self._pair_take_over(asked):
+            if (kind == "upstream" or (kind == "unreachable" and detail in ("refused", "count"))) \
+                    and self._pair_take_over(asked):
                 return
             if kind == "warming" and self._pair_take_over(asked, "this box's engine is warming up"):
                 return                      # its pool not measured yet: the other box's is (v6.52)
-            if self._pair_hop() and kind == "unreachable" and detail != "refused":
+            if self._pair_hop() and kind == "unreachable" and detail is None:
                 # a request the other box sent on, whose engine here closed the connection while it had it: a 502, not
-                # the 503 the other box takes back to its own engine, which the same request could take down too
+                # the 503 the other box takes back to its own engine, which the same request could take down too.
+                # Through _pair_refuse: a stream the hold opened gets it as an error event, where a status line written
+                # inside it cut the other box's client with none (found in review of v1.43.0, 2026-11-03)
                 log(f"{self._peer} the engine closed the connection while it had this request ({why[:120]}): "
                     f"the other box is told 502, and does not send it on")
-                self._plain(502, {"Content-Type": "application/json"},
-                            json.dumps({"error": {"type": "upstream_closed", "message": "keepalive-proxy: this box's "
-                                                  "engine closed the connection while it had the request"}}).encode())
+                self._pair_refuse(502, "upstream_closed", HOP_CLOSED, {})
                 self._done("502 engine closed a hop"); return
             if self._hold(why, streamed):
                 # The engine answers again, and it may be another lane: the body is judged
@@ -7198,7 +7204,10 @@ class H(BaseHTTPRequestHandler):
                 except EngineUnreachable as e:
                     invalidate_pool()   # this engine is restarting; its pool is not ours
                     _gen_discard(self)  # held, it is not in flight, as on the other returns that hold
-                    return ("unreachable", str(e), "refused" if engine_refused(e) else None)
+                    # "count": the size guard's own count failed, the generation never went: not an engine that closed
+                    # the connection while it had it, which a hop answers 502 and no box takes over (found in review
+                    # of v1.43.0, 2026-11-03: a count's 5xx or timeout gave the other box a 502)
+                    return ("unreachable", str(e), "refused" if engine_refused(e) else "count")
                 except TooLongToCount as e:
                     count, uncounted = None, e.args[0]
                 if uncounted is not None:
