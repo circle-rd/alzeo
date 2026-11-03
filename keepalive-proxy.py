@@ -62,11 +62,16 @@ Ten roles, nothing else:
 v6.52: two boxes that serve one model share its requests (role 10, decisions 996 to 998). A request
 for a model this box serves, which the other box of its pair serves too, goes to the box it shares its
 longest known prefix with (fingerprints of its first 4 KiB, 8 KiB, 16 KiB and so on, kept 10 minutes
-per box) when that covers 30 % of it, else to the box with the fewest requests in flight (each box
-says its count, x_alzeo_running, in the list it gives the other), and to that one whenever the two
-are more than 4 requests and 1.5 times apart. A box that refuses it before a byte went out (no
-answer, 503, 529, a prompt too long for its pool) hands it back, and gets no shared request for
-PAIR_SPREAD_COOL_S; this box's engine refusing one at its first try sends it to the other box.
+per box) when that covers 30 % of it or 32 KiB, else to the box with the fewest requests in flight
+(each box says in the list it gives the other how many generations it runs, x_alzeo_running, and how
+many of them the other box sent, x_alzeo_running_yours), and to that one whenever the two are more
+than 4 requests and 1.5 times apart. A box that refuses it before a byte went out hands it back. One
+that does not answer (PAIR_SHARE_CONNECT_S for its connection) or says 503 or 529 then gets no shared
+request for PAIR_SPREAD_COOL_S, one that finds the prompt too long for its pool still gets the shorter
+ones. What this box refuses before it sends (its memory floor, a prompt too long for its pool, a long
+prompt its warming engine cannot measure), and what its engine refuses at the first try (connection
+refused, 502, 503, 504), goes to the other box. A request whose answer began, a token count, and a
+request with X-Alzeo-Here: 1 stay on the box they were sent to.
 
 v6.51: a request body is JSON in UTF-8, or a 415: in UTF-16 or UTF-32, which the vLLM lanes read too
 (FastAPI's json, where the SGLang lanes' orjson refuses it), the guards here found none of the fields

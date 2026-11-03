@@ -70,28 +70,43 @@ one goes:
   but the new turn. Sent to the other box, all of it would be computed again: 100,000 tokens take tens of
   seconds on the 27B. So the entry keeps fingerprints of the first 4 KiB, 8 KiB, 16 KiB and so on of every
   request it sent to each box in the last 10 minutes, and a request goes to the box it shares its longest one
-  with, when that covers at least 30 % of it (the `cache_threshold` of SGLang's own router). New conversations
-  that begin with one long text (a system prompt that covers 30 % of them) go where that text went first, as
-  in SGLang's router, until the boxes are far apart (below).
+  with, when that covers at least 30 % of it (the `cache_threshold` of SGLang's own router) or 32 KiB. The
+  32 KiB are for Claude Code, which writes its system prompt and its tools after the conversation: its turns
+  share no more than their messages, a small part of a body of 120 KiB and more. New conversations that begin
+  with one long text (a system prompt that covers 30 % of them) go where that text went first, as in SGLang's
+  router, until the boxes are far apart (below).
 - **A new conversation goes to the box with the fewest requests in flight**, the entry itself when they tie:
   two idle boxes, the entry serves it. Every generation counts, Claude Code's short background requests too.
-  Each box says how many generations it runs in the list it gives the other one, and the entry counts what it
-  sent since it last read it: a burst of requests is shared as it comes, not sent all to one box between two
-  reads.
+  Each box says, in the list it gives the other one, how many generations it runs and how many of them the
+  other box sent it, and the entry counts what it sent since it last read it: a burst of requests is shared as
+  it comes, not sent all to one box between two reads. A box that does not say it, one of a version before
+  v1.43.0, gets no shared request: update both boxes.
 - **Boxes far apart share even a conversation.** When the box a conversation is on has more than 4 requests
   in flight more than the other, and more than 1.5 times as many, its next turn goes to the other box: a long
   wait for one agent costs more than its prefix computed again. These are the thresholds of SGLang's router
   (64 and 1.5), brought to the 8 requests a lane runs at once.
-- **A box that does not answer hands the request on.** When the other box does not answer, answers 503 (its
-  engine away, or its memory floor) or 529 (the floor, in the Anthropic dialect), or refuses a prompt too long
-  for its pool (a 64 GB box paired with a 128 GB one), before a byte of its answer went out, the entry serves
-  the request itself, the conversation stays with the entry from then on, and that box gets no request of a
-  model both serve for 30 s. When the entry's own engine does not answer (connection refused, or a 502, 503 or
-  504 while its lane starts or stops), the other box serves it, at once rather than after a wait for the lane.
-  A request whose answer began is never sent again.
+- **A box that cannot serve a request hands it on**, before a byte of its answer went out:
+  - When the other box does not answer (it gets 3 s to take the connection), or answers 503 (its engine
+    away, or its memory floor) or 529 (the floor, in the Anthropic dialect), the entry serves the request
+    itself, the conversation stays with the entry from then on, and that box gets no request of a model
+    both serve for 30 s.
+  - When the other box refuses a prompt too long for its pool (a 64 GB box paired with a 128 GB one), the
+    entry serves it, and the other box still gets the shorter ones.
+  - When the entry cannot serve a request, the other box does: the entry's memory floor refuses new
+    generations (a box held by its floor takes no shared request either), the prompt is too long for the
+    entry's pool, its engine warms up and cannot measure a long prompt yet, or its engine does not answer at
+    the first try (connection refused, or a 502, 503 or 504 while its lane starts or stops). The request goes
+    at once, not after a wait for the lane.
+  - A request whose answer began is never sent again, nor one an engine closed the connection on while it
+    had it: the same request could take the other engine down too.
 - A token count (`/v1/messages/count_tokens`) is answered by the box it was sent to: both boxes count the same
   way, and a count fills no cache, so it moves no conversation.
-- The tile of each cockpit says how many requests it sent the other box, and why.
+- A request with the header `X-Alzeo-Here: 1` is served by the box it was sent to. The cockpit's smoke test
+  sends it, to test its own box.
+- The tile of each cockpit says what it sent the other box, and why: to stay with a conversation, to even the
+  load, what it served itself when that box did not answer or found the prompt too long for its pool, and what
+  that box served when this one could not. A request counts once the other box's answer begins, and the counts
+  stay on the tile while the other box does not answer.
 
 ## The other box in the cockpit
 
@@ -127,7 +142,14 @@ cockpit for now.
 - Both boxes should keep the default `KEEPALIVE_S`: a stream from the other box that stays silent for
   four of its keepalives (60 s at least) is cut, as a box that went sends nothing more. A box that loses
   power or its cable while a request waits on it is seen within about 25 s (TCP keepalive between the
-  boxes), and that request gets a 503.
+  boxes), and that request gets a 503. A new request of a model both serve waits 3 s for that box's
+  connection, then the entry serves it, and that box gets none for 30 s.
+- An update restarts the box's proxy, which ends the requests it serves, those the other box sent it too.
+  While it restarts, the other box serves its own requests of a model both serve itself. Update both boxes:
+  a box of a version before v1.43.0 gets no shared request.
+- `bench-agent.py`, `needle.sh` and `tools-check.py` go through port 30001: on a pair that shares a model,
+  they measure the pair. To measure one box, point them at its engine (`--port 30000`, or `PORT=30000` for
+  `needle.sh`).
 - A conversation is known to the box it was sent to: two clients that continue one conversation through two
   entries each have it placed by its own entry.
 - Abort all, in a box's cockpit, stops the generations of that box's engine. The requests it sent the other
