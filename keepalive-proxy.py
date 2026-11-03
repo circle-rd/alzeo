@@ -3756,6 +3756,10 @@ def pair_served_map(conf, local):
 # one while the boxes are far apart to the one with the fewest: PAIR_SPREAD_ABS more AND PAIR_SPREAD_REL times as
 # many, the thresholds of SGLang's router (64 and 1.5) scaled to the 8 requests a lane runs at once.
 PAIR_AFFINITY_MIN = 0.30
+# or that much shared, whatever the body's size: Claude Code writes its system prompt and its tools after the conversation
+# ({model, messages, system, tools, ...}), so its bodies share no more than their messages, and 30 % of the whole body
+# held only from 120 to 250 KiB on (found in review, 2026-11-03). 32 KiB is some 8,000 tokens computed again elsewhere.
+PAIR_AFFINITY_BYTES = 32 * 1024
 PAIR_AFFINITY_FIRST = 4096              # the first block, in bytes; each next one is twice as long
 PAIR_AFFINITY_KEEP_S = float(os.environ.get("PAIR_AFFINITY_KEEP_S") or 600)    # an agent's pause
 PAIR_AFFINITY_MAX = 8192                # the blocks kept per box, the oldest dropped first
@@ -6618,7 +6622,7 @@ class H(BaseHTTPRequestHandler):
             # weighed and reserved at once: a burst between two reads of the lists does not all go to one box
             load = {b: pair_load(b, conf) for b in boxes}
             first = lambda among: min(among, key=lambda b: (load[b], b != me))  # the fewest in flight, this box first
-            if size and best >= PAIR_AFFINITY_MIN * size:
+            if size and best and (best >= PAIR_AFFINITY_MIN * size or best >= PAIR_AFFINITY_BYTES):
                 pick, why = first([b for b in boxes if match[b] == best]), "affinity"
             else:
                 pick, why = first(boxes), "balance"

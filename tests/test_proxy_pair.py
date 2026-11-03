@@ -1792,6 +1792,28 @@ class TwoBoxesServeOneModel(PairFixture, unittest.TestCase):
         self.assertEqual(st, 200, out[:300])
         self.assertIn(b"from spark1", out, "a new conversation went to the busier box")
 
+    def test_a_claude_code_conversation_stays_on_its_box(self):
+        # Claude Code writes its system prompt and its tools after the conversation: the turns share their messages
+        # alone, 32 KiB here, under 30 % of a body that carries 80 KB of system and tools (review, 2026-11-03)
+        system, tools = "s" * 40000, [{"name": f"t{i}", "description": "d" * 4000} for i in range(10)]
+        first = [{"role": "user", "content": "claude-conv " + "c" * 36000}]
+        turns = []
+        for msgs in (first, first + [{"role": "assistant", "content": "ok"}, {"role": "user", "content": "more " * 1000}]):
+            turns.append({"model": "qwen3.8-27b", "max_tokens": 8, "messages": msgs, "system": system, "tools": tools})
+        held = self.busy(self.E1, self.port1, KEY_1, "local-only", 1, 3.0)      # one here, none there: it goes there
+        st, out, _ = self.call("/v1/messages", turns[0])
+        self.assertEqual(st, 200, out[:300])
+        self.assertIn(b"from spark2", out)
+        for th in held:
+            th.join(30)
+        self.E2.users.clear()
+        self.busy(self.E2, self.port2, KEY_2, "marker-27b", 2, 6.0)         # spark2 runs 2 of its own, spark1 none
+        self.E2.served[:] = ["qwen3.8-27b", "marker-cc"]
+        self.until_listed("marker-cc")
+        st, out, _ = self.call("/v1/messages", turns[1])
+        self.assertEqual(st, 200, out[:300])
+        self.assertIn(b"from spark2", out, "the turn left the box that holds its conversation")
+
     def test_boxes_far_apart_share_even_a_conversation(self):
         a = self.turns("conv-c", 2)
         st, out, _ = self.call("/v1/chat/completions", a[0])
@@ -2028,6 +2050,9 @@ class TwoBoxesServeOneModelInProcess(TwoBoxesServeOneModel):
 
     def test_a_conversation_stays_on_the_box_that_served_it(self):
         super().test_a_conversation_stays_on_the_box_that_served_it()
+
+    def test_a_claude_code_conversation_stays_on_its_box(self):
+        super().test_a_claude_code_conversation_stays_on_its_box()
 
     def test_boxes_far_apart_share_even_a_conversation(self):
         super().test_boxes_far_apart_share_even_a_conversation()
