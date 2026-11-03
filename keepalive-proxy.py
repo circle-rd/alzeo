@@ -6658,6 +6658,11 @@ class H(BaseHTTPRequestHandler):
         name = body_model(body)
         if name not in LANE_NAMES:
             return False                    # any other name stays here (decision 966)
+        if not hop and (self.headers.get(PAIR_HERE) or "").strip() == "1":
+            # asked of this box itself (the cockpit's smoke test): never another box, this box's engine away too,
+            # where the smoke test got the other box's answer for an engine that was not there (found in review of
+            # v1.43.0, 2026-11-03)
+            return False
         try:
             local = served_models() or None     # an engine that names nothing yet (a boot) is unknown
         except EngineUnreachable:
@@ -6721,8 +6726,6 @@ class H(BaseHTTPRequestHandler):
         """A model this box serves, which a peer may serve too (decisions 996 to 998): False when this box serves the
         request, True once a peer answered it. Only the lists as kept are read, never waited for: this box serves the
         model, and its own requests do not wait for a slow box."""
-        if (self.headers.get(PAIR_HERE) or "").strip() == "1":
-            return False                    # asked of this box itself (the cockpit's smoke test)
         if route in COUNT_ONLY_PATHS:
             # a token count generates nothing and fills no prefix cache: counted here (the same model, the same
             # tokenizer), it places no conversation. Shared as a generation (the Anthropic SDK's count went to the

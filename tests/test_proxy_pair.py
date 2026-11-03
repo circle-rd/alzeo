@@ -2073,6 +2073,23 @@ class TwoBoxesServeOneModel(PairFixture, unittest.TestCase):
         for th in held:
             th.join(30)
 
+    def test_a_request_asked_of_this_box_goes_nowhere_else_while_its_engine_is_away(self):
+        # the cockpit's smoke test asks whether THIS box's engine answers: with its engine away (a crash, a restart: the
+        # names it serves unknown), the request went to the other box, whose answer said the engine was fine (review,
+        # 2026-11-03)
+        if not self.INPROC:
+            self.skipTest("this box's engine is said away in this test's process")
+        m = self.mod
+        real = m.served_models
+
+        def away(*a, **k):
+            raise m.EngineUnreachable("connection refused (the test's engine away)")
+        m.served_models = away
+        self.addCleanup(setattr, m, "served_models", real)
+        st, out, _ = self.call("/v1/chat/completions", self.chat("qwen3.8-27b"), headers={"X-Alzeo-Here": "1"})
+        self.assertNotIn(b"from spark2", out, "the smoke test of this box got the other box's answer")
+        self.assertEqual(self.E2.users, [])
+
     def test_a_burst_of_new_conversations_is_shared(self):
         self.E1.delay = self.E2.delay = 1.0
         out = []
@@ -2423,6 +2440,9 @@ class TwoBoxesServeOneModelInProcess(TwoBoxesServeOneModel):
 
     def test_a_hop_whose_engine_dies_in_an_open_stream_gets_an_error_event(self):
         super().test_a_hop_whose_engine_dies_in_an_open_stream_gets_an_error_event()
+
+    def test_a_request_asked_of_this_box_goes_nowhere_else_while_its_engine_is_away(self):
+        super().test_a_request_asked_of_this_box_goes_nowhere_else_while_its_engine_is_away()
 
 
 class ThePairsPieces(unittest.TestCase):
