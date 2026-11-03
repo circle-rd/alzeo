@@ -5392,11 +5392,15 @@ class H(BaseHTTPRequestHandler):
             return False
         return super().handle_expect_100()
 
-    def _unavailable(self, exc):
+    def _unavailable(self, exc, quiet=False):
         """The engine is not there (stopped, crashed, restarting, loading): say exactly that,
         503 with Retry-After, never a size refusal (30/08: a restarting engine made the size
-        fallback call a 68k-token request "~409k tokens")."""
-        log(f"engine unreachable: {exc}")
+        fallback call a 68k-token request "~409k tokens"). quiet: once a minute in the journal."""
+        if quiet:
+            _say_once_a_minute("engine unreachable, pair list", f"engine unreachable: {exc} (the other box's reads of "
+                                                                f"this box's list are written once a minute)")
+        else:
+            log(f"engine unreachable: {exc}")
         msg = (f"keepalive-proxy: the engine behind {UPSTREAM} is not answering ({exc}). "
                f"{engine_gone_reason()}; this request was NOT refused for its size. Retry it "
                f"unchanged once GET {UPSTREAM}/health answers 200.")
@@ -5411,7 +5415,7 @@ class H(BaseHTTPRequestHandler):
                      json.dumps({"error": {"type": "engine_warming",
                                            "message": "keepalive-proxy: the engine restarted and its KV pool is not measured yet; retry in a few seconds"}}).encode())
 
-    def _upstream_error(self, herr):
+    def _upstream_error(self, herr, quiet=False):
         """Relay the engine's own error, except its 5xx: SGLang answers 503 with an empty
         body while starting or shutting down, which a client cannot read. Say it instead.
         (A generation's 5xx is seen first by _forward, which may hold it: role 6.)"""
@@ -5419,8 +5423,8 @@ class H(BaseHTTPRequestHandler):
         try: herr.close()
         except Exception: pass
         if herr.code in (502, 503, 504):
-            self._unavailable(f"it answered HTTP {herr.code}, as it does while starting or shutting down")
-            self._done(f"503 engine unreachable (upstream {herr.code})"); return
+            self._unavailable(f"it answered HTTP {herr.code}, as it does while starting or shutting down", quiet)
+            self._done(f"503 engine unreachable (upstream {herr.code})", quiet=quiet); return
         headers = dict(herr.headers)
         if 300 <= herr.code < 400:
             # A redirect the engine answered, relayed and not followed (_NoUpstreamRedirect), points
@@ -7734,10 +7738,13 @@ class H(BaseHTTPRequestHandler):
             return
         resp, herr, cerr = self._open(None)
         models_route = self.path.split("?")[0].rstrip("/") == "/v1/models"
+        # the other box's reads of the list, this box's engine away: one line a minute, not 24 (found in review of
+        # v1.43.0, 2026-11-03: they filled the 800 lines the cockpit reads in about 33 minutes)
+        pair_read = self._pair_box is not None
         if cerr is not None:
             invalidate_pool()           # same: the next pool must be read fresh
-            self._unavailable(cerr); self._done("503 engine unreachable"); return
-        if herr is not None: self._upstream_error(herr); return
+            self._unavailable(cerr, pair_read); self._done("503 engine unreachable", quiet=pair_read); return
+        if herr is not None: self._upstream_error(herr, pair_read); return
         try: data = resp.read()
         finally:
             try: resp.close()

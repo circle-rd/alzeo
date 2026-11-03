@@ -163,6 +163,7 @@ def fake_engine(name, model):
         rids: list = []             # (the body's rid, the x-override-rid header) of every POST
         users: list = []            # the "user" of every POST: which conversation, which turn
         bodies: list = []           # every POST's body, parsed
+        gets: list = []             # the path of every GET
         delay = 0.0
         mode = "ok"                 # "down": /v1/models answers 503 (a boot) ; "cut": a stream dies mid-way ;
                                     # "busy": every POST answers 503 ; "die": every POST is read, then the
@@ -180,6 +181,7 @@ def fake_engine(name, model):
             self.wfile.write(out)
 
         def do_GET(self):
+            Handler.gets.append(self.path)
             if self.path.startswith("/v1/models") and Handler.mode == "down":
                 return self.reply({"error": "loading"}, 503)
             if self.path.startswith("/v1/models"):
@@ -1426,13 +1428,23 @@ class TwoBoxesBehindOneEndpoint(PairFixture, unittest.TestCase):
     def test_two_boxes_that_name_each_other_ask_each_other_once(self):
         a = self.home(self.tmp / "sym-a", KEY_1, None, who="sym-a")
         b = self.home(self.tmp / "sym-b", KEY_2, None, who="sym-b")
-        pa = self.start_proxy(a, self.engines[0], "sym-a")
-        self.start_proxy(b, self.engines[1], "sym-b")
+        # an engine of its own each, whose list reads say what each box asked: the other box's reads write no line
+        # since v1.43.0, so the journals counted nothing for sym-b, and a loop would have gone unseen (review,
+        # 2026-11-03)
+        ha, hb = fake_engine("sym-a", "qwen3.8-27b"), fake_engine("sym-b", "qwen3.8-flash-next-fp4")
+        engines = [Engine(("127.0.0.1", 0), h) for h in (ha, hb)]
+        for e in engines:
+            threading.Thread(target=e.serve_forever, daemon=True).start()
+            self.addCleanup(e.server_close)
+            self.addCleanup(e.shutdown)
+        pa = self.start_proxy(a, engines[0], "sym-a")
+        self.start_proxy(b, engines[1], "sym-b")
         self.pair_up(a, "sym-a", b, "sym-b")
         st, rows = self.models_once_known(port=pa)
         self.assertEqual(st, 200)
         self.assertEqual(rows, {"qwen3.8-27b": "sym-a", "qwen3.8-flash-next-fp4": "sym-b"})
-        count = lambda label: self.journal(label).count("GET /v1/models ok get")
+        reads = {"sym-a": ha, "sym-b": hb}
+        count = lambda label: sum(1 for p in list(reads[label].gets) if p.startswith("/v1/models"))
         # each box reads the other's list once when the pair loads, and under load that read can land after the
         # client's last GET (the single-process CI step, 2026-11-03): the counts settle first; a loop never would
         before, still_since, deadline = None, None, time.monotonic() + 15
@@ -2189,6 +2201,17 @@ class TwoBoxesServeOneModel(PairFixture, unittest.TestCase):
         for th in held:
             th.join(30)
 
+    def test_the_other_boxs_list_reads_write_a_line_a_minute_while_this_engine_is_away(self):
+        # each read of the other box (every PAIR_TTL_S while it has traffic) wrote "engine unreachable" and a 503 line:
+        # some 24 a minute, the 800 lines this box's cockpit reads filled in about 33 minutes (review, 2026-11-03)
+        self.E1.mode = "down"                               # this box's engine: its list answers 503 (a boot)
+        for _ in range(6):
+            st, out = self.tls_call(self.pport1, "/v1/models", method="GET")[:2]
+            self.assertEqual(st, 503, out[:300])
+        time.sleep(0.5)
+        lines = self.journal_of("spark1")[self.journal_at.get("spark1", 0):]
+        self.assertLessEqual(lines.count("engine unreachable"), 1, lines[-1500:])
+
     def test_a_burst_of_new_conversations_is_shared(self):
         self.E1.delay = self.E2.delay = 1.0
         out = []
@@ -2561,6 +2584,9 @@ class TwoBoxesServeOneModelInProcess(TwoBoxesServeOneModel):
 
     def test_a_tool_call_the_other_box_served_is_watched_here_too(self):
         super().test_a_tool_call_the_other_box_served_is_watched_here_too()
+
+    def test_the_other_boxs_list_reads_write_a_line_a_minute_while_this_engine_is_away(self):
+        super().test_the_other_boxs_list_reads_write_a_line_a_minute_while_this_engine_is_away()
 
 
 class ThePairsPieces(unittest.TestCase):
