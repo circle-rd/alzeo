@@ -519,6 +519,11 @@ class TheOtherBoxOfAPair(Base):
                 elif self.path == "/proxy/pair/spark3/state":
                     code, obj = 503, {"error": {"type": "engine_unavailable",
                                                 "message": "keepalive-proxy: box spark3 does not answer: no answer in time"}}
+                elif self.path == "/proxy/pair/spark4/state":
+                    code, obj = 503, {"error": {"type": "engine_unavailable",
+                                                "message": "keepalive-proxy: box spark4 does not answer: refused"},
+                                      "sent": {"affinity": 2, "failover": 3, "too_long": True, "rescued": -1,
+                                               "balance": 1.5, "evil": 5}}
                 else:
                     code, obj = 404, {"error": {"message": "keepalive-proxy: names no box of this box's pair"}}
                 out = json.dumps(obj).encode()
@@ -547,6 +552,12 @@ class TheOtherBoxOfAPair(Base):
         self.assertEqual(boxes["spark2"]["state"]["models"], ["qwen3.8-flash-next-fp4"])
         self.assertEqual(boxes["spark3"]["error"], "box spark3 does not answer: no answer in time")
         self.assertEqual({auth for _, auth in self.Proxy.seen}, {"Bearer k"}, "this box's key, to its own proxy only")
+
+    def test_what_was_shared_is_kept_while_the_other_box_does_not_answer(self):
+        # the proxy's 503 says its counts (review, 2026-11-03): counts alone, of the tile's words alone
+        self.pair.write_text(json.dumps({"name": "spark1", "peers": [{"name": "spark4"}]}))
+        self.assertEqual(self.cp.collect_pair()["boxes"]["spark4"], {
+            "error": "box spark4 does not answer: refused", "sent": {"affinity": 2, "failover": 3}})
 
     def test_what_a_browser_cannot_parse_never_enters_the_state(self):
         # json.dumps(STATE) wrote the NaN back, and every view of this cockpit froze on a frame JSON.parse refuses

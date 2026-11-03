@@ -1770,6 +1770,17 @@ class TwoBoxesServeOneModel(PairFixture, unittest.TestCase):
             msgs = msgs + [{"role": "assistant", "content": "ok " * 100}]
         return out
 
+    def sent(self, port=None):
+        """What the entry's tile says it sent spark2, and why."""
+        st, out, _ = self.call("/proxy/pair/spark2/state", method="GET", port=port)
+        self.assertIn(st, (200, 503), out[:300])
+        return json.loads(out).get("sent")
+
+    @staticmethod
+    def moved(before, after):
+        """The counts that changed, by how much."""
+        return {k: after[k] - before.get(k, 0) for k in after if after[k] != before.get(k, 0)}
+
     def busy(self, engine, port, key, model, n, secs):
         """n requests of secs each, sent to the box behind port by its own client: its generations in flight, until
         its engine has them all."""
@@ -1920,10 +1931,13 @@ class TwoBoxesServeOneModel(PairFixture, unittest.TestCase):
         self.busy(self.E1, self.port1, KEY_1, "local-only", 2, 3.0)
         self.E2.mode = "busy"                   # spark2's engine answers 503: spark2 relays it
         self.addCleanup(time.sleep, 2.5)        # its pause (ENTRY_ENV) over before the next test
+        before = self.sent()
         st, out, _ = self.call("/v1/chat/completions", self.turns("conv-d", 1)[0])
         self.assertEqual(st, 200, out[:300])
         self.assertIn(b"from spark1", out, "the entry answered the peer's 503 instead of serving it")
         self.assert_said("spark1", "spark2 does not answer for qwen3.8-27b: this box serves it")
+        # served here, never "sent there" too (the tile counted both, review of 2026-11-03)
+        self.assertEqual(self.moved(before, self.sent()), {"failover": 1})
 
     def test_a_box_that_drops_the_request_hands_it_back(self):
         class Drops(http.server.BaseHTTPRequestHandler):
@@ -2008,13 +2022,24 @@ class TwoBoxesServeOneModel(PairFixture, unittest.TestCase):
 
     def test_the_tile_says_what_this_box_sent_the_other(self):
         self.busy(self.E1, self.port1, KEY_1, "local-only", 1, 3.0)     # one here, none there
+        before = self.sent()
         st, out, _ = self.call("/v1/chat/completions", self.turns("conv-f", 1)[0])
         self.assertIn(b"from spark2", out)
+        sent = self.sent()
+        self.assertEqual(set(sent), {"affinity", "balance", "failover", "too_long", "rescued"}, sent)
+        self.assertEqual(self.moved(before, sent), {"balance": 1})
+
+    def test_the_tile_still_says_what_was_shared_when_the_other_box_does_not_answer(self):
+        # what this box served while the other box did not answer mattered most then, and the 503 said none of it
+        # (review, 2026-11-03)
+        self.busy(self.E1, self.port1, KEY_1, "local-only", 1, 3.0)         # one here, none there: it goes there
+        before = self.sent()
+        st, out, _ = self.call("/v1/chat/completions", self.turns("conv-q", 1)[0])
+        self.assertIn(b"from spark2", out)
+        self.repoint(localports.held(self))                                 # spark2 gone: nothing listens there
         st, out, _ = self.call("/proxy/pair/spark2/state", method="GET")
-        self.assertEqual(st, 200, out[:300])
-        sent = json.loads(out).get("sent")
-        self.assertEqual(set(sent), {"affinity", "balance", "failover", "rescued"}, sent)
-        self.assertGreaterEqual(sent["balance"], 1, sent)
+        self.assertEqual(st, 503, out[:300])
+        self.assertEqual(self.moved(before, json.loads(out).get("sent") or {}), {"balance": 1}, out[:300])
 
     def test_a_box_that_said_529_gets_nothing_shared_for_a_while(self):
         # its cockpit hit the memory floor: 529 on /v1/messages, the floor's word in the Anthropic dialect
@@ -2037,13 +2062,17 @@ class TwoBoxesServeOneModel(PairFixture, unittest.TestCase):
         entry = self.spare_proxy("spark1-long", KEY_1, peers=(("spark2", tls_peer(self, Peer)),))
         self.until_listed("marker-long", port=entry)
         self.busy(self.E1, entry, KEY_1, "local-only", 1, 6.0)
+        before = self.sent(entry)
         st, out, _ = self.call("/v1/chat/completions", self.chat("qwen3.8-27b"), port=entry)
         self.assertEqual(st, 200, out[:300])
         self.assertIn(b"from spark1", out, "the other box's pool refused it and the client got that refusal")
         self.assert_said("spark1-long", "the prompt is too long for spark2's pool: this box serves it")
+        # counted apart: a small pool says nothing of the other box's health (review, 2026-11-03)
+        self.assertEqual(self.moved(before, self.sent(entry)), {"too_long": 1})
         Peer.state["post"] = PEER_ANSWER
         st, out, _ = self.call("/v1/chat/completions", self.chat("qwen3.8-27b"), port=entry)
         self.assertIn(b"from the peer", out, "one prompt too long for it kept the other box out")
+        self.assertEqual(self.moved(before, self.sent(entry)), {"too_long": 1, "balance": 1})
 
     def test_a_refusal_cut_on_the_way_is_still_served_here(self):
         # its status said it all: a 503 whose body was cut is a refusal, served here, not a 502 (review, 2026-11-03)

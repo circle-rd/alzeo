@@ -3781,7 +3781,7 @@ _AFFINITY_LOCK = threading.Lock()
 _SPREAD_LOCK = threading.Lock()         # one decision at a time, its box reserved before the next one weighs them
 _PAIR_HERE = set()                      # the handlers the sharing kept here, from its decision to their _done
 _PAIR_OUT: dict = {}                    # peer -> requests of this box in flight there now
-_PAIR_SPREAD: dict = {}                 # peer -> {"affinity", "balance", "failover", "rescued": n}, for the tile
+_PAIR_SPREAD: dict = {}                 # peer -> {"affinity", "balance", "failover", "too_long", "rescued": n}, for the tile
 _PAIR_COOL: dict = {}                   # peer -> the monotonic time until which it gets no shared request
 
 
@@ -3906,10 +3906,19 @@ def _pair_forget(box):
     _PAIR_SPREAD.pop(box, None)
 
 
+PAIR_SPREAD_WHYS = ("affinity", "balance", "failover", "too_long", "rescued")
+
+
 def pair_spread_count(peer, why):
     with _PAIR_LOCK:
-        row = _PAIR_SPREAD.setdefault(peer, {"affinity": 0, "balance": 0, "failover": 0, "rescued": 0})
+        row = _PAIR_SPREAD.setdefault(peer, dict.fromkeys(PAIR_SPREAD_WHYS, 0))
         row[why] += 1
+
+
+def pair_spread_of(peer):
+    """What this box sent peer of a model both serve, and why, for the tile (decision 996): a copy."""
+    with _PAIR_LOCK:
+        return dict(_PAIR_SPREAD.get(peer) or dict.fromkeys(PAIR_SPREAD_WHYS, 0))
 
 
 
@@ -6505,10 +6514,7 @@ class H(BaseHTTPRequestHandler):
                 why = "its summary is no JSON object of 1 MiB at most"
             else:
                 clean = _pair_summary_clean(summary)                        # its fields alone, rebuilt
-                with _PAIR_LOCK:
-                    # and what this box sent it of a model both serve, for the tile (decision 996)
-                    clean["sent"] = dict(_PAIR_SPREAD.get(name) or {"affinity": 0, "balance": 0, "failover": 0,
-                                                                      "rescued": 0})
+                clean["sent"] = pair_spread_of(name)    # and what this box sent it of a model both serve (decision 996)
                 data = json.dumps(clean).encode()
         except urllib.error.HTTPError as e:
             why = f"HTTP {e.code}"
@@ -6516,9 +6522,12 @@ class H(BaseHTTPRequestHandler):
             why = _pair_why(e)
         if why is not None:
             _say_once_a_minute(f"tile {name}", f"{self._peer} pair: {name} does not say its state ({why})")
+            # its counts too: what this box served when that box did not answer is said while it does not (found in
+            # review, 2026-11-03: the tile said nothing of them then)
             self._plain(503, {"Content-Type": "application/json", "Retry-After": "30"},
                         json.dumps({"error": {"type": "engine_unavailable", "message":
-                                              f"keepalive-proxy: box {name} does not answer: {why}"}}).encode())
+                                              f"keepalive-proxy: box {name} does not answer: {why}"},
+                                    "sent": pair_spread_of(name)}).encode())
             self._done("503 pair peer unreachable", quiet=True)
             return
         self._plain(200, {"Content-Type": "application/json"}, data)
@@ -6663,16 +6672,15 @@ class H(BaseHTTPRequestHandler):
             self._pair_alt = (sorted(peers, key=lambda p: load[p["name"]]), name, conf, local, blocks)
             return False
         peer = next(p for p in peers if p["name"] == pick)
-        pair_spread_count(pick, why)
-        res = self._forward_peer(body, peer, name, conf, local, fallback=True, reserved=True)
+        res = self._forward_peer(body, peer, name, conf, local, fallback=True, reserved=True, count=why)
         if res is None:
             return True
         # the peer did not answer, or serves another model now: this box serves it, no byte of an answer having gone
         # out (decision 998: never a request whose answer began), and the conversation is this box's from now on
         affinity_forget(pick, blocks)
         self._pair_refused(pick, name, res, "this box serves it")
-        if res != "moved":
-            pair_spread_count(pick, "failover")
+        if res in ("fallback", "too long"):     # counted apart: a pool too small says nothing of the box's health
+            pair_spread_count(pick, "failover" if res == "fallback" else "too_long")
         with _GEN_LOCK:
             _PAIR_HERE.add(self)
         affinity_note(me, blocks, time.monotonic())
@@ -6715,11 +6723,8 @@ class H(BaseHTTPRequestHandler):
             # the body as this box has it: the client's, with fixes this proxy makes and the other one makes again the
             # same way (tool schemas, reasoning effort), not a copy of the client's kept for the whole request, which
             # held one body more in memory on a paired box (found in review, 2026-11-03)
-            res = self._forward_peer(asked, peer, name, conf, local, fallback=True)
+            res = self._forward_peer(asked, peer, name, conf, local, fallback=True, count="rescued")
             if res is None:
-                # counted once the other box answered it, not before (the tile said "sent there" for requests that
-                # bounced, same review)
-                pair_spread_count(peer["name"], "rescued")
                 affinity_forget(conf["name"], blocks)
                 affinity_note(peer["name"], blocks, time.monotonic())
                 return True
@@ -6788,20 +6793,28 @@ class H(BaseHTTPRequestHandler):
         self._done("503 engine unreachable")
         return True
 
-    def _forward_peer(self, body, peer, name, conf, local, fallback=False, reserved=False):
+    def _forward_peer(self, body, peer, name, conf, local, fallback=False, reserved=False, count=None):
         """Role 10: the request to the peer's pair port as the client wrote it, without its credentials
         (the certificate is the pair's: the peer admits it with its own key); its answer relayed as it
         comes. "moved" when the peer answers that it serves another model now (409 model_not_served),
         None once the caller has its answer. With fallback (this box serves the model too, decision 998),
         "fallback" when the peer does not answer, or refuses it as away (503, 529), and "too long" when its pool is too
         small for the prompt, before a byte went to the caller. reserved: the caller counted it in flight already
-        (_pair_spread)."""
+        (_pair_spread). count: what the tile counts it as (decision 996), once the other box's answer came, never for one
+        that came back here (the tile said "sent there" of requests that bounced, found in review, 2026-11-03)."""
         if not reserved:
             pair_sent(peer["name"], 1)
+        self._pair_count = (peer["name"], count) if count else None
         try:
             return self._forward_peer_inner(body, peer, name, conf, local, fallback)
         finally:
             pair_sent(peer["name"], -1)
+
+    def _pair_took(self):
+        """The other box answered this request: the tile's count, once (decision 996)."""
+        c, self._pair_count = getattr(self, "_pair_count", None), None
+        if c:
+            pair_spread_count(*c)
 
     def _forward_peer_inner(self, body, peer, name, conf, local, fallback):
         # the client's key, cookies included, never cross the pair: a browser's cookie for this box's cockpit
@@ -6866,6 +6879,7 @@ class H(BaseHTTPRequestHandler):
                 refused = _pair_refused_here(e.code, data) if fallback else None
                 if refused:
                     return "fallback" if refused == "away" else "too long"
+                self._pair_took()                   # its answer, an error: it is the other box's
                 self._plain(e.code, {k: v for k, v in e.headers.items() if k.lower() not in PAIR_DROP_IN}, data)
                 self._done(f"{e.code} pair upstream")
                 return None
@@ -6880,6 +6894,7 @@ class H(BaseHTTPRequestHandler):
                                   f"serves {name}, does not answer: {why}", pair_served_map(conf, local))
                 self._done("503 pair peer unreachable")
                 return None
+            self._pair_took()                       # its answer came: the request is the other box's
             if left.is_set():
                 self._done("CLIENT GONE during pair"); return None
             headers = {k: v for k, v in resp.headers.items() if k.lower() not in PAIR_DROP_IN}

@@ -352,6 +352,18 @@ on('kernel', d => { F.kernel = d; });
 // ── the other box of a pair (docs/pair.md, decision 975): what its own proxy says of it, read through the
 // pair's TLS by this box's proxy. Its words are set as text, never as markup: they come from another box.
 on('pair', d => { F.pair = d; });
+// a model both boxes serve: what this box sent there, and why (docs/pair.md, decisions 996 to 998), or null
+function sharedRow(sent){
+  sent = sent && typeof sent === 'object' ? sent : {};
+  const num = v => Number.isFinite(v) && v > 0 ? Math.floor(v) : 0;
+  const kept = num(sent.affinity), even = num(sent.balance), back = num(sent.failover), long = num(sent.too_long),
+        saved = num(sent.rescued), parts = [];
+  if (kept + even) parts.push(`${kept + even} sent there (${kept} to stay with their conversation, ${even} to even the load)`);
+  if (back) parts.push(`${back} served here when it did not answer`);
+  if (long) parts.push(`${long} served here as too long for its pool`);
+  if (saved) parts.push(`${saved} sent there when this box did not answer`);
+  return parts.length ? ['shared', parts.join(', ')] : null;
+}
 function renderPair(){
   const sec = $('now-pair'); if (!sec) return;
   const boxes = (F.pair || {}).boxes || {}, names = Object.keys(boxes);
@@ -365,6 +377,9 @@ function renderPair(){
       // the proxy's own words already name the box: "box spark2 does not answer: <why>"
       const said = `box ${n} does not answer: `, why = String(b.error);
       rows.push([n, `does not answer: ${why.startsWith(said) ? why.slice(said.length) : why}`]);
+      // what this box served while it did not answer is said then too (found in review, 2026-11-03)
+      const shared = sharedRow(b.sent);
+      if (shared) rows.push(shared);
       continue;
     }
     const models = (Array.isArray(s.models) ? s.models : []).join(', ');
@@ -377,13 +392,8 @@ function renderPair(){
       rows.push(['GPU', [s.gpu_temp_c != null ? `${Number(s.gpu_temp_c).toFixed(0)} °C` : '', s.gpu_power_w != null ? `${Number(s.gpu_power_w).toFixed(0)} W` : ''].filter(Boolean).join(', ')]);
     if (s.job && s.job.action) rows.push(['job', `${s.job.action}${s.job.status ? ', ' + s.job.status : ''}${s.job.elapsed != null ? ', ' + fmtDur(s.job.elapsed) : ''}`]);
     if (s.version) rows.push(['Alzeo', 'v' + s.version]);
-    // a model both boxes serve: what this box sent there, and why (docs/pair.md, decisions 996 to 998)
-    const sent = s.sent || {}, num = v => Number.isFinite(v) && v > 0 ? Math.floor(v) : 0;
-    const kept = num(sent.affinity), even = num(sent.balance), back = num(sent.failover), saved = num(sent.rescued);
-    if (kept + even + back + saved)
-      rows.push(['shared', `${kept + even} sent there (${kept} to stay with their conversation, ${even} to even the load)` +
-                           (back ? `, ${back} served here when it did not answer` : '') +
-                           (saved ? `, ${saved} sent there when this box did not answer` : '')]);
+    const shared = sharedRow(s.sent);
+    if (shared) rows.push(shared);
   }
   $('pair-facts').replaceChildren(...rows.flatMap(([k, v]) => {
     const dt = document.createElement('dt'), dd = document.createElement('dd');

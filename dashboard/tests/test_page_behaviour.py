@@ -2639,6 +2639,23 @@ class TheOtherBoxOfAPairIsShownInNow(unittest.TestCase):
                 "models": ["qwen3.8-27b"], "sent": sent}}}}))
             self.assertEqual(r["rows"], ["spark2: serves qwen3.8-27b"], (sent, r))
 
+    def test_what_was_shared_is_said_while_the_other_box_does_not_answer(self):
+        # what this box served while the other did not answer mattered most then, and the tile said none of it
+        # (review, 2026-11-03); a prompt too long for its pool is said apart
+        why = "box spark2 does not answer: Connection refused"
+        r = run(self, self.BODY % json.dumps({"node_id": "local", "boxes": {"spark2": {"error": why, "sent": {
+            "affinity": 2, "balance": 1, "failover": 4, "too_long": 1, "rescued": 0}}}}))
+        self.assertEqual(r["rows"], ["spark2: does not answer: Connection refused",
+                                     "shared: 3 sent there (2 to stay with their conversation, 1 to even the load), 4 "
+                                     "served here when it did not answer, 1 served here as too long for its pool"], r)
+        r = run(self, self.BODY % json.dumps({"node_id": "local", "boxes": {"spark2": {"error": why, "sent": {
+            "failover": 0}}}}))
+        self.assertEqual(r["rows"], ["spark2: does not answer: Connection refused"], r)
+        # none went there: no "0 sent there"
+        r = run(self, self.BODY % json.dumps({"node_id": "local", "boxes": {"spark2": {"state": {
+            "models": ["qwen3.8-27b"], "sent": {"failover": 2}}}}}))
+        self.assertEqual(r["rows"], ["spark2: serves qwen3.8-27b", "shared: 2 served here when it did not answer"], r)
+
     def test_what_the_other_box_says_is_text_never_markup(self):
         hostile = '<img src=x onerror="alert(1)">'
         r = run(self, self.BODY % json.dumps({"node_id": "local", "boxes": {"spark2": {"state": {

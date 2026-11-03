@@ -1371,6 +1371,9 @@ def _finite_float(text):
     return v
 
 
+PAIR_SENT_KEYS = ("affinity", "balance", "failover", "too_long", "rescued")   # the proxy's PAIR_SPREAD_WHYS
+
+
 @guard
 def collect_pair():
     """5 s tier, a thread of its own: the other boxes of this box's pair (docs/pair.md), each summed up by its own
@@ -1395,11 +1398,19 @@ def collect_pair():
                 state = json.loads(r.read(1 << 20), parse_constant=_not_json, parse_float=_finite_float)
             boxes[name] = {"state": state if isinstance(state, dict) else {}}
         except urllib.error.HTTPError as e:
+            msg, sent = "", None
             try:
-                msg = json.loads(e.read(1 << 16)).get("error", {}).get("message", "")
+                doc = json.loads(e.read(1 << 16))
+                msg = doc.get("error", {}).get("message", "")
+                sent = doc.get("sent")
             except Exception:  # noqa: BLE001 (its status says enough)
-                msg = ""
+                pass
             boxes[name] = {"error": str(msg or f"HTTP {e.code}").removeprefix("keepalive-proxy: ")[:300]}
+            if isinstance(sent, dict):
+                # what this box sent it of a model both serve, and served while it does not answer: the tile still
+                # says it (found in review, 2026-11-03); counts alone
+                boxes[name]["sent"] = {k: v for k, v in sent.items() if k in PAIR_SENT_KEYS and isinstance(v, int)
+                                       and not isinstance(v, bool) and 0 <= v < 1 << 53}
         except Exception as e:  # noqa: BLE001 (said on its row)
             boxes[name] = {"error": f"{type(e).__name__}: {e}"[:300]}
     return {"node_id": "local", "boxes": boxes}
