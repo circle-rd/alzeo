@@ -70,9 +70,9 @@ cockpit for now.
   never sends a request to an address that does not present it. This is how the nodes of
   [NVIDIA PAIR](https://github.com/NVIDIA/Personal-AI-Router) trust each other.
 - The certificate is the pair's only credential. No box ever holds the other's API key, which is also the
-  login of its cockpit: a box of a pair can only send the other generations and read its list of models.
-  Port 30002 refuses every other route, and the box that serves a request admits it to its own engine
-  with its own key.
+  login of its cockpit: a box of a pair can only send the other generations, read its list of models and
+  read the summary its tile shows. Port 30002 refuses every other route, and the box that serves a request
+  admits it to its own engine with its own key.
 - `pair.py` swaps the certificates over SSH, with the host key checked whatever your SSH configuration
   says, and nothing secret on a command line, where `ps` shows it to every user, or on the screen.
 - Port 30002 is open only while the box is paired, and only the paired box gets past it. Once you

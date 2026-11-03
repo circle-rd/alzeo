@@ -487,6 +487,11 @@ class TheOtherBoxOfAPair(Base):
                 Proxy.seen.append((self.path, self.headers.get("Authorization")))
                 if self.path == "/proxy/pair/spark2/state":
                     code, obj = 200, {"name": "spark2", "models": ["qwen3.8-flash-next-fp4"], "mem_total": 1 << 37}
+                elif self.path in ("/proxy/pair/spark-nan/state", "/proxy/pair/spark-big/state"):
+                    out = (b'{"gpu_temp_c": NaN}' if "nan" in self.path else b'{"mem_total": 1e400}')
+                    self.send_response(200); self.send_header("Content-Length", str(len(out))); self.end_headers()
+                    self.wfile.write(out)
+                    return
                 elif self.path == "/proxy/pair/spark3/state":
                     code, obj = 503, {"error": {"type": "engine_unavailable",
                                                 "message": "keepalive-proxy: box spark3 does not answer: no answer in time"}}
@@ -518,6 +523,15 @@ class TheOtherBoxOfAPair(Base):
         self.assertEqual(boxes["spark2"]["state"]["models"], ["qwen3.8-flash-next-fp4"])
         self.assertEqual(boxes["spark3"]["error"], "box spark3 does not answer: no answer in time")
         self.assertEqual({auth for _, auth in self.Proxy.seen}, {"Bearer k"}, "this box's key, to its own proxy only")
+
+    def test_what_a_browser_cannot_parse_never_enters_the_state(self):
+        # json.dumps(STATE) wrote the NaN back, and every view of this cockpit froze on a frame JSON.parse refuses
+        # (review, 2026-11-03)
+        self.pair.write_text(json.dumps({"name": "spark1", "peers": [{"name": "spark-nan"}, {"name": "spark-big"}]}))
+        boxes = self.cp.collect_pair()["boxes"]
+        self.assertEqual(sorted(boxes), ["spark-big", "spark-nan"])
+        self.assertTrue(all("error" in b and "state" not in b for b in boxes.values()), boxes)
+        json.dumps(boxes, allow_nan=False)
 
     def test_a_box_alone_reads_nothing(self):
         self.assertEqual(self.cp.collect_pair(), {"node_id": "local", "boxes": {}})

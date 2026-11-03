@@ -2580,6 +2580,11 @@ class TheOtherBoxOfAPairIsShownInNow(unittest.TestCase):
         r = run(self, self.BODY % json.dumps({"node_id": "local", "boxes": {"spark9": {"error": "HTTP 401"}}}))
         self.assertEqual(r["rows"], ["spark9: does not answer: HTTP 401"], r)
 
+    def test_a_box_whose_cockpit_does_not_answer_still_says_what_it_serves(self):
+        r = run(self, self.BODY % json.dumps({"node_id": "local", "boxes": {"spark2": {"state": {
+            "models": ["qwen3.8-27b"], "cockpit": "Connection refused", "job": None}}}}))
+        self.assertEqual(r["rows"], ["spark2: serves qwen3.8-27b", "cockpit: does not answer: Connection refused"], r)
+
     def test_what_the_other_box_says_is_text_never_markup(self):
         hostile = '<img src=x onerror="alert(1)">'
         r = run(self, self.BODY % json.dumps({"node_id": "local", "boxes": {"spark2": {"state": {

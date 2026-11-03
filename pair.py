@@ -12,7 +12,7 @@ between two Sparks, and one command pairs both boxes (decisions 973-974): each b
 its own once, the two boxes swap their certificates over SSH, each pins the other's in its pair.json, and
 from then on the two proxies talk over TLS both ways on port 30002. The certificate is the pair's only
 credential (decision 978): no box ever holds the other's API key, which is also its cockpit's login, and
-the pair port takes the generation routes and the model list only. Either box is then an entry: a request
+the pair port takes the generation routes, the model list and the summary of the tile only. Either box is then an entry: a request
 that names a model of one of this repo's lanes goes to the box that serves it. Both proxies read pair.json
 again within seconds: nothing restarts. `add` then checks both ways, and keeps nothing on either box when
 one way fails (--no-check keeps the pair anyway). Nothing secret is ever on a command line, where ps shows
@@ -234,9 +234,22 @@ def with_peer(mod, conf, name, proxy, pem, ssh=None):
     return new, gone, entry
 
 
-def without_peer(conf, name):
-    gone = [q for q in conf["peers"] if isinstance(q, dict) and q.get("name") == name]
+def without_peer(conf, name, sha=None):
+    """conf without the peer of that name, or of that certificate: a box renamed since the pair was made is
+    known on the other box by its certificate alone (found in review, 2026-11-03)."""
+    def norm(v):
+        return str(v or "").replace(":", "").lower()
+    gone = [q for q in conf["peers"] if isinstance(q, dict) and (q.get("name") == name
+                                                                 or (sha and norm(q.get("sha256")) == sha))]
     return dict(conf, peers=[q for q in conf["peers"] if q not in gone]), gone
+
+
+def my_sha(mod):
+    """This box's certificate's fingerprint, or None before it has one."""
+    try:
+        return fingerprint(mod, (IDENTITY / "cert.pem").read_text(), "this certificate")
+    except (OSError, SystemExit):
+        return None
 
 
 def reach(mod, name, within):
@@ -254,11 +267,15 @@ def reach(mod, name, within):
     deadline = time.monotonic() + within
     while True:
         models = mod._peer_models_read(peer)
-        err = (mod._PAIR_MODELS.get(name) or {}).get("error")
-        if not err:
+        row = mod._PAIR_MODELS.get(name) or {}
+        if not row.get("error"):
             return list(models), None
+        if row.get("answered"):
+            # its proxy answered over TLS both ways, its engine did not (a lane loading, stopped, switching): the
+            # pair works, and that box serves nothing now (found in review, 2026-11-03: add undid a working pair)
+            return [], None
         if time.monotonic() >= deadline:
-            return None, err
+            return None, row.get("error")
         time.sleep(1)
 
 
@@ -308,13 +325,9 @@ def do_check(req):
 
 def do_forget(req):
     mod = proxy_module()
-    with pair_lock():
-        conf = read_conf()
-        new, gone = without_peer(conf, req["name"])
-        if gone:
-            write_pair(mod, new)
-            drop_files(gone, keep=new["peers"])
-    return {"forgot": bool(gone), "alone": not new["peers"]}
+    sha = str(req.get("sha256") or "").replace(":", "").lower() or None
+    gone = unpair_here(mod, req["name"], sha)
+    return {"forgot": bool(gone), "alone": not read_conf()["peers"]}
 
 
 def remote(req):
@@ -371,10 +384,13 @@ def ssh_call(dest, do, req, timeout=120):
     return reply
 
 
-def forget_there(dest, me):
-    """The other box forgets this one, or the reason it could not be told; never raises."""
+def forget_there(dest, me, sha=None, answer=None):
+    """The other box forgets this one (by its name or its certificate), or the reason it could not be told;
+    never raises. Its answer goes into `answer` when one is given."""
     try:
-        ssh_call(dest, "forget", {"name": me}, timeout=60)
+        r = ssh_call(dest, "forget", {"name": me, "sha256": sha}, timeout=60)
+        if answer is not None:
+            answer.append(r)
         return None
     except SystemExit as e:
         return str(e.code if e.code is not None else "")
@@ -394,10 +410,10 @@ def address(addr, what):
     return addr
 
 
-def unpair_here(mod, name):
+def unpair_here(mod, name, sha=None):
     with pair_lock():
         conf = read_conf()
-        new, gone = without_peer(conf, name)
+        new, gone = without_peer(conf, name, sha)
         if gone:
             write_pair(mod, new)
             drop_files(gone, keep=new["peers"])
@@ -414,6 +430,7 @@ def cmd_add(args, mod):
         conf = read_conf()
         me = my_name(mod, conf)
         pem = ensure_identity(me)
+    mine = fingerprint(mod, pem, "this certificate")
     print(f"pairing {me} (this box) with the box at {host}, over SSH ({dest})...")
     # 1. the other box writes its side and says who it is: its name, certificate and pair port. A failure
     # once it may have written (an error after its write, SSH cut, a timeout, Ctrl-C) is undone there too:
@@ -421,7 +438,7 @@ def cmd_add(args, mod):
     try:
         r = ssh_call(dest, "accept", {"name": me, "port": mod.PAIR_PORT, "back": back, "cert": pem})
     except BaseException:
-        forget_there(dest, me)
+        forget_there(dest, me, mine)
         raise
     name, their_pem = r.get("name"), r.get("cert")
     try:
@@ -434,7 +451,7 @@ def cmd_add(args, mod):
         their_back = address(r.get("back") or "", "the address it reaches this box at")
         replaced = [n for n in (r.get("replaced") or []) if isinstance(n, str) and mod.PAIR_NAME.fullmatch(n)]
     except (ValueError, TypeError, SystemExit) as e:
-        why = forget_there(dest, me)
+        why = forget_there(dest, me, mine)
         said = SAFE_TEXT.sub("?", str(getattr(e, "code", None) or e))[:200]
         raise SystemExit(f"pair.py: {dest} answered with something this box does not take ({said}): nothing was kept"
                          + (f" here, and it could not be told ({why}): run pair.py remove {me} there" if why else ""))
@@ -450,7 +467,7 @@ def cmd_add(args, mod):
                 raise
             drop_files(gone, keep=new["peers"])
     except BaseException:
-        forget_there(dest, me)
+        forget_there(dest, me, mine)
         raise
     # 3. both ways, as the proxies will: this box to its pair port, and that box to this one's
     if not args.no_check:
@@ -471,7 +488,7 @@ def cmd_add(args, mod):
                 undone = None
             except BaseException as e:
                 undone = SAFE_TEXT.sub("?", str(getattr(e, "code", None) or e))[:200]
-            why = forget_there(dest, me)
+            why = forget_there(dest, me, mine)
             if why is None and undone is None:
                 kept = "Nothing was kept on either box"
             else:
@@ -509,9 +526,14 @@ def cmd_remove(args, mod):
     if not dest:
         print(f"  on {args.name}, run: python3 ~/dgx-spark-qwen38/pair.py remove {me}")
         return
-    why = forget_there(dest, me)
-    if why is None:
+    said = []
+    why = forget_there(dest, me, my_sha(mod), said)
+    if why is None and said and said[0].get("forgot"):
         print(f"  {args.name} forgot this box too")
+    elif why is None:
+        # its answer was read: a remove there said nothing to forget when it knew this box under another name
+        # (found in review, 2026-11-03)
+        print(f"  {args.name} had no pair with this box: nothing to forget there")
     else:
         print(f"  {args.name} could not be told ({why}); this box refuses its requests now. On {args.name}, run: "
               f"python3 ~/dgx-spark-qwen38/pair.py remove {me}")

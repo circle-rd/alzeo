@@ -76,9 +76,18 @@ def fake_engine(name, model):
     class Handler(http.server.BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
         seen: list = []
+        loading = False                     # SGLang while it loads: a 503 to everything
 
         def log_message(self, *a):
             pass
+
+        def loading_503(self):
+            if not Handler.loading:
+                return False
+            self.send_response(503)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return True
 
         def reply(self, obj):
             out = json.dumps(obj).encode()
@@ -89,6 +98,8 @@ def fake_engine(name, model):
             self.wfile.write(out)
 
         def do_GET(self):
+            if self.loading_503():
+                return
             if self.path.startswith("/v1/models"):
                 return self.reply({"object": "list", "data": [{"id": model, "object": "model"}]})
             if self.path.startswith(("/server_info", "/get_server_info")):
@@ -97,6 +108,8 @@ def fake_engine(name, model):
 
         def do_POST(self):
             body = json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)) or b"{}")
+            if self.loading_503():
+                return
             Handler.seen.append(body.get("model"))
             self.reply({"id": "c", "object": "chat.completion", "model": model,
                         "choices": [{"index": 0, "message": {"role": "assistant", "content": f"from {name}"},
@@ -340,6 +353,26 @@ class PairTool(unittest.TestCase):
         self.assertNotEqual(rc, 0)
         self.assertIn("no peer named box2", out)
 
+    def test_a_box_renamed_since_it_was_paired_is_forgotten_by_its_certificate(self):
+        # remove asked the other box to forget a name it did not know, and said it had (review, 2026-11-03)
+        rc, out = self.add()
+        self.assertEqual(rc, 0, out)
+        conf = self.b1.pair()
+        (self.b1.cfg / "pair.json").write_text(json.dumps(dict(conf, name="box1-renamed")))
+        rc, out = self.run_tool(self.b1, "remove", "box2")
+        self.assertEqual(rc, 0, out)
+        self.assertIn("box2 forgot this box too", out)
+        self.assertEqual(self.b2.pair()["peers"], [], "forgotten by its certificate")
+
+    def test_remove_says_when_the_other_box_had_nothing_to_forget(self):
+        rc, out = self.add()
+        self.assertEqual(rc, 0, out)
+        (self.b2.cfg / "pair.json").write_text(json.dumps({"name": "box2", "peers": []}))
+        rc, out = self.run_tool(self.b1, "remove", "box2")
+        self.assertEqual(rc, 0, out)
+        self.assertIn("box2 had no pair with this box: nothing to forget there", out)
+        self.assertNotIn("forgot this box too", out)
+
     def test_a_box_that_cannot_be_told_is_said_with_the_command_to_run_there(self):
         rc, out = self.add()
         self.assertEqual(rc, 0, out)
@@ -383,6 +416,26 @@ class PairTool(unittest.TestCase):
         self.assertEqual(self.b1.peer_files(), [pathlib.Path(again[0]["cert_file"]).name], "the earlier one dropped")
         self.assertEqual(len(self.b2.peer_files()), 1, "box2 too: one certificate, no key")
         st, body = self.call(self.b1, "qwen3.8-flash-next-fp4")
+        self.assertEqual(st, 200, body[:300])
+
+    def test_a_box_whose_engine_does_not_answer_is_paired_all_the_same(self):
+        # a lane loading, stopped or switching on either box: its proxy answers 503 on its pair port, which proves
+        # the pair both ways; add undid the pair on both boxes, a working one too (found in review, 2026-11-03)
+        self.b2.engine_handler.loading = True
+        rc, out = self.add()
+        self.assertEqual(rc, 0, out)
+        self.assertIn("serves nothing now", out)
+        rc, out = self.add()
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(([p["name"] for p in self.b1.pair()["peers"]], [p["name"] for p in self.b2.pair()["peers"]]),
+                         (["box2"], ["box1"]), "kept on both boxes")
+        self.b2.engine_handler.loading = False
+        deadline, st, body = time.monotonic() + 15, None, b""
+        while time.monotonic() < deadline:
+            st, body = self.call(self.b1, "qwen3.8-flash-next-fp4")
+            if st == 200:
+                break
+            time.sleep(0.5)
         self.assertEqual(st, 200, body[:300])
 
     def test_status_says_what_each_box_serves_and_never_a_key(self):

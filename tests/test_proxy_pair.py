@@ -30,6 +30,7 @@ import sys
 import tempfile
 import threading
 import time
+import types
 import unittest
 import urllib.error
 
@@ -531,6 +532,16 @@ class TwoBoxesBehindOneEndpoint(unittest.TestCase):
         self.assertEqual((path, model, auth), ("/v1/chat/completions", "qwen3.8-flash-next-fp4", f"Bearer {KEY_2}"))
         self.assertIsNone(hop, "the hop header stops at the peer's proxy, never reaches its engine")
 
+    def test_the_ollama_and_sagemaker_routes_go_to_the_box_that_serves_too(self):
+        # they stayed on this box, whose model answered under the other box's name (review, 2026-11-03)
+        for route in ("/api/chat", "/api/generate", "/invocations"):
+            with self.subTest(route=route):
+                st, out, _ = self.call(route, self.chat("qwen3.8-flash-next-fp4"))
+                self.assertEqual(st, 200, out[:300])
+                self.assertIn(b"from spark2", out)
+                self.assertEqual(self.E2.seen[-1][:2], (route, "qwen3.8-flash-next-fp4"))
+        self.assertEqual(self.E1.seen, [])
+
     def test_a_stream_from_the_peer_arrives_whole_and_in_order(self):
         st, out, hdrs = self.call("/v1/chat/completions", self.chat("qwen3.8-flash-next-fp4", stream=True))
         self.assertEqual(st, 200, out[:300])
@@ -880,6 +891,35 @@ class TwoBoxesBehindOneEndpoint(unittest.TestCase):
         self.assertEqual(json.loads(out)["error"]["type"], "upstream_too_large")
         self.assert_said("huge", "502 pair answer too large")
 
+    def test_an_error_answer_is_relayed_whole_up_to_the_cap_and_refused_past_it(self):
+        # an error answer over 1 MiB went out cut to 1 MiB as if whole: a validation error that echoes a long
+        # prompt does that (review, 2026-11-03)
+        class BigError(http.server.BaseHTTPRequestHandler):
+            protocol_version = "HTTP/1.1"
+
+            def log_message(self, *a):
+                pass
+
+            def reply(self, code, out):
+                self.send_response(code); self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(out))); self.end_headers(); self.wfile.write(out)
+
+            def do_GET(self):
+                self.reply(200, json.dumps({"object": "list", "data": [{"id": "qwen3.8-flash-next-fp4"}]}).encode())
+
+            def do_POST(self):
+                self.rfile.read(int(self.headers.get("Content-Length") or 0))
+                self.reply(400, json.dumps({"error": {"message": "x" * 1_300_000}}).encode())
+        port = self.spare_proxy("big-error", KEY_1, peers=[("spark2", tls_peer(self, BigError))])
+        st, out, _ = self.call("/v1/chat/completions", self.chat("qwen3.8-flash-next-fp4"), port=port)
+        self.assertEqual(st, 400, out[:300])
+        self.assertEqual(len(json.loads(out)["error"]["message"]), 1_300_000, "the whole answer")
+        port = self.spare_proxy("big-error-capped", KEY_1, peers=[("spark2", tls_peer(self, BigError))],
+                                extra={"MAX_BODY_BYTES": "8192"})
+        st, out, _ = self.call("/v1/chat/completions", self.chat("qwen3.8-flash-next-fp4"), port=port)
+        self.assertEqual(st, 502, out[:300])
+        self.assertEqual(json.loads(out)["error"]["type"], "upstream_too_large")
+
     def test_an_error_answer_the_other_box_cuts_is_said_cut(self):
         # its error answer cut on the way escaped the relay before (review, 2026-11-03)
         class CutError(http.server.BaseHTTPRequestHandler):
@@ -962,9 +1002,15 @@ class TwoBoxesBehindOneEndpoint(unittest.TestCase):
         # decision 975: this box's cockpit asks its own proxy; the other box's proxy sums its own cockpit up, logged
         # in with its own key, never relayed whole
         FakeCockpit.logins.clear()
+        lines = (self.journal("spark1").count("pair/spark2/state"), self.journal("spark2").count("/pair/cockpit/state"))
         for _ in range(2):
             st, out, _ = self.call("/proxy/pair/spark2/state", method="GET")
             self.assertEqual(st, 200, out[:300])
+        # a read comes every 5 s on both boxes: its lines pushed the real requests out of the 800 the cockpit reads
+        # in 34 minutes (review, 2026-11-03)
+        time.sleep(0.3)
+        self.assertEqual((self.journal("spark1").count("pair/spark2/state"),
+                          self.journal("spark2").count("/pair/cockpit/state")), lines, "a read of the tile writes no line")
         s = json.loads(out)
         self.assertEqual(s["name"], "spark2")
         self.assertEqual(s["models"], ["qwen3.8-flash-next-fp4"])
@@ -1232,6 +1278,9 @@ class TwoBoxesBehindOneEndpointInProcess(TwoBoxesBehindOneEndpoint):
     def test_a_lane_the_peer_serves_goes_there_with_the_peers_key(self):
         super().test_a_lane_the_peer_serves_goes_there_with_the_peers_key()
 
+    def test_the_ollama_and_sagemaker_routes_go_to_the_box_that_serves_too(self):
+        super().test_the_ollama_and_sagemaker_routes_go_to_the_box_that_serves_too()
+
     def test_a_stream_from_the_peer_arrives_whole_and_in_order(self):
         super().test_a_stream_from_the_peer_arrives_whole_and_in_order()
 
@@ -1312,6 +1361,9 @@ class TwoBoxesBehindOneEndpointInProcess(TwoBoxesBehindOneEndpoint):
 
     def test_an_answer_past_the_cap_is_refused(self):
         super().test_an_answer_past_the_cap_is_refused()
+
+    def test_an_error_answer_is_relayed_whole_up_to_the_cap_and_refused_past_it(self):
+        super().test_an_error_answer_is_relayed_whole_up_to_the_cap_and_refused_past_it()
 
     def test_an_error_answer_the_other_box_cuts_is_said_cut(self):
         super().test_an_error_answer_the_other_box_cuts_is_said_cut()
@@ -1495,6 +1547,26 @@ class ThePairsPieces(unittest.TestCase):
         for body in (b"not json", b"[1]", b'{"model": 3}', b"{}"):
             self.assertIsNone(bm(body))
 
+    def test_each_peers_list_is_read_as_soon_as_the_pair_is(self):
+        # the first GET /v1/models after a start or a pairing listed this box's models alone (a pair simulated on
+        # the reference box, 2026-11-03)
+        class One(http.server.BaseHTTPRequestHandler):
+            protocol_version = "HTTP/1.1"
+
+            def log_message(self, *a):
+                pass
+
+            def do_GET(self):
+                out = json.dumps({"data": [{"id": "kolibri-1"}]}).encode()
+                self.send_response(200); self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(out))); self.end_headers(); self.wfile.write(out)
+        self.mod._PAIR_MODELS.clear()
+        self.conf_now({"name": "spark1", "peers": [peer_entry(self.cfg, "early", tls_peer(self, One), who="spark2")]})
+        deadline = time.monotonic() + 8
+        while (self.mod._PAIR_MODELS.get("early") or {}).get("models") != ("kolibri-1",) and time.monotonic() < deadline:
+            time.sleep(0.05)
+        self.assertEqual((self.mod._PAIR_MODELS.get("early") or {}).get("models"), ("kolibri-1",), "read with no request")
+
     def test_a_peers_list_is_read_kept_and_read_again(self):
         class Lists(http.server.BaseHTTPRequestHandler):
             protocol_version = "HTTP/1.1"
@@ -1634,6 +1706,58 @@ class ThePairsPieces(unittest.TestCase):
         f._pair_box = None
         self.assertEqual(self.mod._upstream_auth(f), "Bearer not-this-box", "a client of the client port: its own")
 
+    def test_a_summary_without_its_cockpit_still_says_what_this_box_serves(self):
+        # the other box's cockpit stopped or never installed (--no-cockpit): the whole tile read "HTTP 503"
+        # (review, 2026-11-03)
+        saved = os.environ.get("QWEN38_COCKPIT_URL")
+        os.environ["QWEN38_COCKPIT_URL"] = f"http://127.0.0.1:{localports.held(self)}"
+        self.addCleanup(lambda: os.environ.pop("QWEN38_COCKPIT_URL") if saved is None
+                        else os.environ.__setitem__("QWEN38_COCKPIT_URL", saved))
+        served = self.mod.served_models
+        self.mod.served_models = lambda: ("qwen3.8-27b",)
+        self.addCleanup(setattr, self.mod, "served_models", served)
+        s = self.mod.cockpit_summary()
+        self.assertEqual(s["models"], ["qwen3.8-27b"])
+        self.assertTrue(isinstance(s["cockpit"], str) and s["cockpit"], s)
+        self.assertIsNone(s["job"])
+
+    def test_what_a_browser_cannot_parse_is_not_taken_from_the_other_box(self):
+        # NaN, Infinity and 1e400 parse in Python and not in a browser: written back into GET /v1/models or the tile,
+        # they broke the answer for its client (review, 2026-11-03)
+        for bad in ('{"data": [{"id": "x", "created": NaN}]}', '{"a": Infinity}', '{"a": -1e400}'):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                self.mod._json_finite(bad)
+        self.assertEqual(self.mod._json_finite('{"a": 1.5, "b": [1, 2e3]}'), {"a": 1.5, "b": [1, 2000.0]})
+
+    def test_a_request_the_other_box_sent_on_is_never_held(self):
+        # held through a whole boot, it got a 409 inside the held stream, relayed by its entry as an answer
+        # (review, 2026-11-03): answered at once, the entry reads the lists again or says 503
+        saved = (self.mod.engine_coming, self.mod.engine_answers)
+        self.mod.engine_coming, self.mod.engine_answers = (lambda: True), (lambda: False)   # a lane on its way back
+        self.addCleanup(lambda: (setattr(self.mod, "engine_coming", saved[0]), setattr(self.mod, "engine_answers", saved[1])))
+        hop = types.SimpleNamespace(_pair_hop=lambda: "spark2", _hold_until=None)
+        self.assertFalse(self.mod.H._hold(hop, "the engine does not answer", True))
+        self.assertIsNone(hop._hold_until, "no hold begun")
+
+    def test_a_connection_between_the_boxes_probes_a_box_that_went(self):
+        # a box that loses power sends no FIN: a request in flight to it waited an hour (review, 2026-11-03)
+        lsn = socket.socket()
+        lsn.bind(("127.0.0.1", 0)); lsn.listen(1)
+        self.addCleanup(lsn.close)
+        c = socket.create_connection(lsn.getsockname())
+        self.addCleanup(c.close)
+        s, _ = lsn.accept()
+        self.addCleanup(s.close)
+        self.mod._pair_keepalive(c)
+        got = (c.getsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE), c.getsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPIDLE),
+               c.getsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPINTVL), c.getsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT),
+               c.getsockopt(socket.IPPROTO_TCP, socket.TCP_USER_TIMEOUT))
+        self.assertEqual(got, (1, 10, 5, 3, 25000))
+        # both ends of a pair: the connection a box opens to its peer, and the one its pair port accepts
+        src = (REPO / "keepalive-proxy.py").read_text()
+        self.assertIn("        super().connect()\n        _pair_keepalive(self.sock)\n", src)
+        self.assertIn("        _pair_keepalive(conn)", src)
+
     def test_a_line_said_once_a_minute_counts_the_others(self):
         lines = []
         saved = self.mod.log
@@ -1678,8 +1802,9 @@ class ThePairsPieces(unittest.TestCase):
         self.assertEqual(FakeCockpit.logins, [KEY_1, KEY_1], "logged in again, once")
         os.environ["QWEN38_COCKPIT_URL"] = f"http://127.0.0.1:{localports.held(self)}"
         self.mod._COCKPIT["cookie"] = None
-        with self.assertRaises(OSError):
-            self.mod.cockpit_summary()
+        gone = self.mod.cockpit_summary()                # its cockpit gone: what this box serves, and why no more
+        self.assertEqual(gone["models"], ["qwen3.8-27b"])
+        self.assertTrue(gone["cockpit"], gone)
         self.assertEqual(len(FakeCockpit.logins), 2)
 
     def test_the_cockpit_is_found_where_its_unit_binds_it(self):

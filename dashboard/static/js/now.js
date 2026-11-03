@@ -369,6 +369,8 @@ function renderPair(){
     }
     const models = (Array.isArray(s.models) ? s.models : []).join(', ');
     rows.push([n, models ? `serves ${models}` : 'serves nothing now']);
+    // its cockpit stopped or not installed: what it serves is still known, the rest is not
+    if (s.cockpit) rows.push(['cockpit', `does not answer: ${s.cockpit}`]);
     // the same figures as this box's own memory card: 121.6 GiB, not 122
     if (s.mem_total) rows.push(['memory', `${fmtGiB(s.mem_total - (s.mem_available || 0))} of ${fmtGiB(s.mem_total)} in use`]);
     if (s.gpu_temp_c != null || s.gpu_power_w != null)

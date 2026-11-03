@@ -1360,6 +1360,17 @@ def serving_text_key(units=None):
     return None
 
 
+def _not_json(what):
+    raise ValueError(f"{what} is not JSON")
+
+
+def _finite_float(text):
+    v = float(text)
+    if v != v or v in (float("inf"), float("-inf")):
+        raise ValueError(f"{text[:20]} is out of range")
+    return v
+
+
 @guard
 def collect_pair():
     """5 s tier, a thread of its own: the other boxes of this box's pair (docs/pair.md), each summed up by its own
@@ -1379,7 +1390,9 @@ def collect_pair():
                                      headers={"Authorization": f"Bearer {api_key()}"})
         try:
             with opener.open(req, timeout=8) as r:
-                state = json.loads(r.read(1 << 20))
+                # no NaN or Infinity: json.dumps(STATE) would write them, and every view of this cockpit froze on
+                # a frame the browser cannot parse (found in review, 2026-11-03)
+                state = json.loads(r.read(1 << 20), parse_constant=_not_json, parse_float=_finite_float)
             boxes[name] = {"state": state if isinstance(state, dict) else {}}
         except urllib.error.HTTPError as e:
             try:
