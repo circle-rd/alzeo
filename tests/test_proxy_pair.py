@@ -2070,6 +2070,10 @@ class TwoBoxesServeOneModel(PairFixture, unittest.TestCase):
         self.assertNotIn(b"HTTP/1.1 502", out)
         self.assertFalse(self.until_in_journal("spark1", "UPSTREAM CUT pair", within=1.0),
                          "the relay of the other box's stream broke")
+        # sent again: its engine closed on it, so that box or nowhere (decision 1019), its engine away now (503)
+        self.E2.mode = "busy"
+        st, out, _ = self.call("/v1/chat/completions", body)       # the same body: its engine says 503 first
+        self.assertNotIn("conv-held-0", self.E1.users, "sent again, the request reached this box's engine")
         for th in held:
             th.join(30)
 
@@ -2089,6 +2093,38 @@ class TwoBoxesServeOneModel(PairFixture, unittest.TestCase):
         st, out, _ = self.call("/v1/chat/completions", self.chat("qwen3.8-27b"), headers={"X-Alzeo-Here": "1"})
         self.assertNotIn(b"from spark2", out, "the smoke test of this box got the other box's answer")
         self.assertEqual(self.E2.users, [])
+
+    def test_a_request_this_boxs_engine_died_on_stays_here_when_sent_again(self):
+        # decision 1019: a client sends a 5xx's request again within seconds. This box's engine died on it: sent again,
+        # it may take that engine down again, never the other box's (review, 2026-11-03)
+        r = self.turns("conv-killer-here", 1)[0]
+        self.E1.mode = "die"
+        st, out, _ = self.call("/v1/chat/completions", r)
+        self.assertEqual(st, 503, out[:300])
+        self.E1.mode = "ok"
+        # 5 here, none there: far apart, its next turn would go there whatever its prefix (decision 1014: 4 of 8)
+        held = self.busy(self.E1, self.port1, KEY_1, "local-only", 5, 4.0)
+        st, out, _ = self.call("/v1/chat/completions", r)
+        self.assertEqual(st, 200, out[:300])
+        self.assertIn(b"from spark1", out, "sent again, a request this box's engine died on went to the other box")
+        self.assertNotIn("conv-killer-here-0", self.E2.users)
+        for th in held:
+            th.join(30)
+
+    def test_a_request_the_other_boxs_engine_died_on_goes_there_or_nowhere_when_sent_again(self):
+        # decision 1019: the other box's engine died on it (its 502); sent again while that engine is away (503), the
+        # entry served it on its own engine, which it could take down too (review, 2026-11-03)
+        r = self.turns("conv-killer-there", 1)[0]
+        held = self.busy(self.E1, self.port1, KEY_1, "local-only", 1, 6.0)     # one here, none there: it goes there
+        self.E2.mode = "die"
+        st, out, _ = self.call("/v1/chat/completions", r)
+        self.assertEqual(st, 502, out[:300])
+        self.E2.mode = "busy"                                               # its engine away: it says 503
+        st, out, _ = self.call("/v1/chat/completions", r)
+        self.assertEqual(st, 503, out[:300])
+        self.assertNotIn("conv-killer-there-0", self.E1.users, "sent again, it went to this box's engine")
+        for th in held:
+            th.join(30)
 
     def test_a_burst_of_new_conversations_is_shared(self):
         self.E1.delay = self.E2.delay = 1.0
@@ -2148,6 +2184,10 @@ class TwoBoxesServeOneModel(PairFixture, unittest.TestCase):
         self.assertNotIn("conv-e-0", self.E1.users, "a request the other box had was run on this box's engine too")
         self.assert_said("spark1-drop", "spark2 closed the connection on a request of qwen3.8-27b: its client is told "
                                         "503, and spark2 gets nothing of a model both serve")
+        # sent again, as a client does after a 5xx: that box or nowhere, though it is paused (decision 1019)
+        st, out, _ = self.call("/v1/chat/completions", self.turns("conv-e", 1)[0], port=entry)
+        self.assertEqual(st, 503, out[:300])
+        self.assertNotIn("conv-e-0", self.E1.users, "sent again, the request reached this box's engine")
 
     def test_this_box_hands_a_request_its_engine_refuses_to_the_other(self):
         self.E1.mode = "busy"                   # spark1's engine answers 503 to generations: a lane stopping or starting
@@ -2443,6 +2483,12 @@ class TwoBoxesServeOneModelInProcess(TwoBoxesServeOneModel):
 
     def test_a_request_asked_of_this_box_goes_nowhere_else_while_its_engine_is_away(self):
         super().test_a_request_asked_of_this_box_goes_nowhere_else_while_its_engine_is_away()
+
+    def test_a_request_this_boxs_engine_died_on_stays_here_when_sent_again(self):
+        super().test_a_request_this_boxs_engine_died_on_stays_here_when_sent_again()
+
+    def test_a_request_the_other_boxs_engine_died_on_goes_there_or_nowhere_when_sent_again(self):
+        super().test_a_request_the_other_boxs_engine_died_on_goes_there_or_nowhere_when_sent_again()
 
 
 class ThePairsPieces(unittest.TestCase):
@@ -3112,6 +3158,26 @@ class ThePairsPieces(unittest.TestCase):
                 os.environ.clear()
                 os.environ.update(saved)
             self.assertEqual(getattr(mod, name), want, f"{name}={said}")
+
+    def test_a_request_an_engine_closed_on_is_kept_with_its_box_for_a_while(self):
+        m = self.mod
+        self.addCleanup(m._KILLERS.clear)
+        big = b'{"model": "qwen3.8-27b", "stream": true, "messages": [{"role": "user", "content": "' + b"k" * 300000 + b'"}]}'
+        self.assertEqual(m.prompt_fingerprint(big, "/v1/chat/completions"), m.body_fingerprint(big, "/v1/chat/completions"),
+                         "role 9's fingerprint changed")
+        self.assertIsNone(m.prompt_fingerprint(b'{"model": "x"}', "/v1/chat/completions"), "role 9's size floor")
+        r = b'{"model": "qwen3.8-27b", "stream": true, "max_tokens": 9, "messages": [{"role": "user", "content": "k"}]}'
+        again = r.replace(b'"stream": true', b'"stream": false').replace(b'"max_tokens": 9', b'"max_tokens": 50')
+        self.assertIsNone(m.killer_box(r, "/v1/chat/completions"))
+        m.killer_note(r, "/v1/chat/completions", "spark2")
+        self.assertEqual(m.killer_box(again, "/v1/chat/completions"), "spark2", "a retry changes stream and max_tokens")
+        self.assertIsNone(m.killer_box(r, "/v1/messages"), "another route")
+        fp = m.body_fingerprint(r, "/v1/chat/completions")
+        m._KILLERS[fp] = ("spark2", time.monotonic() - 1)
+        self.assertIsNone(m.killer_box(r, "/v1/chat/completions"), "kept no longer")
+        for i in range(m.PAIR_KILLER_MAX + 5):
+            m.killer_note(b'{"n": %d}' % i, "/v1/chat/completions", "b")
+        self.assertEqual(len(m._KILLERS), m.PAIR_KILLER_MAX, "bounded, the oldest dropped first")
 
     def test_the_blocks_kept_for_a_box_are_bounded_and_age_out(self):
         m = self.mod

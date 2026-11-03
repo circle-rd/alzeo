@@ -27,7 +27,8 @@ the entry, with no pause. What the entry cannot serve goes to the other box at o
 refuses, a prompt too long for its pool, a long prompt its warming engine cannot measure yet, or one its engine does
 not answer at the first try (connection refused, or the 502, 503 or 504 of a lane that starts or stops), instead of
 a wait for the lane. A request whose answer began is never sent again, nor one an engine closed the connection on,
-which could take the other engine down too. The tile of each cockpit says what it sent the other box, and why, even
+which could take the other engine down too, and for 10 minutes such a request, sent again by its client, goes to
+that box or nowhere (decision 1019). The tile of each cockpit says what it sent the other box, and why, even
 while that box does not answer. docs/pair.md says it all.
 
 **Reviews and tests.** An independent reviewer read the sharing, then a code review and three verifiers read it again

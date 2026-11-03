@@ -105,7 +105,10 @@ one goes:
     the first try (connection refused, or a 502, 503 or 504 while its lane starts or stops). The request goes
     at once, not after a wait for the lane.
   - A request whose answer began is never sent again, nor one an engine closed the connection on while it
-    had it: the same request could take the other engine down too.
+    had it: the same request could take the other engine down too. Clients send a request again by
+    themselves after a 5xx (Claude Code, opencode, the SDKs): for 10 minutes, a request an engine closed
+    on, or that the other box had and dropped, goes to that box or nowhere, never shared, handed back or
+    taken over. It can take one box down, as on a box alone (decision 1019).
 - A token count (`/v1/messages/count_tokens`) is answered by the box it was sent to: both boxes count the same
   way, and a count fills no cache, so it moves no conversation.
 - A request with the header `X-Alzeo-Here: 1` is served by the box it was sent to. The cockpit's smoke test
