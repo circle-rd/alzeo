@@ -299,7 +299,7 @@ def tls_peer(test, handler, me="spark2", trusts=("spark1",)):
 def fake_peer(listed, post, running=0):
     """The pair port of another box, for a spare entry: it lists `listed` (ids, or None: its list fails with a 503)
     and answers every POST with `post` ((status, body)); both may change during a test (state). `seen`: its POSTs.
-    running: the count its list says (x_alzeo_running), None for none, as a box of v1.42.0."""
+    running: the count its list says (x_alzeo_running, none of them the entry's), None for none, as a box of v1.42.0."""
     class Peer(http.server.BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
         state = {"listed": listed, "post": post}
@@ -322,7 +322,7 @@ def fake_peer(listed, post, running=0):
                 return self.reply(503, {"error": {"type": "engine_unavailable", "message": "its engine is away"}})
             listing = {"object": "list", "data": [{"id": i, "object": "model"} for i in ids]}
             if running is not None:
-                listing["x_alzeo_running"] = running
+                listing["x_alzeo_running"], listing["x_alzeo_running_yours"] = running, 0
             self.reply(200, listing)
 
         def do_POST(self):
@@ -1835,7 +1835,7 @@ class TwoBoxesServeOneModel(PairFixture, unittest.TestCase):
 
             def do_GET(self):
                 out = json.dumps({"object": "list", "data": [{"id": "qwen3.8-27b"}, {"id": "marker-drop"}],
-                                  "x_alzeo_running": 0}).encode()
+                                  "x_alzeo_running": 0, "x_alzeo_running_yours": 0}).encode()
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Content-Length", str(len(out)))
@@ -2003,13 +2003,21 @@ class TwoBoxesServeOneModel(PairFixture, unittest.TestCase):
         st, out, _ = self.call("/v1/chat/completions", a[1])
         self.assertIn(b"from spark1", out, "a token count moved the conversation to the box that does not hold it")
 
-    def test_a_box_tells_the_other_how_many_it_runs(self):
-        st, out, _ = self.tls_call(self.pport1, "/v1/models", method="GET")
-        self.assertEqual(st, 200, out[:300])
-        self.assertEqual(json.loads(out).get("x_alzeo_running"), 0)
-        self.busy(self.E1, self.port1, KEY_1, "local-only", 2, 3.0)
-        st, out, _ = self.tls_call(self.pport1, "/v1/models", method="GET")
-        self.assertEqual(json.loads(out).get("x_alzeo_running"), 2)
+    def test_a_box_tells_the_other_how_many_it_runs_and_how_many_are_its(self):
+        said = lambda: {k: v for k, v in json.loads(self.tls_call(self.pport1, "/v1/models", method="GET")[1]).items()
+                        if k.startswith("x_alzeo")}
+        self.assertEqual(said(), {"x_alzeo_running": 0, "x_alzeo_running_yours": 0})
+        self.busy(self.E1, self.port1, KEY_1, "local-only", 2, 3.0)        # two of its own clients' generations
+        # and one the other box sent (on the pair port, its certificate)
+        hop = threading.Thread(target=self.tls_call, args=(self.pport1, "/v1/chat/completions",
+                                                            dict(self.chat("qwen3.8-27b"), x_delay=3.0, user="hop-1")),
+                               daemon=True)
+        hop.start()
+        self.addCleanup(hop.join, 30)
+        deadline = time.monotonic() + 10
+        while "hop-1" not in self.E1.users and time.monotonic() < deadline:
+            time.sleep(0.05)
+        self.assertEqual(said(), {"x_alzeo_running": 3, "x_alzeo_running_yours": 1})
         st, out, _ = self.call("/v1/models", method="GET")
         self.assertEqual(st, 200, out[:300])
         self.assertNotIn(b"x_alzeo_running", out, "a client of the box sees what the other box reads")
@@ -2069,8 +2077,8 @@ class TwoBoxesServeOneModelInProcess(TwoBoxesServeOneModel):
     def test_a_box_that_does_not_say_what_it_runs_gets_nothing_shared(self):
         super().test_a_box_that_does_not_say_what_it_runs_gets_nothing_shared()
 
-    def test_a_box_tells_the_other_how_many_it_runs(self):
-        super().test_a_box_tells_the_other_how_many_it_runs()
+    def test_a_box_tells_the_other_how_many_it_runs_and_how_many_are_its(self):
+        super().test_a_box_tells_the_other_how_many_it_runs_and_how_many_are_its()
 
 
 class ThePairsPieces(unittest.TestCase):
@@ -2556,10 +2564,15 @@ class ThePairsPieces(unittest.TestCase):
 
     def test_a_box_says_what_it_runs_as_a_count_or_not_at_all(self):
         run = self.mod.pair_running
-        self.assertEqual(run({"x_alzeo_running": 3}), 3)
-        self.assertEqual(run({"x_alzeo_running": 0}), 0)
+        said = lambda total, yours: {"x_alzeo_running": total, "x_alzeo_running_yours": yours}
+        self.assertEqual(run(said(3, 0)), 3)
+        self.assertEqual(run(said(0, 0)), 0)
+        self.assertEqual(run(said(3, 1)), 2, "its own clients' generations, this box's apart")
+        self.assertIsNone(run(said(3, 4)), "more of this box's than it runs")
+        self.assertIsNone(run({"x_alzeo_running": 3}), "a list that says not how many are this box's")
         for bad in (True, -1, 3.0, "3", None, [], {"n": 1}, 10 ** 9):
-            self.assertIsNone(run({"x_alzeo_running": bad}), bad)
+            self.assertIsNone(run(said(bad, 0)), bad)
+            self.assertIsNone(run(said(3, bad)), bad)
         self.assertIsNone(run({}))
         self.assertIsNone(run(["x_alzeo_running"]))
 
@@ -2583,19 +2596,17 @@ class ThePairsPieces(unittest.TestCase):
 
     def test_a_box_counts_what_it_sent_the_other_even_past_a_read(self):
         m, conf = self.mod, {"name": "me", "peers": []}
-        for d in (m._PAIR_SENT, m._PAIR_OUT):
-            d.pop("p", None)
+        m._PAIR_OUT.pop("p", None)
         m._PAIR_MODELS["p"] = {"ts": time.monotonic(), "models": (), "running": 5}
         self.addCleanup(m._PAIR_MODELS.pop, "p", None)
-        self.assertEqual(m.pair_load("p", conf), 5, "what it said it runs")
+        self.assertEqual(m.pair_load("p", conf), 5, "what it runs for its own clients")
         m.pair_sent("p", 1); m.pair_sent("p", 1)
-        self.assertEqual(m.pair_load("p", conf), 7, "and what this box sent it since")
-        # a read that left before those two reached its engine, back after they were sent: it says 0
-        m._PAIR_MODELS["p"]["running"] = 0
-        m._PAIR_SENT["p"] = 0
-        self.assertEqual(m.pair_load("p", conf), 2, "the requests in flight there were lost")
+        self.assertEqual(m.pair_load("p", conf), 7, "and this box's requests there")
+        # a read whatever its moment: its own clients' count, ours apart, so ours in transit are not lost
+        m._PAIR_MODELS["p"]["running"] = 3
+        self.assertEqual(m.pair_load("p", conf), 5)
         m.pair_sent("p", -1); m.pair_sent("p", -1)
-        self.assertEqual(m.pair_load("p", conf), 0)
+        self.assertEqual(m.pair_load("p", conf), 3, "the ones that ended, counted once")
         # this box: its generations and what the sharing kept here, each counted once
         a, b = object(), object()
         with m._GEN_LOCK:

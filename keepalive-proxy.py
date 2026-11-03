@@ -3543,11 +3543,10 @@ def _peer_models_read(peer):
     now = time.monotonic()
     known, known_ts = (models, now) if err is None else (prev.get("known"), prev.get("known_ts"))
     with _PAIR_LOCK:
-        # running: what it says it runs now (its generations, the requests of this box among them), and what this box
-        # sent it from now on counts on top of it (pair_load)
+        # running: the generations it runs for its own clients (pair_running), which pair_load adds to this box's own
+        # requests there, counted here as they go and end
         _PAIR_MODELS[peer["name"]] = {"ts": now, "models": models, "rows": rows, "error": err, "answered": answered,
                                       "known": known, "known_ts": known_ts, "read_s": now - t0, "running": running}
-        _PAIR_SENT[peer["name"]] = 0
     return models
 
 
@@ -3711,9 +3710,12 @@ def pair_models_body(data):
     return rewritten(j)
 
 
-def running_said(data):
-    """This box's list as the other box of a pair reads it: its engine's, and "x_alzeo_running", the generations this
-    box runs now, which that box weighs before it sends a request of a model both serve here (decision 997)."""
+def running_said(data, box):
+    """This box's list as the other box of a pair (box) reads it: its engine's, "x_alzeo_running", the generations
+    this box runs now, and "x_alzeo_running_yours", how many of them that box sent: it weighs the others before it
+    sends a request of a model both serve here (decision 997), its own being counted on its side as they go and
+    end. A count of all of them, which that box corrected by what it sent since, missed those still on their way
+    when it was read, and counted the ones that ended twice (found in review, 2026-11-03)."""
     try:
         j = json.loads(data)
     except ValueError:
@@ -3722,6 +3724,7 @@ def running_said(data):
         return data
     with _GEN_LOCK:
         j["x_alzeo_running"] = len(_GENERATIONS)
+        j["x_alzeo_running_yours"] = sum(1 for h in _GENERATIONS if getattr(h, "_pair_box", None) == box)
     return rewritten(j)
 
 
@@ -3763,7 +3766,6 @@ _AFFINITY: dict = {}                    # box -> OrderedDict(block fingerprint -
 _AFFINITY_LOCK = threading.Lock()
 _SPREAD_LOCK = threading.Lock()         # one decision at a time, its box reserved before the next one weighs them
 _PAIR_HERE = set()                      # the handlers the sharing kept here, from its decision to their _done
-_PAIR_SENT: dict = {}                   # peer -> requests sent there since its list was read, less those that ended
 _PAIR_OUT: dict = {}                    # peer -> requests of this box in flight there now
 _PAIR_SPREAD: dict = {}                 # peer -> {"affinity", "balance", "failover", "rescued": n}, for the tile
 _PAIR_COOL: dict = {}                   # peer -> the monotonic time until which it gets no shared request
@@ -3838,29 +3840,34 @@ def affinity_note(box, blocks, now):
 
 def pair_load(box, conf):
     """The requests in flight on box as this one sees them: its own generations for this box; for a peer, what it
-    said it runs at its last list read, plus what this box sent it since, less what ended (a burst between two reads
-    does not all go to the same box: the reservation of NVIDIA's PAIR)."""
+    runs for its own clients as it said at its last list read, plus this box's requests there now, counted as they
+    go (reserved at the decision: a burst between two reads does not all go to the same box, the reservation of
+    NVIDIA's PAIR) and as they end."""
     if box == conf["name"]:
         with _GEN_LOCK:
             return len(_GENERATIONS | _PAIR_HERE)       # kept here and not yet out to the engine: counted already
-    row = _PAIR_MODELS.get(box) or {}
     with _PAIR_LOCK:
-        # never fewer than this box's own requests there: a read that went out before they reached that box's
-        # engine, and came back after they were sent, counted none of them (a burst went 5 to 3, 2026-11-03)
-        return max(0, (row.get("running") or 0) + _PAIR_SENT.get(box, 0), _PAIR_OUT.get(box, 0))
+        row = _PAIR_MODELS.get(box) or {}
+        return (row.get("running") or 0) + _PAIR_OUT.get(box, 0)
 
 
 def pair_running(data):
-    """What a peer's list says it runs now ("x_alzeo_running"), or None when it says nothing it may mean: a count,
-    never a bool, a float, a string or past PAIR_RUNNING_MAX (a box that said millions would get no request)."""
-    n = data.get("x_alzeo_running") if isinstance(data, dict) else None
-    return n if isinstance(n, int) and not isinstance(n, bool) and 0 <= n <= PAIR_RUNNING_MAX else None
+    """What a peer's list says it runs now for its own clients: "x_alzeo_running" less "x_alzeo_running_yours" (this
+    box's requests there, which pair_load counts as they go), or None when it says nothing it may mean: counts,
+    never a bool, a float, a string or past PAIR_RUNNING_MAX (a box that said millions would get no request), the
+    second no more than the first."""
+    if not isinstance(data, dict):
+        return None
+    count = lambda n: n if isinstance(n, int) and not isinstance(n, bool) and 0 <= n <= PAIR_RUNNING_MAX else None
+    total, yours = count(data.get("x_alzeo_running")), count(data.get("x_alzeo_running_yours"))
+    if total is None or yours is None or yours > total:
+        return None
+    return total - yours
 
 
 def pair_sent(peer, n):
     """A request to peer went out (1), or ended (-1)."""
     with _PAIR_LOCK:
-        _PAIR_SENT[peer] = _PAIR_SENT.get(peer, 0) + n
         _PAIR_OUT[peer] = max(0, _PAIR_OUT.get(peer, 0) + n)
 
 
@@ -7408,7 +7415,7 @@ class H(BaseHTTPRequestHandler):
         if resp.status == 200 and models_route and not self._pair_hop():
             data = pair_models_body(data) or data      # role 10: every box's models; a peer asking gets ours
         elif resp.status == 200 and models_route:
-            data = running_said(data)                   # role 10: and what this box runs now (decision 997)
+            data = running_said(data, self._pair_box)  # role 10: and what this box runs now (decision 997)
         # 2026-10-16: whatever trailing slash the caller wrote, which the engine may serve too
         if resp.status == 200 and self.path.split("?")[0].rstrip("/") in SERVER_INFO_ROUTES:
             data = strip_key_fields(data)
