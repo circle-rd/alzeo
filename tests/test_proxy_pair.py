@@ -2766,6 +2766,29 @@ class ThePairsPieces(unittest.TestCase):
         self.addCleanup(lambda: (m._GENERATIONS.discard(a), m._PAIR_HERE.difference_update((a, b))))
         self.assertEqual(m.pair_load("me", conf), 2)
 
+    def test_a_request_no_box_took_over_stays_this_boxs(self):
+        # the other box in its pause after a refusal: the request stays here, reached by a stop of this box and in its
+        # count, where the take-over had dropped it from both for good (review, 2026-11-03)
+        m = self.mod
+        h = object.__new__(m.H)
+        h._peer, h._hold_until, h._held_sse = "test", None, False
+        alt = ([{"name": "p"}], "qwen3.8-27b", {"name": "me", "peers": []}, None, [])
+        m._PAIR_COOL["p"] = time.monotonic() + 60
+        self.addCleanup(m._PAIR_COOL.pop, "p", None)
+        with m._GEN_LOCK:
+            m._GENERATIONS.add(h); m._PAIR_HERE.add(h)
+        self.addCleanup(lambda: (m._GENERATIONS.discard(h), m._PAIR_HERE.discard(h)))
+        h._pair_alt = alt
+        self.assertFalse(h._pair_take_over(b"{}", "this box is short of memory"))
+        self.assertIn(h, m._GENERATIONS, "a stop of this box no longer reached it")
+        self.assertIn(h, m._PAIR_HERE, "this box's load no longer counted it")
+        # held, it was out of the generations: it stays out
+        with m._GEN_LOCK:
+            m._GENERATIONS.discard(h)
+        h._pair_alt = alt
+        self.assertFalse(h._pair_take_over(b"{}"))
+        self.assertNotIn(h, m._GENERATIONS, "a held request is in flight nowhere")
+
 
 class TheLaneNamesAreThoseTheUnitsServe(unittest.TestCase):
     def test_lane_names_match_every_served_model_name(self):

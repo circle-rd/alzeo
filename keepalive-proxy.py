@@ -6705,6 +6705,7 @@ class H(BaseHTTPRequestHandler):
             return False
         peers, name, conf, local, blocks = alt
         with _GEN_LOCK:
+            was = (self in _GENERATIONS, self in _PAIR_HERE)
             _PAIR_HERE.discard(self)
             _GENERATIONS.discard(self)      # it runs elsewhere, if anywhere: a stop or a count here is not its
         for peer in peers:
@@ -6723,6 +6724,11 @@ class H(BaseHTTPRequestHandler):
                 affinity_note(peer["name"], blocks, time.monotonic())
                 return True
             self._pair_refused(peer["name"], name, res, "this box keeps it")
+        with _GEN_LOCK:                     # no box took it: this box's again, for a stop and for its count
+            if was[0]:
+                _GENERATIONS.add(self)
+            if was[1]:
+                _PAIR_HERE.add(self)
         return False
 
     def _pair_served_nowhere(self, name, conf, local):
