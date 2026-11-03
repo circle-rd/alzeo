@@ -1896,7 +1896,8 @@ class TwoBoxesServeOneModel(PairFixture, unittest.TestCase):
         self.repoint(hole.getsockname()[1])
         self.mod._PAIR_MODELS["spark2"] = {"ts": time.monotonic(), "models": ("qwen3.8-27b",), "rows": [],
                                            "error": None, "answered": True, "known": ("qwen3.8-27b",),
-                                           "known_ts": time.monotonic(), "read_s": 0.01, "running": 0}
+                                           "known_ts": time.monotonic(), "read_s": 0.01, "running": 0,
+                                           "revision": TEST_REV}         # the same checkpoint: it is shared (1018)
         self.busy(self.E1, self.port1, KEY_1, "local-only", 1, 9.0)         # one here, none there: it goes there
         t0 = time.monotonic()
         st, out, _ = self.call("/v1/chat/completions", self.chat("qwen3.8-27b"))
