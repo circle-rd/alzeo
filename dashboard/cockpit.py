@@ -5002,7 +5002,7 @@ def job_smoke(job: Job):
                        "chat_template_kwargs": {"enable_thinking": False},
                        "messages": [{"role": "user",
                                      "content": "Reply with exactly: COCKPIT-SMOKE-OK"}]}).encode()
-    # X-Alzeo-Here: this box's engine answers it, never the other box of a pair that serves the same model (v6.51)
+    # X-Alzeo-Here: this box's engine answers it, never the other box of a pair that serves the same model (v6.52)
     req = urllib.request.Request(PROXY_BASE + "/v1/chat/completions", body,
                                  {"Content-Type": "application/json", "X-Alzeo-Here": "1",
                                   "Authorization": f"Bearer {api_key()}"})

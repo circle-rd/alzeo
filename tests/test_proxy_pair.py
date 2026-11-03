@@ -1879,11 +1879,15 @@ class TwoBoxesServeOneModel(PairFixture, unittest.TestCase):
         st, out, _ = self.call("/proxy/stop", {"why": "test floor", "hold_s": 3})
         self.assertEqual(st, 200, out[:300])
         self.assertEqual(json.loads(out).get("stopped"), 1, out[:300])
+        before = self.sent()
         for path in ("/v1/chat/completions", "/v1/messages"):
             with self.subTest(path=path):
                 st, out, _ = self.call(path, self.chat("qwen3.8-27b"))
                 self.assertEqual(st, 200, out[:300])
                 self.assertIn(b"from spark2", out, "this box refused for memory what the other box serves")
+        # sent there at the decision, this box held by its floor being no box to keep them: the take-over passed the
+        # test alone when the decision kept them here (review, 2026-11-03)
+        self.assertEqual(self.moved(before, self.sent()), {"balance": 2}, "kept here, then taken over")
         for th in held:
             th.join(30)
         time.sleep(3)                                                       # the hold is over
@@ -1976,6 +1980,58 @@ class TwoBoxesServeOneModel(PairFixture, unittest.TestCase):
                 else:
                     self.assertIn(b"from spark1", out, "5 ahead on a box of unknown slots kept the conversation there")
                     self.assertEqual(len(Peer.seen), 1)
+
+    def test_a_lane_whose_port_refuses_hands_its_request_to_the_other_box(self):
+        # decision 998's first case: this box's engine refuses the connection (its lane stops or starts), and the
+        # other box that serves the model answers at once. Every test passed with a refusal never handed over (review,
+        # 2026-11-03)
+        h = fake_engine("spark1-refuses", "qwen3.8-27b")
+        eng = Engine(("127.0.0.1", 0), h)
+        threading.Thread(target=eng.serve_forever, daemon=True).start()
+        stopped = []
+
+        def stop():
+            if not stopped:
+                stopped.append(1)
+                eng.shutdown()
+                eng.server_close()
+        self.addCleanup(stop)
+        Peer = fake_peer(["qwen3.8-27b", "marker-refuses"], PEER_ANSWER)
+        entry = self.spare_proxy("spark1-refuses", KEY_1, peers=(("spark2", tls_peer(self, Peer)),),
+                                 upstream=f"http://127.0.0.1:{eng.server_address[1]}")
+        self.until_listed("marker-refuses", port=entry)
+        st, out, _ = self.call("/v1/chat/completions", self.chat("qwen3.8-27b"), port=entry)
+        self.assertEqual(st, 200, out[:300])
+        self.assertEqual(Peer.seen, [], "two idle boxes: the entry serves it")
+        stop()                                              # its lane stops: the port refuses connections
+        st, out, _ = self.call("/v1/chat/completions", self.chat("qwen3.8-27b"), port=entry)
+        self.assertEqual(st, 200, out[:300])
+        self.assertIn(b"from the peer", out, "this box's engine refused the connection, the other box was not tried")
+        self.assert_said("spark1-refuses", "this box's engine does not answer for qwen3.8-27b: trying spark2")
+
+    def test_a_request_kept_here_goes_over_when_the_floor_holds_this_box(self):
+        # the floor may start after the sharing kept a request here: it goes to the other box that serves the model,
+        # where it waited the whole hold here (v6.52). The floor test passed without this hand-over, its requests sent
+        # there at the decision (review, 2026-11-03)
+        if not self.INPROC:
+            self.skipTest("this box's floor is set in this test's process")
+        m = self.mod
+        decided = []
+        real_floor, real_spread = m.floor_refusal, m.H._pair_spread
+
+        def spread(h, *a, **k):
+            kept = real_spread(h, *a, **k)
+            decided.append(1)                               # the floor starts once the sharing decided
+            return kept
+        m.floor_refusal = lambda *a, **k: ("the test's floor, after the decision", 3) if decided else None
+        m.H._pair_spread = spread
+        self.addCleanup(setattr, m, "floor_refusal", real_floor)
+        self.addCleanup(setattr, m.H, "_pair_spread", real_spread)
+        before = self.sent()
+        st, out, _ = self.call("/v1/chat/completions", self.chat("qwen3.8-27b"))
+        self.assertEqual(st, 200, out[:300])
+        self.assertIn(b"from spark2", out, "a request kept here was held by the floor while the other box serves it")
+        self.assertEqual(self.moved(before, self.sent()), {"rescued": 1})
 
     def test_a_burst_of_new_conversations_is_shared(self):
         self.E1.delay = self.E2.delay = 1.0
@@ -2301,6 +2357,21 @@ class TwoBoxesServeOneModelInProcess(TwoBoxesServeOneModel):
 
     def test_a_box_tells_the_other_how_many_it_runs_and_how_many_are_its(self):
         super().test_a_box_tells_the_other_how_many_it_runs_and_how_many_are_its()
+
+    def test_the_tile_still_says_what_was_shared_when_the_other_box_does_not_answer(self):
+        super().test_the_tile_still_says_what_was_shared_when_the_other_box_does_not_answer()
+
+    def test_a_lane_of_16_keeps_a_conversation_5_ahead(self):
+        super().test_a_lane_of_16_keeps_a_conversation_5_ahead()
+
+    def test_the_gap_is_half_the_slots_the_other_box_says(self):
+        super().test_the_gap_is_half_the_slots_the_other_box_says()
+
+    def test_a_lane_whose_port_refuses_hands_its_request_to_the_other_box(self):
+        super().test_a_lane_whose_port_refuses_hands_its_request_to_the_other_box()
+
+    def test_a_request_kept_here_goes_over_when_the_floor_holds_this_box(self):
+        super().test_a_request_kept_here_goes_over_when_the_floor_holds_this_box()
 
 
 class ThePairsPieces(unittest.TestCase):
@@ -2902,6 +2973,74 @@ class ThePairsPieces(unittest.TestCase):
         self.addCleanup(m._PAIR_MODELS.pop, "peer-s", None)
         self.assertEqual(m.pair_slots_of("peer-s", conf), 16, "the other box: what its list said")
         self.assertIsNone(m.pair_slots_of("gone", conf))
+
+    def test_the_take_over_learns_from_a_refusal_as_the_sharing_does(self):
+        # a box that said 503 to a take-over gets no shared request for a while, and one that serves another model now
+        # is read again (review, 2026-11-03): no test failed with the take-over learning nothing
+        m = self.mod
+
+        def cleanup():
+            m._PAIR_COOL.pop("p-cool", None)
+            with m._PAIR_LOCK:
+                m._PAIR_MODELS.pop("p-moved", None)
+        self.addCleanup(cleanup)
+        for peer, res in (("p-cool", "fallback"), ("p-moved", "moved")):
+            h = object.__new__(m.H)
+            h._peer, h._hold_until, h._held_sse = "test", None, False
+            h._forward_peer = lambda *a, res=res, **k: res
+            h._pair_alt = ([{"name": peer}], "qwen3.8-27b", {"name": "me", "peers": []}, None, [])
+            with m._PAIR_LOCK:
+                m._PAIR_MODELS[peer] = {"models": ("qwen3.8-27b",), "ts": time.monotonic()}
+            self.assertFalse(h._pair_take_over(b"{}"), res)
+        self.assertGreater(m._PAIR_COOL.get("p-cool", 0), time.monotonic(), "a box that said 503 got no pause")
+        self.assertNotIn("qwen3.8-27b", m._PAIR_MODELS["p-moved"]["models"], "a box that serves another model kept it")
+
+    def test_a_box_gone_from_the_pair_file_keeps_none_of_its_facts(self):
+        # pair.py remove on a box without a name deletes pair.json: the box paired next under the same name got the
+        # conversations, the pause and the tile's counts of the one before; a pair.json this box cannot use, the same
+        # (review, 2026-11-03)
+        m = self.mod
+        port = localports.held(self)
+        self.addCleanup(lambda: [d.clear() for d in (m._AFFINITY, m._PAIR_COOL, m._PAIR_SPREAD)])
+        for gone in ("removed", "unreadable"):
+            with self.subTest(gone=gone):
+                self.conf_now({"name": "spark1", "peers": [peer_entry(self.cfg, "spark2", port)]})
+                m.affinity_note("spark2", [(4096, "fp-spark2")], time.monotonic())
+                m._PAIR_COOL["spark2"] = time.monotonic() + 30
+                m.pair_spread_count("spark2", "balance")
+                if gone == "removed":
+                    self.pair_file.unlink()
+                else:
+                    self.pair_file.write_text("{ not json")
+                m._PAIR["seen"] = 0.0
+                self.assertIsNone(m.pair_conf())
+                facts = ("spark2" in m._AFFINITY, "spark2" in m._PAIR_COOL, "spark2" in m._PAIR_SPREAD)
+                self.assertEqual(facts, (False, False, False), f"pair.json {gone}: what was learned of spark2 stayed")
+
+    def test_the_sharing_timings_keep_their_defaults_when_set_wrong(self):
+        # PAIR_SHARE_CONNECT_S: 0 made the connect non-blocking (every shared send failed, then a pause), -1, nan or
+        # inf raised an error nothing caught, as PAIR_CONNECT_S before its own guard. PAIR_SPREAD_COOL_S: nan paused a
+        # box for ever (review, 2026-11-03)
+        for name, said, want in (("PAIR_SHARE_CONNECT_S", "0", 3.0), ("PAIR_SHARE_CONNECT_S", "-1", 3.0),
+                                 ("PAIR_SHARE_CONNECT_S", "nan", 3.0), ("PAIR_SHARE_CONNECT_S", "inf", 3.0),
+                                 ("PAIR_SPREAD_COOL_S", "nan", 30.0), ("PAIR_SPREAD_COOL_S", "inf", 30.0),
+                                 ("PAIR_SPREAD_COOL_S", "-5", 30.0), ("PAIR_SPREAD_COOL_S", "0", 0.0)):
+            saved = dict(os.environ)
+            os.environ.update({"HOME": str(self.tmp), "QWEN38_PAIR_FILE": str(self.pair_file), "PAIR_PORT": "0",
+                               "PROXY_BIND": "127.0.0.1", name: said})
+            try:
+                spec = importlib.util.spec_from_file_location(f"kp_pair_share_{time.time_ns()}",
+                                                              REPO / "keepalive-proxy.py")
+                mod = importlib.util.module_from_spec(spec)
+                saved_argv, sys.argv = sys.argv, ["keepalive-proxy.py"]
+                try:
+                    spec.loader.exec_module(mod)
+                finally:
+                    sys.argv = saved_argv
+            finally:
+                os.environ.clear()
+                os.environ.update(saved)
+            self.assertEqual(getattr(mod, name), want, f"{name}={said}")
 
     def test_the_blocks_kept_for_a_box_are_bounded_and_age_out(self):
         m = self.mod

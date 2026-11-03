@@ -15,7 +15,7 @@ when they tie. When the box a conversation is on runs more requests than the oth
 lane runs at once (4 on the 27B, which runs 8, and 8 on a lane that runs 16), and more than 1.5 times as many, its
 next turn goes to the other box: the thresholds of SGLang's router, 64 and 1.5, brought to each lane (decision 1014).
 Each box says in the list it gives the other how many generations it runs, how many of them the other box sent it,
-and how many its lane runs at once, read in its unit, and the entry counts what it sent since: eight new
+and how many its lane runs at once, read in its unit, and the entry adds its requests in flight there: eight new
 conversations sent at once went 4 to each box, three times in three.
 
 **A box that cannot serve a request hands it on.** When the other box does not answer (it gets 3 s to take the
@@ -51,8 +51,9 @@ tests/test_proxy_pair.py has two boxes that serve the 27B from their start, each
 on v1.42.1 or on the commit before its fix.
 
 **What an update does.** The proxy (v6.52) and the cockpit restart. No engine, no lane and no unit file changes. A
-box without a pair, or a pair that serves two models, works as before. Update both boxes of a pair: a box of v1.42
-gets no shared request.
+box without a pair works as before, and so does a pair that serves two models, but for one case: a request the other
+box sent, whose engine closed the connection while it had it, gets a 502 at once, where it could wait for that engine
+to come back and go to it again. Update both boxes of a pair: a box of v1.42 gets no shared request.
 
 ## v1.42.1 (2026-11-03): no client can hide a field from the proxy's guards in UTF-16, and a listed key or the other box of a pair can no longer end every generation of the box
 

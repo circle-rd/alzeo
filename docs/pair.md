@@ -78,8 +78,8 @@ one goes:
 - **A new conversation goes to the box with the fewest requests in flight**, the entry itself when they tie:
   two idle boxes, the entry serves it. Every generation counts, Claude Code's short background requests too.
   Each box says, in the list it gives the other one, how many generations it runs and how many of them the
-  other box sent it, and the entry counts what it sent since it last read it: a burst of requests is shared as
-  it comes, not sent all to one box between two reads. A box that does not say it, one of a version before
+  other box sent it, and the entry adds the requests it has in flight there now: a burst of requests is shared
+  as it comes, not sent all to one box between two reads. A box that does not say it, one of a version before
   v1.43.0, gets no shared request: update both boxes.
 - **Boxes far apart share even a conversation.** When the box a conversation is on runs more requests than
   the other by more than half of those its lane runs at once, and more than 1.5 times as many, its next turn

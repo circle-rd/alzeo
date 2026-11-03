@@ -3256,6 +3256,9 @@ PAIR_CONNECT_S = PAIR_CONNECT_S if PAIR_CONNECT_S > 0 else 10.0    # 0 made the 
 # a reset (its power, its cable) held each such request PAIR_CONNECT_S before this box served it (found in review,
 # 2026-11-03). A connection and its TLS take well under a second on a LAN or a tailnet.
 PAIR_SHARE_CONNECT_S = float(os.environ.get("PAIR_SHARE_CONNECT_S", "3") or 3)
+# as PAIR_CONNECT_S: 0 made the connect non-blocking (every shared send failed, then a pause), and below 0, nan or inf
+# urllib raised an error nothing caught (found in review of v1.43.0, 2026-11-03)
+PAIR_SHARE_CONNECT_S = PAIR_SHARE_CONNECT_S if math.isfinite(PAIR_SHARE_CONNECT_S) and PAIR_SHARE_CONNECT_S > 0 else 3.0
 # A stream from a peer's proxy carries a byte at least every KEEPALIVE_S (role 1 on its side): this much
 # silence is a box that went (a power cut sends no FIN), and the client's stream is cut instead of waiting
 # MAX_SILENCE_S with nothing (found in review, 2026-11-02)
@@ -3396,6 +3399,7 @@ def pair_conf():
         try:
             st = os.stat(PAIR_FILE)
         except OSError:
+            _pair_forget_all(_PAIR["conf"])
             _PAIR.update(stamp=None, conf=None, error=None)
             return None
         stamp = (st.st_mtime_ns, st.st_size, st.st_ino)
@@ -3420,6 +3424,7 @@ def pair_conf():
                 f"{tls} ({PAIR_FILE})")
             loaded = conf
         except Exception as e:          # whatever is wrong with it (a file, a certificate), the box stays alone
+            _pair_forget_all(_PAIR["conf"])
             _PAIR.update(conf=None, error=str(e))
             log(f"pair: {PAIR_FILE} is not used: {str(e)[:200] or type(e).__name__}")
         conf_now = _PAIR["conf"]
@@ -3788,6 +3793,8 @@ PAIR_SPREAD_REL = 1.5
 PAIR_SLOTS_DEFAULT = 8                  # a lane whose slots are not known: the 27B's 8, a gap of 4 as before v1.43.0
 PAIR_SLOTS_MAX = 4096                   # what a peer may say its lane runs at once; past it, its word is not taken
 PAIR_SPREAD_COOL_S = float(os.environ.get("PAIR_SPREAD_COOL_S") or 30)   # a box that refused one gets none so long
+# nan paused a box for ever (now + nan is never past), inf too, and below 0 not at all (review of v1.43.0, 2026-11-03)
+PAIR_SPREAD_COOL_S = PAIR_SPREAD_COOL_S if math.isfinite(PAIR_SPREAD_COOL_S) and PAIR_SPREAD_COOL_S >= 0 else 30.0
 PAIR_RUNNING_MAX = 100000               # what a peer may say it runs; past it, its word is not taken
 _AFFINITY: dict = {}                    # box -> OrderedDict(block fingerprint -> when a request with it went there)
 _AFFINITY_LOCK = threading.Lock()
@@ -3944,6 +3951,14 @@ def _pair_forget(box):
         _AFFINITY.pop(box, None)
     _PAIR_COOL.pop(box, None)
     _PAIR_SPREAD.pop(box, None)
+
+
+def _pair_forget_all(conf):
+    """Every fact of the sharing kept about the boxes conf named: pair.json is gone (pair.py remove deletes the file
+    of a box without a name) or this box cannot use it, and a box paired next under one of their names got the
+    conversations, the pause and the tile's counts of the one before (found in review of v1.43.0, 2026-11-03)."""
+    for q in ((conf or {}).get("peers") or ()):
+        _pair_forget(q["name"])
 
 
 PAIR_SPREAD_WHYS = ("affinity", "balance", "failover", "too_long", "rescued")
