@@ -2543,6 +2543,29 @@ class TheBoxItIs(unittest.TestCase):
         self.assertTrue(all("Download" in row for row in r["library"]), r["library"])
 
 
+class AnEmptyTimelineReadsAsOneLine(unittest.TestCase):
+    """The Timeline card of the Now view before any event: its one line of text was the only cell of an event's
+    three-column grid, so it filled the time's 62 px column and read one word a line in a wide card (capture
+    timeline-main.png, 2026-11-03)."""
+
+    def test_the_line_is_not_laid_in_the_time_column(self):
+        r = run(self, r"""
+        feed({config: CONFIG, units: UNITS, lifecycle: life({'qwen38-sglang.service': eng('ready')})});
+        const li = document.querySelector('#now-timeline li');
+        report({cls: li ? li.className : null, text: li ? li.textContent : null,
+                children: li ? li.children.length : null});
+        """)
+        self.assertEqual(r["text"], "No event yet in this cockpit session.", r)
+        self.assertEqual(r["children"], 0, "its text is the grid's only cell")
+        cls = r["cls"].split()
+        grid = [d for sel, media, d in css_rules() if not media and ".timeline li" in [x.strip() for x in sel.split(",")]]
+        self.assertTrue(any(re.search(r"display:\s*grid", d) for d in grid), grid)
+        mine = [d for sel, media, d in css_rules() if not media and any(
+            x.strip() in [".timeline li." + c for c in cls] for x in sel.split(","))]
+        self.assertTrue(any(re.search(r"display:\s*block", d) for d in mine),
+                        f"no rule takes the empty line out of the event grid: {mine}")
+
+
 class TheOtherBoxOfAPairIsShownInNow(unittest.TestCase):
     """The tile of the other box of a pair (docs/pair.md, decision 975), as the captures of 2026-11-03 read
     it: hidden on a box alone, the other box's figures as this box says its own, its words as text only."""
