@@ -1,5 +1,41 @@
 # Changelog
 
+## v1.43.0 (2026-11-03): two boxes that serve one model share its requests, a conversation staying on the box that holds it
+
+**Two boxes that serve one model share its requests.** Until now, the box a request was sent to served every model it
+loads itself, and the other box of the pair got none of its requests. When both boxes load the same lane, they now
+share them, and the box a request was sent to decides where it goes (decisions 996 to 998). A conversation stays on
+its box: an agent sends its whole conversation again at each turn, and the box that served the turn before holds all
+of it in its prefix cache but the new turn, where the other box would compute all of it again (100,000 tokens take
+tens of seconds on the 27B). So the box keeps fingerprints of the first 4 KiB, 8 KiB, 16 KiB and so on of what it sent
+each box in the last 10 minutes, and a request goes to the box it shares its longest one with, when that covers 30 %
+of it, the `cache_threshold` of SGLang's own router. A new conversation goes to the box with the fewest requests in
+flight, the entry when they tie. When the box a conversation is on has more than 4 requests in flight more than the
+other, and more than 1.5 times as many, its next turn goes to the other box: the thresholds of SGLang's router, 64 and
+1.5, brought to the 8 requests a lane runs at once. Each box says how many generations it runs in the list it gives
+the other one, and the entry counts what it sent since: eight new conversations sent at once went 4 to each box, three
+times in three.
+
+**A box that does not answer hands the request on.** When the other box does not answer, answers 503 (its engine
+away, or its memory floor) or 529 (the floor, in the Anthropic dialect), or refuses a prompt too long for its pool
+(a 64 GB box paired with a 128 GB one), before a byte of its answer went out, the entry serves the request itself,
+and that box gets no request of a model both serve for 30 s. When the entry's own engine does not answer at the
+first try (connection refused, or the 502, 503 or 504 of a lane that starts or stops), the other box serves the
+request at once, instead of a wait for the lane. A request whose answer began is never sent again. The tile of
+each cockpit says how many requests it sent the other box, and why. docs/pair.md says it all.
+
+**Reviews and tests.** An independent reviewer read the sharing before this release, and every finding was checked
+in the code. What it found and this release fixes: the other box's memory floor said its 529 to every Claude Code
+request for minutes while the entry idled, a prompt too long for the other box reached the client as a 400, a box
+that switched lanes got every request for 5 s and said 409 to each, only lists read in the last 15 s shared
+anything (a burst after a pause stayed on one box), a conversation the entry served while the other box was away
+went back to that box and its empty cache, and the hand-over kept a copy of the client's body for the whole
+request. tests/test_proxy_pair.py has two boxes that serve the 27B from their start, each rule its test, and each
+test fails on v1.42.0 or on the commit before its fix.
+
+**What an update does.** The proxy (v6.52) and the cockpit restart. No engine, no lane and no unit file changes. A
+box without a pair, or a pair that serves two models, works as before.
+
 ## v1.42.1 (2026-11-03): no client can hide a field from the proxy's guards in UTF-16, and a listed key or the other box of a pair can no longer end every generation of the box
 
 **What was wrong.** SGLang aborts every request whose id starts with one it aborts, and it aborts a request's id when

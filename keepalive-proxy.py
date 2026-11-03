@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Keepalive proxy in front of SGLang or vLLM (v6.51). No content logging, and the only
+"""Keepalive proxy in front of SGLang or vLLM (v6.52). No content logging, and the only
 rewriting is the tool-schema guard (role 4); two routes, POST /v1/systemone (role 5) and the
 operator's POST /proxy/stop (role 7), are answered here instead of relayed.
 
@@ -55,7 +55,18 @@ Ten roles, nothing else:
    repo's lanes' models to the box of the pair that serves it, a peer's own proxy with that
    over TLS both ways (each box's certificate pinned by the other, PAIR_PORT). A lane name no box
    serves, and any other name, stays on this box, as on a box alone (decision 986). GET /v1/models
-   lists every box's models (see "Two boxes behind one endpoint" below).
+   lists every box's models (see "Two boxes behind one endpoint" below). A model both boxes serve is
+   shared: a conversation stays on the box that holds its prefix, a new one goes to the box with the
+   fewest requests in flight (v6.52, docs/pair.md).
+
+v6.52: two boxes that serve one model share its requests (role 10, decisions 996 to 998). A request
+for a model this box serves, which the other box of its pair serves too, goes to the box it shares its
+longest known prefix with (fingerprints of its first 4 KiB, 8 KiB, 16 KiB and so on, kept 10 minutes
+per box) when that covers 30 % of it, else to the box with the fewest requests in flight (each box
+says its count, x_alzeo_running, in the list it gives the other), and to that one whenever the two
+are more than 4 requests and 1.5 times apart. A box that refuses it before a byte went out (no
+answer, 503, 529, a prompt too long for its pool) hands it back, and gets no shared request for
+PAIR_SPREAD_COOL_S; this box's engine refusing one at its first try sends it to the other box.
 
 v6.51: a request body is JSON in UTF-8, or a 415: in UTF-16 or UTF-32, which the vLLM lanes read too
 (FastAPI's json, where the SGLang lanes' orjson refuses it), the guards here found none of the fields
@@ -7477,7 +7488,7 @@ if __name__ == "__main__":
     holds = (f"holds requests up to {HOLD_MAX_S:.0f}s while {' or '.join(HOLD_UNITS)} comes back"
              if HOLD_UNITS and HOLD_MAX_S > 0 else "holds nothing")
     # one f-string: the cockpit's tests render this line from the source
-    log(f"v6.51 on {BIND}:{port} -> {UPSTREAM} (keepalive {KEEPALIVE_S:.0f}s, max silence {MAX_SILENCE_S:.0f}s, {holds})")
+    log(f"v6.52 on {BIND}:{port} -> {UPSTREAM} (keepalive {KEEPALIVE_S:.0f}s, max silence {MAX_SILENCE_S:.0f}s, {holds})")
     # v6.47: what the memory floor's refusal reads, read once here, so the journal shows it works where
     # the unit runs this proxy (its sandbox leaves /proc/meminfo readable)
     avail = mem_available_gib()
