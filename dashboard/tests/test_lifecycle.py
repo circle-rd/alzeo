@@ -739,6 +739,8 @@ class FeedOutcomes(unittest.TestCase):
         "403 operator route": "fail",   # a listed client key on an engine operator route (2026-10-16)
         "503 monster held during warmup": "fail",
         "503 engine unreachable": "fail",
+        "415 body not in UTF-8": "fail",     # v6.51: JSON in UTF-16 or UTF-32 hid every field from the guards
+        "400 body unreadable": "fail",       # v6.51: a body of a listed key or the other box whose id cannot be dropped
         "503 engine unreachable (upstream 502)": "fail",
         "502 upstream": "fail",
         # v6.20: the two fields SGLang leaves unbounded and dies on rather than

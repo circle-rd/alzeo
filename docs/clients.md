@@ -90,6 +90,9 @@ enforces the key; the proxy forwards it verbatim. A client's `x-override-*`
 headers stay at the proxy, `x-override-rid` aside: the SGLang lanes start their
 engine with the header overrides on, for the request id the proxy names, and the
 others set fields of its scheduler no client of this port has to set (proxy v6.42).
+A client of a listed key never names the engine's request id (proxy v6.51): its
+`x-override-rid` and `X-Request-Id` headers stay at the proxy, and so does any id in
+its body. Bodies are JSON in UTF-8: another encoding gets a 415.
 
 Served model names: `qwen3.8-27b` (27B lane, both context modes),
 `qwen3.8-flash-next` (flash lane), `qwen3.8-flash-next-fp4` (Flash FP4-Local lane),

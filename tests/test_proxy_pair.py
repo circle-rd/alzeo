@@ -848,6 +848,10 @@ class TwoBoxesBehindOneEndpoint(unittest.TestCase):
                 self.assertNotEqual(header, "0", "nor in the header")
                 if path == "/v1/chat/completions":
                     self.assertRegex(header or "", r"^[0-9a-f]{32}$", "this box names it")
+        # a body in UTF-16, whose bytes show none of its keys, is refused unread (security review, 2026-11-03)
+        st, out, _ = self.tls_call(self.pport1, "/v1/completions",
+                                   json.dumps(dict(self.chat("qwen3.8-27b"), rid="0")).encode("utf-16"))
+        self.assertEqual(st, 415, out[:300])
         # a key written with escapes, which the bytes do not show, and /v1/responses' request_id (security review,
         # 2026-11-03)
         for path, raw, key in (("/v1/completions", b'{"model": "qwen3.8-27b", "prompt": "hi", "r\\u0069d": "0"}', "rid"),

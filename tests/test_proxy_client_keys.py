@@ -63,6 +63,7 @@ class Engine(http.server.BaseHTTPRequestHandler):
     last_path = None          # the path the proxy sent upstream, decoded or not
     last_rid = None           # (the body's rid, the x-override-rid header) of the last POST
     last_body = None          # the body of the last POST, parsed
+    last_request_id = None    # the X-Request-Id header of the last POST (vLLM's request id)
 
     def log_message(self, *a):
         pass
@@ -92,6 +93,7 @@ class Engine(http.server.BaseHTTPRequestHandler):
         except (ValueError, AttributeError):
             rid = None
         Engine.last_rid = (rid, self.headers.get("x-override-rid"))
+        Engine.last_request_id = self.headers.get("x-request-id")
         body = json.dumps({"id": "chatcmpl-test", "choices": []}).encode()
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
@@ -303,7 +305,10 @@ class ClientKeys(unittest.TestCase):
                  ("/v1/responses", b'{"model": "m", "input": "hi", "r\\u0065quest_id": "0"}',
                   lambda j: j.get("request_id")),
                  ("/vertex_generate", b'{"instances": [{"text": "hi"}], "parameters": {"rid": "0"}}',
-                  lambda j: (j.get("parameters") or {}).get("rid"))]
+                  lambda j: (j.get("parameters") or {}).get("rid")),
+                 # vLLM's: a body's request_id on chat and completions
+                 ("/v1/chat/completions", b'{"model": "m", "messages": [], "request_id": "0"}',
+                  lambda j: j.get("request_id"))]
         for path, raw, rid_of in forms:
             with self.subTest(path=path, body=raw):
                 Engine.last_body = None
@@ -311,6 +316,16 @@ class ClientKeys(unittest.TestCase):
                 self.assertEqual(status, 200)
                 self.assertIsNotNone(Engine.last_body, "the request reached the engine")
                 self.assertIsNone(rid_of(Engine.last_body), f"the client's id reached the engine: {Engine.last_body}")
+        # vLLM's header
+        status, _ = post(port, "/v1/chat/completions", "tok-alice", extra={"X-Request-Id": "0"})
+        self.assertEqual(status, 200)
+        self.assertIsNone(Engine.last_request_id, "the client's X-Request-Id reached the engine")
+        # a body that may name it and cannot be read whole is refused, never sent as it came
+        deep = b'{"model": "m", "rid": "0", "x": ' + b"[" * 50000 + b"]" * 50000 + b"}"
+        Engine.last_body = None
+        status, out = post(port, "/v1/chat/completions", "tok-alice", body=deep)
+        self.assertEqual(status, 400, out[:200])
+        self.assertIsNone(Engine.last_body, "a body whose id could not be dropped reached the engine")
 
     def test_the_scheme_is_read_in_any_case_as_the_engine_reads_it(self):
         """The wall read the scheme as "Bearer " only, where SGLang, vLLM's middleware and the

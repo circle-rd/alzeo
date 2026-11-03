@@ -57,11 +57,14 @@ Ten roles, nothing else:
    serves, and any other name, stays on this box, as on a box alone (decision 986). GET /v1/models
    lists every box's models (see "Two boxes behind one endpoint" below).
 
-v6.51: a client of a listed key never names the engine's request id, as the other box of a pair since
-v6.50, and neither names it in any form SGLang reads one from: a body's "rid" (written with escapes
-too, a batch's list too), /v1/responses' "request_id" and the Vertex route's "parameters". SGLang
-aborts every request whose id starts with one it aborts, when its client leaves too: ids "0" to "f"
-in any of them, and a client that left, ended every generation of the box.
+v6.51: a request body is JSON in UTF-8, or a 415: in UTF-16 or UTF-32, which Python's json and the
+engines read too, the guards here found none of the fields they look for (a top_logprobs that takes
+SGLang down went through). A client of a listed key never names the engine's request id, as the
+other box of a pair since v6.50, and neither names it in a header (x-override-rid, vLLM's
+X-Request-Id) or in any form an engine reads one from a body: "rid" (written with escapes too, a
+batch's list too), "request_id", the Vertex route's "parameters". A body that may hold one and
+cannot be read whole gets a 400. SGLang aborts every request whose id starts with one it aborts,
+when its client leaves too: ids "0" to "f" in any of them ended every generation of the box.
 
 v6.50: two boxes behind one endpoint (role 10, discussion #45, decisions 961-966). A box whose
 config directory holds pair.json reads its peers' /v1/models (every PAIR_TTL_S seconds, and again
@@ -3093,23 +3096,31 @@ VLLM_MODEL_ROUTES = ("/v1/chat/completions", "/v1/completions", "/v1/messages",
                      "/invocations")
 
 
+class RidUnreadable(Exception):
+    """A body that may name the engine's request id, and that this proxy cannot read whole (too deep, not JSON it can
+    write again): sent as it came, the engine might read the id in it."""
+
+
 def strip_rid(body, path=""):
     """The body without an id of its own for the engine's request: (body, True) when one was dropped. SGLang takes
     it from a body's "rid" (a batch's list too), from /v1/responses' "request_id", and from the Vertex route's
-    "parameters", which it spreads into the request; and it aborts every request whose rid starts with one it
-    aborts (when its client leaves, too). The body is read whenever it may hold one: a key written with escapes
-    ("r\\u0069d") is the same key once parsed, and the bytes alone did not show it (found in a security review,
-    2026-11-03, with the two other names)."""
+    "parameters", which it spreads into the request, and vLLM from a body's "request_id". SGLang aborts every request
+    whose rid starts with one it aborts (when its client leaves, too). The body is read whenever its bytes may hold
+    one: a key written with escapes ("r\\u0069d") is the same key once parsed (found in a security review,
+    2026-11-03, with the other names), and a body in another encoding than UTF-8 never reaches here (_handle_inner).
+    RidUnreadable when it may hold one and cannot be read whole and written again."""
     if not body or (b"rid" not in body and b"request_id" not in body and b"\\u" not in body):
         return body, False
     try:
         j = json.loads(body)
+    except RecursionError as e:
+        raise RidUnreadable(type(e).__name__) from e
     except Exception:
-        return body, False
+        return body, False          # no JSON at all: the engine refuses it as well
     if not isinstance(j, dict):
         return body, False
     route, dropped = path.split("?", 1)[0], False
-    for key in ("rid", "request_id") if route == "/v1/responses" else ("rid",):
+    for key in ("rid", "request_id"):
         if key in j:
             j.pop(key)
             dropped = True
@@ -3121,9 +3132,8 @@ def strip_rid(body, path=""):
         return body, False
     try:
         return rewritten(j), True
-    except Exception:
-        return body, False
-
+    except Exception as e:
+        raise RidUnreadable(type(e).__name__) from e
 
 def route_model_name(body, path):
     """(the body to forward, the name it replaced or None). On vLLM only, which answers 404
@@ -4860,12 +4870,13 @@ class H(BaseHTTPRequestHandler):
     # ---- upstream ----------------------------------------------------------
     def _forced_rid(self):
         """The rid this proxy imposes on the engine, so an abandoned request has a name
-        before it has produced anything. A caller that sets the header itself keeps it."""
+        before it has produced anything. A caller that sets the header itself keeps it, but
+        the other box of a pair and a client of a listed key (_rid_not_its_own)."""
         if getattr(self, "_frid", "unset") != "unset":
             return self._frid
         if self.path.split("?")[0] in RID_OVERRIDE_ROUTES:
-            # a request the other box of a pair sent on never names the rid: it could name "0" to "f" and end
-            # every generation here (SGLang aborts by prefix; found in review, 2026-11-03)
+            # a request the other box of a pair sent on, or one of a listed key, never names the rid: it could name
+            # "0" to "f" and end every generation here (SGLang aborts by prefix, found in reviews, 2026-11-03)
             mine = None if self._rid_not_its_own() else self.headers.get("x-override-rid")
             self._frid = mine or uuid.uuid4().hex
         else:
@@ -4880,11 +4891,13 @@ class H(BaseHTTPRequestHandler):
         # conversation_id): fields of its scheduler no client of this port has to set. By the
         # prefix, so that one a later release adds stays here too (found in a cloud review,
         # 2026-10-18).
-        # A request the other box of a pair sent on keeps no rid of its own either, on any route: SGLang aborts by
-        # prefix, and its rids "0" to "f" ended every generation here (found in review, 2026-11-03)
+        # A request the other box of a pair sent on, or one of a listed key, keeps no rid of its own either, on any
+        # route: SGLang aborts by prefix, and their rids "0" to "f" ended every generation here (found in reviews,
+        # 2026-11-03); nor vLLM's X-Request-Id
         hop = self._rid_not_its_own()
         h = {k: v for k, v in self.headers.items() if k.lower() not in HOP and k.lower() != PAIR_HOP.lower()
-             and not (k.lower().startswith("x-override-") and (k.lower() != "x-override-rid" or hop))}
+             and not (k.lower().startswith("x-override-") and (k.lower() != "x-override-rid" or hop))
+             and not (hop and k.lower() == "x-request-id")}
         auth = _upstream_auth(self)
         if auth:
             h["Authorization"] = auth
@@ -6062,6 +6075,33 @@ class H(BaseHTTPRequestHandler):
             log(f"{self._peer} the caller left before its body arrived whole ({len(body)} of {n} bytes)")
             self.close_connection = True
             self._done("CLIENT GONE before its body"); return
+        if body and json.detect_encoding(body) not in ("utf-8", "utf-8-sig"):
+            # JSON in UTF-16 or UTF-32, which RFC 8259 leaves out between systems: Python's json reads it, and so do the
+            # engines (FastAPI), but every guard here reads a body's bytes first, which then show none of the names they
+            # look for: a top_logprobs that takes SGLang down (sglang#40076), a negative token id, the rid of a listed
+            # key all went through unseen (found in a security review, 2026-11-03)
+            enc = json.detect_encoding(body)
+            log(f"{self._peer} REFUSED a body in {enc}: this proxy reads bodies in UTF-8")
+            self._plain(415, {"Content-Type": "application/json"},
+                        json.dumps({"error": {"type": "invalid_request", "message":
+                                              "keepalive-proxy: send the request body as UTF-8 JSON (RFC 8259): this "
+                                              "proxy reads every body to guard the engine"}}).encode())
+            self._done("415 body not in UTF-8"); return
+        if body and self._rid_not_its_own():
+            # the engine's request id is this box's to give, never the other box's nor a listed key's: SGLang aborts
+            # by prefix, and their ids "0" to "f" ended every generation (found in reviews, 2026-11-03). Once, here,
+            # so the body the other box of a pair may get is stripped too
+            try:
+                body, dropped = strip_rid(body, self.path)
+            except RidUnreadable as e:
+                log(f"{self._peer} REFUSED a body that may name the engine's request id and cannot be read whole ({e})")
+                self._plain(400, {"Content-Type": "application/json"},
+                            json.dumps({"error": {"type": "invalid_request", "message":
+                                                  "keepalive-proxy: this request body cannot be read whole"}}).encode())
+                self._done("400 body unreadable"); return
+            if dropped:
+                _say_once_a_minute("hop rid", f"{self._peer} an id for the engine's request in the body of a request "
+                                              f"of the other box or of a listed key is dropped: this box names them")
         self._t_pair = time.monotonic()
         if self._pair_routed(body, route):     # role 10: another box, or a refusal of the pair
             return
@@ -6562,14 +6602,6 @@ class H(BaseHTTPRequestHandler):
     def _served_name(self, body):
         """The body as the engine that serves now takes it (route_model_name, qwen_effort_none, nemotron_effort,
         ornith_effort), each change said once."""
-        if self._rid_not_its_own():
-            # the rid is this box's to give. The other box of a pair, or a client of a listed key, naming rids "0" to
-            # "f" in its bodies and leaving ended every generation here, SGLang aborting by prefix (found in review,
-            # 2026-11-03)
-            body, dropped = strip_rid(body, self.path)
-            if dropped:
-                _say_once_a_minute("hop rid", f"{self._peer} a rid in the body of a request of the other box or of a "
-                                              f"listed key is dropped: this box names its engine's requests")
         body, renamed = route_model_name(body, self.path)
         if renamed and _model_rename_logged.first(renamed):   # once per name, not per request
             shown = repr(renamed[:60]) + ("..." if len(renamed) > 60 else "")

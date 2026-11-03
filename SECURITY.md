@@ -166,10 +166,12 @@ whole, and keeps 2 s, so the other box's reads cost this one a cockpit read ever
 at most. What a box takes from the other (its list of models, its summary) is rebuilt
 field by field, each of its type: nothing nested, no NaN, comes through. A request the
 other box sends on never names the engine's request id, nor does a client of a listed
-key (below), in a header or in any form SGLang reads one from a body: "rid" (written
-with escapes too), /v1/responses' "request_id", the Vertex route's "parameters".
-SGLang aborts every request whose id starts with one it aborts, and ids "0" to "f"
-could end every generation of the box.
+key (below), in a header (`x-override-rid`, vLLM's `X-Request-Id`) or in any form an
+engine reads one from a body: "rid" (written with escapes too), "request_id", the
+Vertex route's "parameters". A body that may hold one and cannot be read whole gets a
+400. SGLang aborts every request whose id starts with one it aborts, and ids "0" to
+"f" could end every generation of the box. Every request body is JSON in UTF-8, or a
+415: in UTF-16 or UTF-32, which the engines read too, the guards saw none of its fields.
 This box's cockpit reads the other's through `/proxy/pair/<box>/state`, a route of
 this machine only, as `/proxy/stop`. A request that gets past
 it is a hop from the box of that certificate: served there or refused, never sent

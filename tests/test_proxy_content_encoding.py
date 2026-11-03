@@ -105,6 +105,19 @@ class ContentEncoding(unittest.TestCase):
                 self.assertIn("identity", json.loads(body)["error"]["message"])
         self.assertEqual(Engine.seen, [], "a body no guard could read reached the engine")
 
+    def test_a_body_in_utf16_or_utf32_is_refused_unread(self):
+        """Python's json reads JSON in UTF-16 or UTF-32, and so does the engine's (FastAPI), but no guard here saw a
+        field in it: its top_logprobs went through, and took SGLang down (security review, 2026-11-03)."""
+        for enc in ("utf-16", "utf-16-le", "utf-16-be", "utf-32", "utf-32-le"):
+            with self.subTest(encoding=enc):
+                status, _, body = self.post(json.dumps(DOC).encode(enc), None)
+                self.assertEqual(status, 415, body[:200])
+                self.assertIn("UTF-8", json.loads(body)["error"]["message"])
+        self.assertEqual(Engine.seen, [], "a body no guard could read reached the engine")
+        # UTF-8, with its byte order mark too, is read and judged as before
+        status, _, _ = self.post(json.dumps(DOC).encode("utf-8-sig"), None)
+        self.assertEqual(status, 400, "the guard did not read a UTF-8 body with a byte order mark")
+
     def test_an_uncompressed_body_is_judged_and_relayed_as_before(self):
         plain = dict(DOC, top_logprobs=5)
         for coding in (None, "identity", " Identity "):
