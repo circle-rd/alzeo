@@ -61,6 +61,7 @@ class Engine(http.server.BaseHTTPRequestHandler):
     require_key = None
     last_auth = None
     last_path = None          # the path the proxy sent upstream, decoded or not
+    last_rid = None           # (the body's rid, the x-override-rid header) of the last POST
 
     def log_message(self, *a):
         pass
@@ -83,7 +84,12 @@ class Engine(http.server.BaseHTTPRequestHandler):
         if not self._admit():
             return
         n = int(self.headers.get("Content-Length") or "0")
-        self.rfile.read(n)
+        sent = self.rfile.read(n)
+        try:
+            rid = json.loads(sent or b"{}").get("rid")
+        except ValueError:
+            rid = None
+        Engine.last_rid = (rid, self.headers.get("x-override-rid"))
         body = json.dumps({"id": "chatcmpl-test", "choices": []}).encode()
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
@@ -167,11 +173,11 @@ def fresh_proxy_module(upstream_port, keys_path=None, upstream_key=None):
     return mod
 
 
-def post(port, path, token=None):
-    headers = {"Content-Type": "application/json"}
+def post(port, path, token=None, body=None, extra=None):
+    headers = {"Content-Type": "application/json", **(extra or {})}
     if token:
         headers["Authorization"] = "Bearer " + token
-    req = urllib.request.Request("http://127.0.0.1:%d%s" % (port, path), data=BODY, headers=headers)
+    req = urllib.request.Request("http://127.0.0.1:%d%s" % (port, path), data=body or BODY, headers=headers)
     try:
         with urllib.request.urlopen(req, timeout=10) as r:
             return r.status, r.read()
@@ -272,6 +278,20 @@ class ClientKeys(unittest.TestCase):
         finally:
             sys.stderr = real
         self.assertIn("key=alice", capture.getvalue())
+
+    def test_a_listed_key_never_names_the_engines_requests(self):
+        # SGLang aborts every request whose rid starts with one it aborts: a listed client naming rids "0" to "f",
+        # in a body or in the header, and leaving, ended every generation of the box, which no operator route of
+        # a listed key may do either (review, 2026-11-03)
+        port = self.live(self.keys_file('{"tok-alice":"alice"}'))
+        body = json.dumps(dict(json.loads(BODY), rid="0")).encode()
+        for path in ("/v1/completions", "/v1/chat/completions"):
+            with self.subTest(path=path):
+                status, _ = post(port, path, "tok-alice", body=body, extra={"X-Override-Rid": "0"})
+                self.assertEqual(status, 200)
+                rid, header = Engine.last_rid
+                self.assertIsNone(rid, "no rid of the client's in the body")
+                self.assertNotEqual(header, "0", "nor in the header")
 
     def test_the_scheme_is_read_in_any_case_as_the_engine_reads_it(self):
         """The wall read the scheme as "Bearer " only, where SGLang, vLLM's middleware and the

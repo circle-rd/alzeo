@@ -4847,7 +4847,7 @@ class H(BaseHTTPRequestHandler):
         if self.path.split("?")[0] in RID_OVERRIDE_ROUTES:
             # a request the other box of a pair sent on never names the rid: it could name "0" to "f" and end
             # every generation here (SGLang aborts by prefix; found in review, 2026-11-03)
-            mine = None if self._pair_hop() else self.headers.get("x-override-rid")
+            mine = None if self._rid_not_its_own() else self.headers.get("x-override-rid")
             self._frid = mine or uuid.uuid4().hex
         else:
             self._frid = None
@@ -4863,7 +4863,7 @@ class H(BaseHTTPRequestHandler):
         # 2026-10-18).
         # A request the other box of a pair sent on keeps no rid of its own either, on any route: SGLang aborts by
         # prefix, and its rids "0" to "f" ended every generation here (found in review, 2026-11-03)
-        hop = self._pair_hop()
+        hop = self._rid_not_its_own()
         h = {k: v for k, v in self.headers.items() if k.lower() not in HOP and k.lower() != PAIR_HOP.lower()
              and not (k.lower().startswith("x-override-") and (k.lower() != "x-override-rid" or hop))}
         auth = _upstream_auth(self)
@@ -6543,13 +6543,14 @@ class H(BaseHTTPRequestHandler):
     def _served_name(self, body):
         """The body as the engine that serves now takes it (route_model_name, qwen_effort_none, nemotron_effort,
         ornith_effort), each change said once."""
-        if self._pair_hop():
-            # role 10: the rid is this box's to give. The other box naming rids "0" to "f" in its bodies and leaving
-            # ended every generation here, SGLang aborting by prefix (found in review, 2026-11-03)
+        if self._rid_not_its_own():
+            # the rid is this box's to give. The other box of a pair, or a client of a listed key, naming rids "0" to
+            # "f" in its bodies and leaving ended every generation here, SGLang aborting by prefix (found in review,
+            # 2026-11-03)
             body, dropped = strip_rid(body)
             if dropped:
-                _say_once_a_minute("hop rid", f"{self._peer} pair: a rid in the body of a request the other box "
-                                              f"sent on is dropped: this box names its engine's requests")
+                _say_once_a_minute("hop rid", f"{self._peer} a rid in the body of a request of the other box or of a "
+                                              f"listed key is dropped: this box names its engine's requests")
         body, renamed = route_model_name(body, self.path)
         if renamed and _model_rename_logged.first(renamed):   # once per name, not per request
             shown = repr(renamed[:60]) + ("..." if len(renamed) > 60 else "")
@@ -7053,6 +7054,18 @@ class H(BaseHTTPRequestHandler):
             # peer the cockpit matches on, a newline would forge a journal line
             shown = re.sub(r"[\s\x00-\x1f\x7f]", "_", str(self._client_label))
             self._peer = f"{self._peer} key={shown}"
+
+    def _rid_not_its_own(self):
+        """True for a request that never names the engine's request id: one the other box of a pair sent on, and one
+        of a listed client key, which reaches no operator route either. SGLang aborts every request whose rid starts
+        with one it aborts (when its client leaves, too): either could end every generation of this box by naming
+        rids "0" to "f" (found in review, 2026-11-03). The holder of the engine's key, its operator, still may."""
+        if self._pair_hop():
+            return True
+        if CLIENT_KEYS:
+            self._label_peer()
+            return getattr(self, "_client_label", None) is not None
+        return False
 
     def _wall_refused(self):
         """True when the identity wall answered this request with a 401, or with a 403 for a
