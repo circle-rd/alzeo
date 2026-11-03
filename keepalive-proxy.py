@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Keepalive proxy in front of SGLang or vLLM (v6.50). No content logging, and the only
+"""Keepalive proxy in front of SGLang or vLLM (v6.51). No content logging, and the only
 rewriting is the tool-schema guard (role 4); two routes, POST /v1/systemone (role 5) and the
 operator's POST /proxy/stop (role 7), are answered here instead of relayed.
 
@@ -56,6 +56,12 @@ Ten roles, nothing else:
    over TLS both ways (each box's certificate pinned by the other, PAIR_PORT). A lane name no box
    serves, and any other name, stays on this box, as on a box alone (decision 986). GET /v1/models
    lists every box's models (see "Two boxes behind one endpoint" below).
+
+v6.51: a client of a listed key never names the engine's request id, as the other box of a pair since
+v6.50, and neither names it in any form SGLang reads one from: a body's "rid" (written with escapes
+too, a batch's list too), /v1/responses' "request_id" and the Vertex route's "parameters". SGLang
+aborts every request whose id starts with one it aborts, when its client leaves too: ids "0" to "f"
+in any of them, and a client that left, ended every generation of the box.
 
 v6.50: two boxes behind one endpoint (role 10, discussion #45, decisions 961-966). A box whose
 config directory holds pair.json reads its peers' /v1/models (every PAIR_TTL_S seconds, and again
@@ -7153,7 +7159,7 @@ if __name__ == "__main__":
     holds = (f"holds requests up to {HOLD_MAX_S:.0f}s while {' or '.join(HOLD_UNITS)} comes back"
              if HOLD_UNITS and HOLD_MAX_S > 0 else "holds nothing")
     # one f-string: the cockpit's tests render this line from the source
-    log(f"v6.50 on {BIND}:{port} -> {UPSTREAM} (keepalive {KEEPALIVE_S:.0f}s, max silence {MAX_SILENCE_S:.0f}s, {holds})")
+    log(f"v6.51 on {BIND}:{port} -> {UPSTREAM} (keepalive {KEEPALIVE_S:.0f}s, max silence {MAX_SILENCE_S:.0f}s, {holds})")
     # v6.47: what the memory floor's refusal reads, read once here, so the journal shows it works where
     # the unit runs this proxy (its sandbox leaves /proc/meminfo readable)
     avail = mem_available_gib()

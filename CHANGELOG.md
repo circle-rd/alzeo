@@ -1,5 +1,30 @@
 # Changelog
 
+## v1.42.1 (2026-11-03): a listed client key, and the other box of a pair, can no longer end every generation of the box
+
+**What was wrong.** SGLang aborts every request whose id starts with one it aborts, and it aborts a request's id when
+its client leaves. A client of a listed key (`keys.json`, the identity wall) could name the ids itself, "0" to "f",
+in a body or in the `x-override-rid` header, leave, and so end every generation of the box. v1.42.0 kept the other
+box of a pair from doing it, but only for a top-level `"rid"` whose bytes showed it, and SGLang takes the id in three
+more forms: the same key written with escapes (`"r\u0069d"`), `request_id` on `/v1/responses`, and the Vertex
+route's `parameters`, which it spreads into the request. Found by security reviews on 2026-11-03.
+
+**What changes.** The proxy (v6.51) no longer lets a client of a listed key name the engine's request id, as for the
+other box of a pair: the header is dropped, the body is read whenever it may hold an id, and every form is dropped.
+The proxy or the engine names the request. A client with the engine's key, on a box without the identity wall, still
+names its requests as it did. The tests fail on v1.42.0: for a listed key in every form, for the other box in the two
+new ones.
+
+**Also.** The cockpit reads the deployed proxy's version from its first line again: it read it from a history line,
+which sits past the first 4,000 bytes it read since v6.50, so Lanes and Settings said "unknown", and the warning that
+the deployed proxy is not the repo's copy, which needs a version, could never show. The empty Timeline card of the
+Now view reads on one line: its text filled the 62 px column of an event's time. Four test files held the tailnet
+address of the reference box, which the project's pre-push check refuses now: they use an address of the same range
+that is no box's. Each fix has a test that fails on the code before it.
+
+**What an update does.** The proxy (v6.51) and the cockpit restart, as a proxy update always did: a generation in
+flight on the box is cut. No engine, no lane and no unit file changes.
+
 ## v1.42.0 (2026-11-03): two boxes behind one endpoint, paired in one command, the other box in the cockpit, and non-streamed answers half a second sooner
 
 **Two boxes behind one endpoint.** Two DGX Spark that each run Alzeo can answer as one (discussion #45). One

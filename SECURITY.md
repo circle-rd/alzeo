@@ -165,9 +165,11 @@ the time), which the proxy reads from its own cockpit with its own key, never re
 whole, and keeps 2 s, so the other box's reads cost this one a cockpit read every 2 s
 at most. What a box takes from the other (its list of models, its summary) is rebuilt
 field by field, each of its type: nothing nested, no NaN, comes through. A request the
-other box sends on never names the engine's request id, in its body or in a header:
-SGLang aborts every request whose id starts with one it aborts, and a box naming the
-ids "0" to "f" could end every generation of the other.
+other box sends on never names the engine's request id, nor does a client of a listed
+key (below), in a header or in any form SGLang reads one from a body: "rid" (written
+with escapes too), /v1/responses' "request_id", the Vertex route's "parameters".
+SGLang aborts every request whose id starts with one it aborts, and ids "0" to "f"
+could end every generation of the box.
 This box's cockpit reads the other's through `/proxy/pair/<box>/state`, a route of
 this machine only, as `/proxy/stop`. A request that gets past
 it is a hop from the box of that certificate: served there or refused, never sent
@@ -224,7 +226,8 @@ discussion, not a disclosure.
   listed one on the engine's operator routes since 2026-10-16, the wall signing
   what it relays with the engine's own key: a client key generates, counts and
   reads, the label on
-  every journal line of its requests), and naming is all it does: there are no
+  every journal line of its requests, and since v1.42.1 the engine's request id
+  is the proxy's to give, never the client's), and naming is all it does: there are no
   per-client quotas or ceilings, and the engine behind it still has one key.
 - **`AGENT_AUTO=1` is deliberate escalation.** It sets opencode to allow
   every tool call in the Agent view, behind the cockpit login, on this
