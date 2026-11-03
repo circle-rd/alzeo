@@ -60,6 +60,30 @@ one its SSH server sees, give that one: `--back 192.168.100.1`.
   `claude-local.py`, are never handed the other box's. Requests that name the other box's model still go
   there.
 
+## A model both boxes serve
+
+When both boxes load the same lane, they share its requests, and the box they were sent to decides where each
+one goes:
+
+- **A conversation stays on its box.** An agent (Claude Code, opencode, Hermes, pi) sends its whole
+  conversation again at each turn, and the box that served the turn before holds all of it in its prefix cache
+  but the new turn. Sent to the other box, all of it would be computed again: 100,000 tokens take tens of
+  seconds on the 27B. So the entry keeps fingerprints of the first 4 KiB, 8 KiB, 16 KiB and so on of every
+  request it sent to each box in the last 10 minutes, and a request goes to the box it shares its longest one
+  with, when that covers at least 30 % of it (the `cache_threshold` of SGLang's own router).
+- **A new conversation goes to the box with the fewest requests in flight**, the entry itself when they tie,
+  so a single client working alone never pays a hop. Each box says how many generations it runs in the list it
+  gives the other one, and the entry counts what it sent since it last read it: a burst of requests is shared
+  as it comes, not sent all to one box between two reads.
+- **Boxes far apart share even a conversation.** When the box a conversation is on has more than 4 requests
+  in flight more than the other, and more than 1.5 times as many, its next turn goes to the other box: a long
+  wait for one agent costs more than its prefix computed again. These are the thresholds of SGLang's router
+  (64 and 1.5), brought to the 8 requests a lane runs at once.
+- **A box that does not answer hands the request back.** When the box chosen does not answer, or answers 503,
+  before a byte of its answer went out, the entry serves the request itself, and the conversation stays with
+  the entry from then on. A request whose answer began is never sent again.
+- The tile of each cockpit says how many requests it sent the other box, and why.
+
 ## The other box in the cockpit
 
 The Now view of each box's cockpit shows the other box of its pair: the models it serves, its memory in
@@ -95,7 +119,8 @@ cockpit for now.
   four of its keepalives (60 s at least) is cut, as a box that went sends nothing more. A box that loses
   power or its cable while a request waits on it is seen within about 25 s (TCP keepalive between the
   boxes), and that request gets a 503.
-- When both boxes serve the same model, its requests stay on the box they were sent to for now.
+- A conversation is known to the box it was sent to: two clients that continue one conversation through two
+  entries each have it placed by its own entry.
 - `GET /v1/models/<id>` answers for the box's own models only.
 - To switch the other box's lane, use its own cockpit for now: the tile only shows it.
 

@@ -3490,7 +3490,7 @@ def _peer_models_read(peer):
     # answered: the peer's proxy gave an HTTP answer over the pair's TLS, which proves the pair both ways even
     # when its engine does not answer (a 503 while a lane loads); pair.py's check reads it (found in review,
     # 2026-11-03: add undid a working pair while either engine was stopped)
-    models, rows, err, answered = (), [], None, False
+    models, rows, err, answered, running = (), [], None, False, None
     t0 = time.monotonic()
     try:
         # on the pair port, a hop: the peer answers with its own engine's list, never the union it shows its
@@ -3505,6 +3505,7 @@ def _peer_models_read(peer):
         rows = [_pair_row(m) for m in data["data"] if isinstance(m, dict) and isinstance(m.get("id"), str)
                 and _PAIR_SAFE_ID.fullmatch(m["id"])]
         models = tuple(m["id"] for m in rows)
+        running = pair_running(data)
     except urllib.error.HTTPError as e:
         answered, err = True, f"HTTP {e.code} on /v1/models"
     except Exception as e:      # an address that is no HTTP server, a broken answer: the peer does not answer
@@ -3516,8 +3517,12 @@ def _peer_models_read(peer):
     prev = _PAIR_MODELS.get(peer["name"]) or {}
     now = time.monotonic()
     known, known_ts = (models, now) if err is None else (prev.get("known"), prev.get("known_ts"))
-    _PAIR_MODELS[peer["name"]] = {"ts": now, "models": models, "rows": rows, "error": err,
-                                  "answered": answered, "known": known, "known_ts": known_ts, "read_s": now - t0}
+    with _PAIR_LOCK:
+        # running: what it says it runs now (its generations, the requests of this box among them), and what this box
+        # sent it from now on counts on top of it (pair_load)
+        _PAIR_MODELS[peer["name"]] = {"ts": now, "models": models, "rows": rows, "error": err, "answered": answered,
+                                      "known": known, "known_ts": known_ts, "read_s": now - t0, "running": running}
+        _PAIR_SENT[peer["name"]] = 0
     return models
 
 
@@ -3681,6 +3686,20 @@ def pair_models_body(data):
     return rewritten(j)
 
 
+def running_said(data):
+    """This box's list as the other box of a pair reads it: its engine's, and "x_alzeo_running", the generations this
+    box runs now, which that box weighs before it sends a request of a model both serve here (decision 997)."""
+    try:
+        j = json.loads(data)
+    except ValueError:
+        return data
+    if not isinstance(j, dict) or not isinstance(j.get("data"), list):
+        return data
+    with _GEN_LOCK:
+        j["x_alzeo_running"] = len(_GENERATIONS)
+    return rewritten(j)
+
+
 def body_model(body):
     """The "model" a request body names, or None."""
     try:
@@ -3698,6 +3717,131 @@ def pair_served_map(conf, local):
         row = _PAIR_MODELS.get(p["name"]) or {}
         out[p["name"]] = list(row.get("models") or ()) or (f"does not answer ({row['error']})" if row.get("error") else [])
     return out
+
+
+# Role 10, a model both boxes serve (decisions 976 and 996 to 998, 2026-11-02 and 03): the entry served every model
+# it loads itself, and the other box got none of its requests. An agent sends its whole conversation again at each
+# turn, and the box that served the turn before holds all of it in its prefix cache but the new turn: sent to the
+# other box, all of it is computed again (100,000 tokens: tens of seconds on the 27B). So a request goes to the box
+# it shares its longest known prefix with, when that covers PAIR_AFFINITY_MIN of it (the cache_threshold of
+# SGLang's router), any other one to the box with the fewest requests in flight (this one when they tie), and any
+# one while the boxes are far apart to the one with the fewest: PAIR_SPREAD_ABS more AND PAIR_SPREAD_REL times as
+# many, the thresholds of SGLang's router (64 and 1.5) scaled to the 8 requests a lane runs at once.
+PAIR_AFFINITY_MIN = 0.30
+PAIR_AFFINITY_FIRST = 4096              # the first block, in bytes; each next one is twice as long
+PAIR_AFFINITY_KEEP_S = float(os.environ.get("PAIR_AFFINITY_KEEP_S") or 600)    # an agent's pause
+PAIR_AFFINITY_MAX = 8192                # the blocks kept per box, the oldest dropped first
+PAIR_SPREAD_ABS, PAIR_SPREAD_REL = 4, 1.5
+PAIR_SPREAD_FRESH_S = 3 * PAIR_TTL_S    # a peer's list older than this shares nothing: it may have switched
+PAIR_RUNNING_MAX = 100000               # what a peer may say it runs; past it, its word is not taken
+_AFFINITY: dict = {}                    # box -> OrderedDict(block fingerprint -> when a request with it went there)
+_AFFINITY_LOCK = threading.Lock()
+_SPREAD_LOCK = threading.Lock()         # one decision at a time, its box reserved before the next one weighs them
+_PAIR_HERE = set()                      # the handlers the sharing kept here, from its decision to their _done
+_PAIR_SENT: dict = {}                   # peer -> requests sent there since its list was read, less those that ended
+_PAIR_OUT: dict = {}                    # peer -> requests of this box in flight there now
+_PAIR_SPREAD: dict = {}                 # peer -> {"affinity": n, "balance": n, "failover": n}, for the tile
+
+
+def prefix_blocks(body, route):
+    """The fingerprints of a body's first 4 KiB, 8 KiB, 16 KiB and so on up to its length, as [(bytes, fingerprint)],
+    and the bytes read: the body as role 9 reads it (stream, stream_options and max_tokens without their values,
+    which a client may change between turns), in one pass, nothing copied. A conversation's next turn starts with
+    the bytes of this one, so its blocks up to there are these; each block is twice the one before, so the longest
+    one a box knows covers more than half of what the request shares with it (with blocks four times longer, a
+    prompt just under a block's length shared a quarter of itself at most, under PAIR_AFFINITY_MIN)."""
+    if not body or len(body) < PAIR_AFFINITY_FIRST:
+        return [], 0
+    h = hashlib.sha256(route.encode())
+    blocks, fed, edge = [], 0, PAIR_AFFINITY_FIRST
+
+    def feed(part):
+        nonlocal fed, edge
+        i, n = 0, len(part)
+        while fed + n - i >= edge:
+            take = edge - fed
+            h.update(part[i:i + take])
+            fed, i = fed + take, i + take
+            blocks.append((edge, h.copy().hexdigest()[:16]))
+            edge *= 2
+        h.update(part[i:])
+        fed += n - i
+
+    view, pos = memoryview(body), 0
+    for m in RESEND_SKIP_RE.finditer(body):
+        feed(view[pos:m.start()])
+        feed(m.group(1))
+        pos = m.end()
+    feed(view[pos:])
+    return blocks, fed
+
+
+def affinity_of(box, blocks, now):
+    """The bytes of the longest of these blocks a request sent to box held within PAIR_AFFINITY_KEEP_S, or 0."""
+    with _AFFINITY_LOCK:
+        seen = _AFFINITY.get(box)
+        if not seen:
+            return 0
+        for length, fp in reversed(blocks):
+            t = seen.get(fp)
+            if t is not None and now - t < PAIR_AFFINITY_KEEP_S:
+                return length
+    return 0
+
+
+def affinity_forget(box, blocks):
+    """These blocks are not on box after all (it did not answer, or serves another model now)."""
+    with _AFFINITY_LOCK:
+        seen = _AFFINITY.get(box)
+        for _, fp in blocks if seen else ():
+            seen.pop(fp, None)
+
+
+def affinity_note(box, blocks, now):
+    """These blocks went to box: its next turn goes there too."""
+    if not blocks:
+        return
+    with _AFFINITY_LOCK:
+        seen = _AFFINITY.setdefault(box, collections.OrderedDict())
+        for _, fp in blocks:
+            seen[fp] = now
+            seen.move_to_end(fp)
+        while len(seen) > PAIR_AFFINITY_MAX:
+            seen.popitem(last=False)
+
+
+def pair_load(box, conf):
+    """The requests in flight on box as this one sees them: its own generations for this box; for a peer, what it
+    said it runs at its last list read, plus what this box sent it since, less what ended (a burst between two reads
+    does not all go to the same box: the reservation of NVIDIA's PAIR)."""
+    if box == conf["name"]:
+        with _GEN_LOCK:
+            return len(_GENERATIONS | _PAIR_HERE)       # kept here and not yet out to the engine: counted already
+    row = _PAIR_MODELS.get(box) or {}
+    with _PAIR_LOCK:
+        # never fewer than this box's own requests there: a read that went out before they reached that box's
+        # engine, and came back after they were sent, counted none of them (a burst went 5 to 3, 2026-11-03)
+        return max(0, (row.get("running") or 0) + _PAIR_SENT.get(box, 0), _PAIR_OUT.get(box, 0))
+
+
+def pair_running(data):
+    """What a peer's list says it runs now ("x_alzeo_running"), or None when it says nothing it may mean: a count,
+    never a bool, a float, a string or past PAIR_RUNNING_MAX (a box that said millions would get no request)."""
+    n = data.get("x_alzeo_running") if isinstance(data, dict) else None
+    return n if isinstance(n, int) and not isinstance(n, bool) and 0 <= n <= PAIR_RUNNING_MAX else None
+
+
+def pair_sent(peer, n):
+    """A request to peer went out (1), or ended (-1)."""
+    with _PAIR_LOCK:
+        _PAIR_SENT[peer] = _PAIR_SENT.get(peer, 0) + n
+        _PAIR_OUT[peer] = max(0, _PAIR_OUT.get(peer, 0) + n)
+
+
+def pair_spread_count(peer, why):
+    with _PAIR_LOCK:
+        row = _PAIR_SPREAD.setdefault(peer, {"affinity": 0, "balance": 0, "failover": 0})
+        row[why] += 1
 
 
 
@@ -5074,6 +5218,8 @@ class H(BaseHTTPRequestHandler):
         (found in review, 2026-11-03)."""
         self._ended = True
         _gen_discard(self)
+        with _GEN_LOCK:
+            _PAIR_HERE.discard(self)
         self._say_tool_targets(outcome)
         self._note_gave_up(outcome)
         st = ""
@@ -6274,7 +6420,11 @@ class H(BaseHTTPRequestHandler):
             if not isinstance(summary, dict):
                 why = "its summary is no JSON object of 1 MiB at most"
             else:
-                data = json.dumps(_pair_summary_clean(summary)).encode()     # its fields alone, rebuilt
+                clean = _pair_summary_clean(summary)                        # its fields alone, rebuilt
+                with _PAIR_LOCK:
+                    # and what this box sent it of a model both serve, for the tile (decision 996)
+                    clean["sent"] = dict(_PAIR_SPREAD.get(name) or {"affinity": 0, "balance": 0, "failover": 0})
+                data = json.dumps(clean).encode()
         except urllib.error.HTTPError as e:
             why = f"HTTP {e.code}"
         except Exception as e:
@@ -6313,7 +6463,8 @@ class H(BaseHTTPRequestHandler):
         except EngineUnreachable:
             local = None
         if local is not None and name in local:
-            return False
+            # a request the other box sent on is this box's to serve: sent back, two boxes would hand it to each other
+            return False if hop else self._pair_spread(body, route, name, conf, local)
         me = (conf or {}).get("name") or "this box"
         if hop:
             # sent on by an entry for a model this box served moments ago: an engine that does not
@@ -6365,6 +6516,59 @@ class H(BaseHTTPRequestHandler):
         if local is None:
             return False                    # this box's engine does not answer: its own path holds or says 503
         return self._pair_served_nowhere(name, conf, local)
+
+    def _pair_spread(self, body, route, name, conf, local):
+        """A model this box serves, which a peer may serve too (decisions 996 to 998): False when this box serves the
+        request, True once a peer answered it. Only the lists as kept are read, never waited for: this box serves the
+        model, and its own requests do not wait for a slow box."""
+        now = time.monotonic()
+        peers = []
+        for p in conf["peers"]:
+            _peer_models_soon(p)
+            row = _PAIR_MODELS.get(p["name"]) or {}
+            if name in (row.get("models") or ()) and now - row.get("ts", 0) < PAIR_SPREAD_FRESH_S:
+                peers.append(p)
+        if not peers or (not CLIENT_KEYS and not _door_key()):
+            return False                    # a box alone for this model, or one that sends nothing on (_pair_routed)
+        me = conf["name"]
+        blocks, size = prefix_blocks(body, route)
+        boxes = [me] + [p["name"] for p in peers]
+        match = {b: affinity_of(b, blocks, now) for b in boxes}
+        best = max(match.values())
+        with _SPREAD_LOCK:
+            # weighed and reserved at once: a burst between two reads of the lists does not all go to one box
+            load = {b: pair_load(b, conf) for b in boxes}
+            first = lambda among: min(among, key=lambda b: (load[b], b != me))  # the fewest in flight, this box first
+            if size and best >= PAIR_AFFINITY_MIN * size:
+                pick, why = first([b for b in boxes if match[b] == best]), "affinity"
+            else:
+                pick, why = first(boxes), "balance"
+            low = min(load.values())
+            if load[pick] - low > PAIR_SPREAD_ABS and load[pick] > PAIR_SPREAD_REL * low:
+                pick, why = first(boxes), "balance"
+            if pick == me:
+                with _GEN_LOCK:
+                    _PAIR_HERE.add(self)
+            else:
+                pair_sent(pick, 1)
+        affinity_note(pick, blocks, now)
+        if pick == me:
+            return False
+        peer = next(p for p in peers if p["name"] == pick)
+        pair_spread_count(pick, why)
+        res = self._forward_peer(body, peer, name, conf, local, fallback=True, reserved=True)
+        if res is None:
+            return True
+        # the peer did not answer, or serves another model now: this box serves it, no byte of an answer having gone
+        # out (decision 998: never a request whose answer began), and the conversation is this box's from now on
+        affinity_forget(pick, blocks)
+        if res == "fallback":
+            pair_spread_count(pick, "failover")
+            log(f"{self._peer} pair: {pick} does not answer for {name}: this box serves it")
+        with _GEN_LOCK:
+            _PAIR_HERE.add(self)
+        affinity_note(me, blocks, time.monotonic())
+        return False
 
     def _pair_served_nowhere(self, name, conf, local):
         """No box of the pair lists name: a 503 to try again when a box that may serve it does not answer now
@@ -6423,11 +6627,21 @@ class H(BaseHTTPRequestHandler):
         self._done("503 engine unreachable")
         return True
 
-    def _forward_peer(self, body, peer, name, conf, local):
+    def _forward_peer(self, body, peer, name, conf, local, fallback=False, reserved=False):
         """Role 10: the request to the peer's pair port as the client wrote it, without its credentials
         (the certificate is the pair's: the peer admits it with its own key); its answer relayed as it
         comes. "moved" when the peer answers that it serves another model now (409 model_not_served),
-        None once the caller has its answer."""
+        None once the caller has its answer. With fallback (this box serves the model too, decision 998),
+        "fallback" when the peer does not answer, or answers 503, before a byte went to the caller. reserved: the
+        caller counted it in flight already (_pair_spread)."""
+        if not reserved:
+            pair_sent(peer["name"], 1)
+        try:
+            return self._forward_peer_inner(body, peer, name, conf, local, fallback)
+        finally:
+            pair_sent(peer["name"], -1)
+
+    def _forward_peer_inner(self, body, peer, name, conf, local, fallback):
         # the client's key, cookies included, never cross the pair: a browser's cookie for this box's cockpit
         # (cookies know no port) went to the other box (found in review, 2026-11-03)
         h = {k: v for k, v in self.headers.items()
@@ -6483,6 +6697,8 @@ class H(BaseHTTPRequestHandler):
                 if e.code == 409 and b'"model_not_served"' in data:
                     log(f"{self._peer} pair: {peer['name']} serves another model now; the lists are read again")
                     return "moved"
+                if e.code == 503 and fallback:
+                    return "fallback"
                 self._plain(e.code, {k: v for k, v in e.headers.items() if k.lower() not in PAIR_DROP_IN}, data)
                 self._done(f"{e.code} pair upstream")
                 return None
@@ -6491,6 +6707,8 @@ class H(BaseHTTPRequestHandler):
                     self._done("CLIENT GONE during pair"); return None
                 why = _pair_why(e)
                 log(f"{self._peer} pair: {peer['name']} does not answer ({why})")
+                if fallback:
+                    return "fallback"
                 self._pair_refuse(503, "engine_unavailable", f"box {peer['name']} ({peer['proxy']}), which "
                                   f"serves {name}, does not answer: {why}", pair_served_map(conf, local))
                 self._done("503 pair peer unreachable")
@@ -7077,6 +7295,8 @@ class H(BaseHTTPRequestHandler):
             except Exception: pass
         if resp.status == 200 and models_route and not self._pair_hop():
             data = pair_models_body(data) or data      # role 10: every box's models; a peer asking gets ours
+        elif resp.status == 200 and models_route:
+            data = running_said(data)                   # role 10: and what this box runs now (decision 997)
         # 2026-10-16: whatever trailing slash the caller wrote, which the engine may serve too
         if resp.status == 200 and self.path.split("?")[0].rstrip("/") in SERVER_INFO_ROUTES:
             data = strip_key_fields(data)

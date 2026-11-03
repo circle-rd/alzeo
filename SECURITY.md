@@ -173,6 +173,11 @@ Vertex route's "parameters". A body that may hold one and cannot be read whole g
 "f" could end every generation of the box. Every request body is JSON in UTF-8, or a
 415: in UTF-16 or UTF-32, which the vLLM lanes read too (the SGLang lanes refuse it), the
 guards saw none of its fields.
+The list a box gives the other on this port carries `x_alzeo_running`, the number of
+generations it runs, which the other weighs to share a model both serve
+(docs/pair.md): a count from 0 to 100,000 is taken, anything else is not, and a box
+that lies about it can only draw more of the other's requests of that model, or send
+it fewer, which it could do by answering them slowly or not at all.
 This box's cockpit reads the other's through `/proxy/pair/<box>/state`, a route of
 this machine only, as `/proxy/stop`. A request that gets past
 it is a hop from the box of that certificate: served there or refused, never sent

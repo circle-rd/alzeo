@@ -377,6 +377,12 @@ function renderPair(){
       rows.push(['GPU', [s.gpu_temp_c != null ? `${Number(s.gpu_temp_c).toFixed(0)} °C` : '', s.gpu_power_w != null ? `${Number(s.gpu_power_w).toFixed(0)} W` : ''].filter(Boolean).join(', ')]);
     if (s.job && s.job.action) rows.push(['job', `${s.job.action}${s.job.status ? ', ' + s.job.status : ''}${s.job.elapsed != null ? ', ' + fmtDur(s.job.elapsed) : ''}`]);
     if (s.version) rows.push(['Alzeo', 'v' + s.version]);
+    // a model both boxes serve: what this box sent there, and why (docs/pair.md, decisions 996 to 998)
+    const sent = s.sent || {}, num = v => Number.isFinite(v) && v > 0 ? Math.floor(v) : 0;
+    const kept = num(sent.affinity), even = num(sent.balance), back = num(sent.failover);
+    if (kept + even + back)
+      rows.push(['shared', `${kept + even} sent there (${kept} to stay with their conversation, ${even} to even the load)` +
+                           (back ? `, ${back} served here when it did not answer` : '')]);
   }
   $('pair-facts').replaceChildren(...rows.flatMap(([k, v]) => {
     const dt = document.createElement('dt'), dd = document.createElement('dd');

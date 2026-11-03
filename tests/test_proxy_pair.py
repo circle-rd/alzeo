@@ -160,9 +160,11 @@ def fake_engine(name, model):
         served = [model]
         seen: list = []
         rids: list = []             # (the body's rid, the x-override-rid header) of every POST
+        users: list = []            # the "user" of every POST: which conversation, which turn
         bodies: list = []           # every POST's body, parsed
         delay = 0.0
-        mode = "ok"                 # "down": /v1/models answers 503 (a boot) ; "cut": a stream dies mid-way
+        mode = "ok"                 # "down": /v1/models answers 503 (a boot) ; "cut": a stream dies mid-way ;
+                                    # "busy": every POST answers 503
 
         def log_message(self, *a):
             pass
@@ -190,8 +192,11 @@ def fake_engine(name, model):
             Handler.seen.append((self.path, body.get("model"), self.headers.get("Authorization"),
                                  self.headers.get("X-Alzeo-Pair-Hop")))
             Handler.rids.append((body.get("rid"), self.headers.get("x-override-rid")))
+            Handler.users.append(body.get("user"))
             Handler.bodies.append(body)
-            time.sleep(Handler.delay)
+            if Handler.mode == "busy":
+                return self.reply({"error": {"message": "busy", "type": "server_error"}}, 503)
+            time.sleep(body.get("x_delay", Handler.delay))
             if self.path.startswith("/v1/messages"):
                 return self.reply({"id": "m", "type": "message", "role": "assistant", "model": Handler.served[0],
                                    "content": [{"type": "text", "text": f"from {name}"}]})
@@ -286,14 +291,17 @@ def tls_peer(test, handler, me="spark2", trusts=("spark1",)):
     return port
 
 
-class TwoBoxesBehindOneEndpoint(unittest.TestCase):
-    # The entry runs as a process of its own here, and in this test's process in the subclass at the end,
-    # where the coverage gate of CI sees its lines (as test_proxy_hold.py does for role 6)
+class PairFixture:
+    """Two proxies paired over TLS, each with a fake engine (MODELS: what each serves), and their helpers. The entry
+    runs as a process of its own, and in this test's process in each class's twin (INPROC), where the coverage gate
+    of CI sees its lines (as test_proxy_hold.py does for role 6)."""
     INPROC = False
+    MODELS = (("qwen3.8-27b",), ("qwen3.8-flash-next-fp4",))
 
     @classmethod
     def setUpClass(cls):
-        cls.E1, cls.E2 = fake_engine("spark1", "qwen3.8-27b"), fake_engine("spark2", "qwen3.8-flash-next-fp4")
+        cls.E1, cls.E2 = fake_engine("spark1", cls.MODELS[0][0]), fake_engine("spark2", cls.MODELS[1][0])
+        cls.E1.served[:], cls.E2.served[:] = list(cls.MODELS[0]), list(cls.MODELS[1])
         cls.engines, cls.procs, cls.inproc = [], [], None
         for h in (cls.E1, cls.E2):
             e = Engine(("127.0.0.1", 0), h)
@@ -439,8 +447,8 @@ class TwoBoxesBehindOneEndpoint(unittest.TestCase):
 
     def setUp(self):
         self.E1.seen.clear(); self.E2.seen.clear(); self.E1.rids.clear(); self.E2.rids.clear()
-        self.E1.bodies.clear(); self.E2.bodies.clear()
-        self.E1.served[:] = ["qwen3.8-27b"]; self.E2.served[:] = ["qwen3.8-flash-next-fp4"]
+        self.E1.users.clear(); self.E2.users.clear(); self.E1.bodies.clear(); self.E2.bodies.clear()
+        self.E1.served[:], self.E2.served[:] = list(self.MODELS[0]), list(self.MODELS[1])
         self.E1.delay = self.E2.delay = 0.0
         self.E1.mode = self.E2.mode = "ok"
 
@@ -525,6 +533,9 @@ class TwoBoxesBehindOneEndpoint(unittest.TestCase):
         self.addCleanup(back)
 
     # ---- routing --------------------------------------------------------------------------------
+class TwoBoxesBehindOneEndpoint(PairFixture, unittest.TestCase):
+    """Two boxes that serve two models: each request goes to the box that serves its model."""
+
     def test_a_lane_this_box_serves_stays_here(self):
         st, out, _ = self.call("/v1/chat/completions", self.chat("qwen3.8-27b"))
         self.assertEqual(st, 200, out[:300])
@@ -1643,6 +1654,185 @@ class TwoBoxesBehindOneEndpointInProcess(TwoBoxesBehindOneEndpoint):
         super().test_a_request_held_through_a_restart_is_never_answered_by_another_lane()
 
 
+class TwoBoxesServeOneModel(PairFixture, unittest.TestCase):
+    """Role 10, a model both boxes serve (decisions 996 to 998 of 2026-11-03): a conversation stays on the box that
+    holds its prefix, a new one goes to the box with the fewest requests in flight, boxes far apart share even a
+    conversation, and a box that refuses hands its request back to the entry before any byte of an answer. Both
+    serve the 27B from their start, as two boxes that loaded it do (a proxy learns what its engine serves at a
+    lane's start); spark2 lists a marker beside it, which shows in the entry's list once it read spark2's."""
+    MODELS = (("qwen3.8-27b",), ("qwen3.8-27b", "marker-27b"))
+
+    def setUp(self):
+        super().setUp()
+        self.until_listed("marker-27b")
+
+
+    def until_listed(self, model, within=15.0, port=None):
+        """Until the entry's own list shows model: the union of its list and what it kept of spark2's."""
+        deadline = time.monotonic() + within
+        while time.monotonic() < deadline:
+            st, out, _ = self.call("/v1/models", method="GET", port=port)
+            if st == 200 and model in [m.get("id") for m in json.loads(out).get("data", [])]:
+                return
+            time.sleep(0.2)
+        self.fail(f"the entry's list never showed {model}")
+
+    def turns(self, tag, n, size=9000):
+        """n turns of one conversation, as an agent sends them: each body is the one before plus a turn."""
+        msgs = [{"role": "system", "content": (tag + " ") * (size // (len(tag) + 1))}]
+        out = []
+        for i in range(n):
+            msgs = msgs + [{"role": "user", "content": f"turn {i} " + "x" * 1500}]
+            out.append({"model": "qwen3.8-27b", "max_tokens": 8, "messages": list(msgs), "user": f"{tag}-{i}"})
+            msgs = msgs + [{"role": "assistant", "content": "ok " * 100}]
+        return out
+
+    def busy(self, engine, port, key, model, n, secs):
+        """n requests of secs each, sent to the box behind port by its own client: its generations in flight, until
+        its engine has them all."""
+        threads = [threading.Thread(target=self.call, args=("/v1/chat/completions", {
+            "model": model, "max_tokens": 8, "messages": [{"role": "user", "content": "busy"}], "x_delay": secs,
+            "user": f"busy-{i}"}), kwargs={"port": port, "key": key}, daemon=True) for i in range(n)]
+        for t in threads:
+            t.start()
+        self.addCleanup(lambda: [t.join(30) for t in threads])
+        deadline = time.monotonic() + 10
+        while sum(1 for u in engine.users if u and u.startswith("busy-")) < n:
+            if time.monotonic() > deadline:
+                self.fail(f"the engine has {engine.users} of {n} busy requests")
+            time.sleep(0.05)
+        return threads
+
+    def test_a_conversation_stays_on_the_box_that_served_it(self):
+        a, b = self.turns("conv-a", 2), self.turns("conv-b", 1)
+        # spark1 runs 2, spark2 none: a new conversation goes to spark2
+        held = self.busy(self.E1, self.port1, KEY_1, "local-only", 2, 3.0)
+        st, out, _ = self.call("/v1/chat/completions", a[0])
+        self.assertEqual(st, 200, out[:300])
+        self.assertIn(b"from spark2", out)
+        self.assert_said("spark1", "-> pair spark2 for qwen3.8-27b")
+        # spark2 runs 2 and says so, spark1 none: the conversation's next turn still goes to spark2, whose cache
+        # holds all of it but the new turn, and a new conversation goes to spark1
+        for t in held:
+            t.join(30)
+        self.busy(self.E2, self.port2, KEY_2, "marker-27b", 2, 6.0)
+        self.E2.served[:] = ["qwen3.8-27b", "marker-busy"]
+        self.until_listed("marker-busy")        # read after its 2 went in: the entry knows it runs 2
+        st, out, _ = self.call("/v1/chat/completions", a[1])
+        self.assertEqual(st, 200, out[:300])
+        self.assertIn(b"from spark2", out, "the turn left the box that holds its conversation")
+        st, out, _ = self.call("/v1/chat/completions", b[0])
+        self.assertEqual(st, 200, out[:300])
+        self.assertIn(b"from spark1", out, "a new conversation went to the busier box")
+
+    def test_boxes_far_apart_share_even_a_conversation(self):
+        a = self.turns("conv-c", 2)
+        st, out, _ = self.call("/v1/chat/completions", a[0])
+        self.assertEqual(st, 200, out[:300])
+        self.assertIn(b"from spark1", out, "two idle boxes: the entry serves it, no hop")
+        # spark1 runs 6, spark2 none: more than 4 apart and more than 1.5 times as many, the turn goes to spark2
+        self.busy(self.E1, self.port1, KEY_1, "local-only", 6, 3.0)
+        st, out, _ = self.call("/v1/chat/completions", a[1])
+        self.assertEqual(st, 200, out[:300])
+        self.assertIn(b"from spark2", out)
+
+    def test_a_burst_of_new_conversations_is_shared(self):
+        self.E1.delay = self.E2.delay = 1.0
+        out = []
+        threads = [threading.Thread(target=lambda i=i: out.append(self.call(
+            "/v1/chat/completions", self.turns(f"burst-{i}", 1)[0])[1])) for i in range(8)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(60)
+        here, there = sum(b"from spark1" in o for o in out), sum(b"from spark2" in o for o in out)
+        self.assertEqual(here + there, 8, out)
+        self.assertGreaterEqual(min(here, there), 3, f"{here} here, {there} on spark2: the burst went to one box")
+
+    def test_a_box_that_refuses_hands_its_share_back(self):
+        self.busy(self.E1, self.port1, KEY_1, "local-only", 2, 3.0)
+        self.E2.mode = "busy"                   # spark2's engine answers 503: spark2 relays it
+        st, out, _ = self.call("/v1/chat/completions", self.turns("conv-d", 1)[0])
+        self.assertEqual(st, 200, out[:300])
+        self.assertIn(b"from spark1", out, "the entry answered the peer's 503 instead of serving it")
+        self.assert_said("spark1", "spark2 does not answer for qwen3.8-27b: this box serves it")
+
+    def test_a_box_that_drops_the_request_hands_it_back(self):
+        class Drops(http.server.BaseHTTPRequestHandler):
+            """A box that lists the 27B and goes as a request arrives (its power, its cable)."""
+            protocol_version = "HTTP/1.1"
+
+            def log_message(self, *a):
+                pass
+
+            def do_GET(self):
+                out = json.dumps({"object": "list", "data": [{"id": "qwen3.8-27b"}, {"id": "marker-drop"}],
+                                  "x_alzeo_running": 0}).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(out)))
+                self.end_headers()
+                self.wfile.write(out)
+
+            def do_POST(self):
+                self.connection.shutdown(socket.SHUT_RDWR)
+                self.close_connection = True
+
+        entry = self.spare_proxy("spark1-drop", KEY_1, peers=(("spark2", tls_peer(self, Drops)),))
+        self.until_listed("marker-drop", port=entry)
+        self.busy(self.E1, entry, KEY_1, "local-only", 1, 3.0)     # one here, none there: the turn goes there
+        st, out, _ = self.call("/v1/chat/completions", self.turns("conv-e", 1)[0], port=entry)
+        self.assertEqual(st, 200, out[:300])
+        self.assertIn(b"from spark1", out, "the entry answered the box that dropped it instead of serving it")
+        self.assert_said("spark1-drop", "spark2 does not answer for qwen3.8-27b: this box serves it")
+
+    def test_the_tile_says_what_this_box_sent_the_other(self):
+        self.busy(self.E1, self.port1, KEY_1, "local-only", 1, 3.0)     # one here, none there
+        st, out, _ = self.call("/v1/chat/completions", self.turns("conv-f", 1)[0])
+        self.assertIn(b"from spark2", out)
+        st, out, _ = self.call("/proxy/pair/spark2/state", method="GET")
+        self.assertEqual(st, 200, out[:300])
+        sent = json.loads(out).get("sent")
+        self.assertEqual(set(sent), {"affinity", "balance", "failover"}, sent)
+        self.assertGreaterEqual(sent["balance"], 1, sent)
+
+    def test_a_box_tells_the_other_how_many_it_runs(self):
+        st, out, _ = self.tls_call(self.pport1, "/v1/models", method="GET")
+        self.assertEqual(st, 200, out[:300])
+        self.assertEqual(json.loads(out).get("x_alzeo_running"), 0)
+        self.busy(self.E1, self.port1, KEY_1, "local-only", 2, 3.0)
+        st, out, _ = self.tls_call(self.pport1, "/v1/models", method="GET")
+        self.assertEqual(json.loads(out).get("x_alzeo_running"), 2)
+        st, out, _ = self.call("/v1/models", method="GET")
+        self.assertEqual(st, 200, out[:300])
+        self.assertNotIn(b"x_alzeo_running", out, "a client of the box sees what the other box reads")
+
+
+class TwoBoxesServeOneModelInProcess(TwoBoxesServeOneModel):
+    INPROC = True
+
+    def test_a_conversation_stays_on_the_box_that_served_it(self):
+        super().test_a_conversation_stays_on_the_box_that_served_it()
+
+    def test_boxes_far_apart_share_even_a_conversation(self):
+        super().test_boxes_far_apart_share_even_a_conversation()
+
+    def test_a_burst_of_new_conversations_is_shared(self):
+        super().test_a_burst_of_new_conversations_is_shared()
+
+    def test_a_box_that_refuses_hands_its_share_back(self):
+        super().test_a_box_that_refuses_hands_its_share_back()
+
+    def test_a_box_that_drops_the_request_hands_it_back(self):
+        super().test_a_box_that_drops_the_request_hands_it_back()
+
+    def test_the_tile_says_what_this_box_sent_the_other(self):
+        super().test_the_tile_says_what_this_box_sent_the_other()
+
+    def test_a_box_tells_the_other_how_many_it_runs(self):
+        super().test_a_box_tells_the_other_how_many_it_runs()
+
+
 class ThePairsPieces(unittest.TestCase):
     """The pair's functions one by one, in this process: what pair.json may say, the TLS made of it, how a
     peer's list is read and kept, the hop header, the union of /v1/models, the pair port and its keeper."""
@@ -2094,6 +2284,84 @@ class ThePairsPieces(unittest.TestCase):
         self.assertEqual(self.mod._pair_box_of(ident("rogue")[1]), "spark3")
         self.assertIsNone(self.mod._pair_box_of(ident("spark2")[1]))
         self.assertIsNone(self.mod._pair_box_of(None))
+
+
+    # Role 10, a model both boxes serve (decisions 996 to 998): the pieces of the decision
+
+    def conversation(self, turns, max_tokens=8, stream=False):
+        msgs = [{"role": "system", "content": "a system prompt " * 600}]
+        for i in range(turns):
+            msgs += [{"role": "user", "content": f"turn {i} " + "y" * 3000}, {"role": "assistant", "content": "ok"}]
+        return json.dumps({"model": "qwen3.8-27b", "max_tokens": max_tokens, "stream": stream,
+                           "messages": msgs[:-1]}).encode()
+
+    def test_the_blocks_of_a_turn_start_the_blocks_of_the_next(self):
+        m, route = self.mod, "/v1/chat/completions"
+        one, size1 = m.prefix_blocks(self.conversation(1), route)
+        two, size2 = m.prefix_blocks(self.conversation(3), route)
+        self.assertEqual([n for n, _ in one], [4096, 8192])
+        self.assertEqual([n for n, _ in two], [4096, 8192, 16384])
+        self.assertLess(size1, 16384)
+        self.assertEqual(two[:2], one, "the next turn does not start with the blocks of this one")
+        # what a client changes between two turns, as role 9 reads it, changes no block
+        self.assertEqual(m.prefix_blocks(self.conversation(3, max_tokens=32000, stream=True), route)[0], two)
+        # each block is the fingerprint of the body's first bytes so read, the route first: one pass, no copy
+        body = self.conversation(3)
+        canon = m.RESEND_SKIP_RE.sub(lambda x: x.group(1), body)
+        self.assertEqual(size2, len(canon))
+        for n, fp in two:
+            self.assertEqual(fp, hashlib.sha256(route.encode() + canon[:n]).hexdigest()[:16])
+        self.assertEqual(m.prefix_blocks(b'{"model": "qwen3.8-27b"}', route), ([], 0), "a short body has no block")
+        self.assertNotEqual(m.prefix_blocks(body, "/v1/completions")[0], two, "another route, other blocks")
+
+    def test_a_box_says_what_it_runs_as_a_count_or_not_at_all(self):
+        run = self.mod.pair_running
+        self.assertEqual(run({"x_alzeo_running": 3}), 3)
+        self.assertEqual(run({"x_alzeo_running": 0}), 0)
+        for bad in (True, -1, 3.0, "3", None, [], {"n": 1}, 10 ** 9):
+            self.assertIsNone(run({"x_alzeo_running": bad}), bad)
+        self.assertIsNone(run({}))
+        self.assertIsNone(run(["x_alzeo_running"]))
+
+    def test_the_blocks_kept_for_a_box_are_bounded_and_age_out(self):
+        m = self.mod
+        m._AFFINITY.clear()
+        self.addCleanup(m._AFFINITY.clear)
+        blocks = [(4096 << i, f"fp{i:02d}") for i in range(4)]
+        m.affinity_note("b", blocks, 100.0)
+        self.assertEqual(m.affinity_of("b", blocks, 100.0), 4096 << 3, "the longest block known wins")
+        self.assertEqual(m.affinity_of("b", blocks[:2], 100.0), 8192)
+        self.assertEqual(m.affinity_of("c", blocks, 100.0), 0, "another box knows none")
+        self.assertEqual(m.affinity_of("b", blocks, 100.0 + m.PAIR_AFFINITY_KEEP_S), 0, "kept no longer")
+        m.affinity_forget("b", blocks[2:])
+        self.assertEqual(m.affinity_of("b", blocks, 100.0), 8192, "the blocks forgotten are gone")
+        many = [(4096, f"x{i}") for i in range(m.PAIR_AFFINITY_MAX + 10)]
+        m.affinity_note("b", many, 200.0)
+        self.assertEqual(len(m._AFFINITY["b"]), m.PAIR_AFFINITY_MAX)
+        self.assertNotIn("x0", m._AFFINITY["b"], "the oldest go first")
+        self.assertIn(f"x{m.PAIR_AFFINITY_MAX + 9}", m._AFFINITY["b"])
+
+    def test_a_box_counts_what_it_sent_the_other_even_past_a_read(self):
+        m, conf = self.mod, {"name": "me", "peers": []}
+        for d in (m._PAIR_SENT, m._PAIR_OUT):
+            d.pop("p", None)
+        m._PAIR_MODELS["p"] = {"ts": time.monotonic(), "models": (), "running": 5}
+        self.addCleanup(m._PAIR_MODELS.pop, "p", None)
+        self.assertEqual(m.pair_load("p", conf), 5, "what it said it runs")
+        m.pair_sent("p", 1); m.pair_sent("p", 1)
+        self.assertEqual(m.pair_load("p", conf), 7, "and what this box sent it since")
+        # a read that left before those two reached its engine, back after they were sent: it says 0
+        m._PAIR_MODELS["p"]["running"] = 0
+        m._PAIR_SENT["p"] = 0
+        self.assertEqual(m.pair_load("p", conf), 2, "the requests in flight there were lost")
+        m.pair_sent("p", -1); m.pair_sent("p", -1)
+        self.assertEqual(m.pair_load("p", conf), 0)
+        # this box: its generations and what the sharing kept here, each counted once
+        a, b = object(), object()
+        with m._GEN_LOCK:
+            m._GENERATIONS.add(a); m._PAIR_HERE.update((a, b))
+        self.addCleanup(lambda: (m._GENERATIONS.discard(a), m._PAIR_HERE.difference_update((a, b))))
+        self.assertEqual(m.pair_load("me", conf), 2)
 
 
 class TheLaneNamesAreThoseTheUnitsServe(unittest.TestCase):
