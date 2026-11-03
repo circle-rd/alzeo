@@ -1983,6 +1983,7 @@ class TwoBoxesServeOneModel(PairFixture, unittest.TestCase):
 
     def test_this_box_hands_a_request_its_engine_refuses_to_the_other(self):
         self.E1.mode = "busy"                   # spark1's engine answers 503 to generations: a lane stopping or starting
+        before = self.sent()
         for stream in (False, True):
             with self.subTest(stream=stream):
                 body = dict(self.turns(f"conv-g-{stream}", 1)[0], stream=stream)
@@ -1992,8 +1993,8 @@ class TwoBoxesServeOneModel(PairFixture, unittest.TestCase):
                 if stream:
                     self.assertIn(b"data: [DONE]", out)
         self.assert_said("spark1", "this box's engine does not answer for qwen3.8-27b: trying spark2")
-        st, out, _ = self.call("/proxy/pair/spark2/state", method="GET")
-        self.assertGreaterEqual(json.loads(out)["sent"]["rescued"], 2, out[:300])
+        # counted in delta: an earlier test's rescues never stand in for these two (review, 2026-11-03)
+        self.assertEqual(self.moved(before, self.sent()), {"rescued": 2})
 
     def test_a_request_this_boxs_engine_died_on_goes_to_no_other_engine(self):
         # the request may be what took the engine down: sent on, it could take the other box's down too (security
