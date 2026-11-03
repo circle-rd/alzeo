@@ -2192,6 +2192,29 @@ class ThePairsPieces(unittest.TestCase):
         self.mod._PAIR["seen"] = 0.0
         self.assertIsNone(self.mod.pair_conf())
 
+    def test_a_box_paired_again_under_a_name_inherits_nothing_of_the_sharing(self):
+        # the conversations sent to a box, its pause, its tile's counts belong to that certificate: another box paired
+        # under the same name got them for 10 min, each conversation computed again there (review, 2026-11-03)
+        m = self.mod
+        port = localports.held(self)
+        def facts(name):
+            return (name in m._AFFINITY, name in m._PAIR_COOL, name in m._PAIR_SPREAD)
+        def note(name):
+            m.affinity_note(name, [(4096, "fp-" + name)], time.monotonic())
+            m._PAIR_COOL[name] = time.monotonic() + 30
+            m.pair_spread_count(name, "balance")
+        self.addCleanup(lambda: [d.clear() for d in (m._AFFINITY, m._PAIR_COOL, m._PAIR_SPREAD)])
+        self.conf_now({"name": "spark1", "peers": [peer_entry(self.cfg, "spark2", port),
+                                                   peer_entry(self.cfg, "spark3", port)]})
+        note("spark2"); note("spark3")
+        # spark2 paired again, another box under its name; spark3 the same box, read again
+        self.conf_now({"name": "spark1", "peers": [peer_entry(self.cfg, "spark2", port, who="rogue"),
+                                                   peer_entry(self.cfg, "spark3", port)]})
+        self.assertEqual(facts("spark2"), (False, False, False), "another box got the old one's facts")
+        self.assertEqual(facts("spark3"), (True, True, True), "the same box lost its facts")
+        self.conf_now({"name": "spark1", "peers": []})          # and a box that left the pair
+        self.assertEqual(facts("spark3"), (False, False, False))
+
     def test_the_tls_of_a_pair_is_checked_whole(self):
         good = peer_entry(self.cfg, "spark2", localports.held(self))
         conf = self.conf_now({"name": "spark1", "peers": [good]})

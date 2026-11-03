@@ -3397,8 +3397,14 @@ def pair_conf():
                 conf = _pair_parse(f.read())
             if conf["peers"]:
                 _pair_tls(conf)
+            before = {q["name"]: q["sha256"] for q in ((_PAIR["conf"] or {}).get("peers") or ())}
             _PAIR.update(conf=conf, error=None, loaded=time.monotonic())
             _PAIR_MODELS.clear()
+            after = {q["name"]: q["sha256"] for q in conf["peers"]}
+            # what was learned of a box that left the pair, or of another box under its name (paired again), is not
+            # this one's: its conversations went 10 min to a box that held none of them (found in review, 2026-11-03)
+            for gone in [n for n, pin in before.items() if after.get(n) != pin]:
+                _pair_forget(gone)
             tls = f", over TLS, this box's certificate sha256 {conf['tls']['mine'][:16]}..." if conf["peers"] else ""
             log(f"pair: {conf['name']} with {', '.join(p['name'] + ' (' + p['proxy'] + ')' for p in conf['peers']) or 'no peer'}"
                 f"{tls} ({PAIR_FILE})")
@@ -3886,6 +3892,14 @@ def _pair_refused_here(code, data):
     if code == 400 and b'"context_length_exceeded"' in (data or b""):
         return "too long"
     return None
+
+
+def _pair_forget(box):
+    """Every fact of the sharing kept about box: the conversations sent there, its pause, its tile's counts."""
+    with _AFFINITY_LOCK:
+        _AFFINITY.pop(box, None)
+    _PAIR_COOL.pop(box, None)
+    _PAIR_SPREAD.pop(box, None)
 
 
 def pair_spread_count(peer, why):
