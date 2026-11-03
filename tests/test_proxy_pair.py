@@ -1137,7 +1137,16 @@ class TwoBoxesBehindOneEndpoint(unittest.TestCase):
         self.assertEqual(st, 200)
         self.assertEqual(rows, {"qwen3.8-27b": "sym-a", "qwen3.8-flash-next-fp4": "sym-b"})
         count = lambda label: self.journal(label).count("GET /v1/models ok get")
-        before = (count("sym-a"), count("sym-b"))
+        # each box reads the other's list once when the pair loads, and under load that read can land after the
+        # client's last GET (the single-process CI step, 2026-11-03): the counts settle first; a loop never would
+        before, still_since, deadline = None, None, time.monotonic() + 15
+        while time.monotonic() < deadline:
+            now = (count("sym-a"), count("sym-b"))
+            if now != before:
+                before, still_since = now, time.monotonic()
+            elif time.monotonic() - still_since >= 1.5:
+                break
+            time.sleep(0.25)
         time.sleep(2)                       # a loop would go on asking with nobody calling
         self.assertEqual((count("sym-a"), count("sym-b")), before, "no GET goes on once the client stopped")
         self.assertLessEqual(before[1], before[0], "each GET of the client reads the peer's own list once at most")
