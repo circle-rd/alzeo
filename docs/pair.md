@@ -81,10 +81,13 @@ one goes:
   other box sent it, and the entry counts what it sent since it last read it: a burst of requests is shared as
   it comes, not sent all to one box between two reads. A box that does not say it, one of a version before
   v1.43.0, gets no shared request: update both boxes.
-- **Boxes far apart share even a conversation.** When the box a conversation is on has more than 4 requests
-  in flight more than the other, and more than 1.5 times as many, its next turn goes to the other box: a long
-  wait for one agent costs more than its prefix computed again. These are the thresholds of SGLang's router
-  (64 and 1.5), brought to the 8 requests a lane runs at once.
+- **Boxes far apart share even a conversation.** When the box a conversation is on runs more requests than
+  the other by more than half of those its lane runs at once, and more than 1.5 times as many, its next turn
+  goes to the other box: a long wait for one agent costs more than its prefix computed again. The 27B runs 8 at
+  once, so 5 ahead moves a conversation, and a lane that runs 16 (Kolibri, Nemotron Bolt) moves it 9 ahead.
+  These are the thresholds of SGLang's router (64 and 1.5), brought to each lane. Each box reads how many its
+  lane runs at once in its unit (`--max-running-requests`, `--max-num-seqs`) and says it to the other. A box
+  that says nothing of it counts as a lane of 8.
 - **A box that cannot serve a request hands it on**, before a byte of its answer went out:
   - When the other box does not answer (it gets 3 s to take the connection), or answers 503 (its engine
     away, or its memory floor) or 529 (the floor, in the Anthropic dialect), the entry serves the request

@@ -300,13 +300,14 @@ def tls_peer(test, handler, me="spark2", trusts=("spark1",)):
     return port
 
 
-def fake_peer(listed, post, running=0):
+def fake_peer(listed, post, running=0, slots=None):
     """The pair port of another box, for a spare entry: it lists `listed` (ids, or None: its list fails with a 503)
-    and answers every POST with `post` ((status, body)); both may change during a test (state). `seen`: its POSTs.
-    running: the count its list says (x_alzeo_running, none of them the entry's), None for none, as a box of v1.42.0."""
+    and answers every POST with `post` ((status, body)); all three may change during a test (state). `seen`: its POSTs.
+    running: the count its list says (x_alzeo_running, none of them the entry's), None for none, as a box of v1.42.0.
+    slots: what it says its lane runs at once (x_alzeo_slots), None for nothing said."""
     class Peer(http.server.BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
-        state = {"listed": listed, "post": post}
+        state = {"listed": listed, "post": post, "running": running}
         seen: list = []
 
         def log_message(self, *a):
@@ -325,8 +326,10 @@ def fake_peer(listed, post, running=0):
             if ids is None:
                 return self.reply(503, {"error": {"type": "engine_unavailable", "message": "its engine is away"}})
             listing = {"object": "list", "data": [{"id": i, "object": "model"} for i in ids]}
-            if running is not None:
-                listing["x_alzeo_running"], listing["x_alzeo_running_yours"] = running, 0
+            if Peer.state["running"] is not None:
+                listing["x_alzeo_running"], listing["x_alzeo_running_yours"] = Peer.state["running"], 0
+            if slots is not None:
+                listing["x_alzeo_slots"] = slots
             self.reply(200, listing)
 
         def do_POST(self):
@@ -1927,6 +1930,53 @@ class TwoBoxesServeOneModel(PairFixture, unittest.TestCase):
         self.assertEqual(st, 200, out[:300])
         self.assertIn(b"from spark2", out, "5 apart kept a conversation on the busier box")
 
+    def test_a_lane_of_16_keeps_a_conversation_5_ahead(self):
+        # decision 1014: a box may run half its lane's slots ahead, 8 of 16. 5 ahead moved a conversation off a box
+        # with 11 places free, its prefix computed again on the other one
+        if not self.INPROC:
+            self.skipTest("this box's slots are set in this test's process")
+        saved = self.mod.unit_slots
+        self.mod.unit_slots = lambda: 16
+        self.addCleanup(setattr, self.mod, "unit_slots", saved)
+        a = self.turns("conv-s16", 2)
+        st, out, _ = self.call("/v1/chat/completions", a[0])
+        self.assertEqual(st, 200, out[:300])
+        self.assertIn(b"from spark1", out, "two idle boxes: the entry serves it, no hop")
+        held = self.busy(self.E1, self.port1, KEY_1, "local-only", 5, 4.0)
+        st, out, _ = self.call("/v1/chat/completions", a[1])
+        self.assertEqual(st, 200, out[:300])
+        self.assertIn(b"from spark1", out, "5 ahead on a lane of 16 moved a conversation off a box with room to spare")
+        for th in held:
+            th.join(30)
+        self.E1.users.clear()
+
+    def test_the_gap_is_half_the_slots_the_other_box_says(self):
+        # decision 1014, the other box's side: a conversation it holds stays there 5 ahead when its lane runs 16 at
+        # once, and comes here when it says nothing of its slots (the 27B's 8, a gap of 4)
+        for slots in (16, None):
+            with self.subTest(slots=slots):
+                Peer = fake_peer(["qwen3.8-27b", f"marker-s{slots}-a"], PEER_ANSWER, slots=slots)
+                entry = self.spare_proxy(f"spark1-s{slots}", KEY_1, peers=(("spark2", tls_peer(self, Peer)),))
+                self.until_listed(f"marker-s{slots}-a", port=entry)
+                a = self.turns(f"conv-gap-{slots}", 2)
+                held = self.busy(self.E1, entry, KEY_1, "local-only", 1, 3.0)     # one here, none there
+                st, out, _ = self.call("/v1/chat/completions", a[0], port=entry)
+                self.assertIn(b"from the peer", out, out[:300])
+                for th in held:
+                    th.join(30)
+                self.E1.users.clear()
+                # now it runs 5 of its own clients' generations, and this box none
+                Peer.state.update(running=5, listed=["qwen3.8-27b", f"marker-s{slots}-b"])
+                self.until_listed(f"marker-s{slots}-b", port=entry)
+                st, out, _ = self.call("/v1/chat/completions", a[1], port=entry)
+                self.assertEqual(st, 200, out[:300])
+                if slots == 16:
+                    self.assertIn(b"from the peer", out, "5 ahead on a lane of 16 moved the conversation off its box")
+                    self.assertEqual(len(Peer.seen), 2)
+                else:
+                    self.assertIn(b"from spark1", out, "5 ahead on a box of unknown slots kept the conversation there")
+                    self.assertEqual(len(Peer.seen), 1)
+
     def test_a_burst_of_new_conversations_is_shared(self):
         self.E1.delay = self.E2.delay = 1.0
         out = []
@@ -2770,6 +2820,88 @@ class ThePairsPieces(unittest.TestCase):
             self.assertIsNone(run(said(3, bad)), bad)
         self.assertIsNone(run({}))
         self.assertIsNone(run(["x_alzeo_running"]))
+
+    def test_a_box_says_its_slots_as_a_count_or_not_at_all(self):
+        slots = self.mod.pair_slots
+        self.assertEqual(slots({"x_alzeo_slots": 16}), 16)
+        self.assertEqual(slots({"x_alzeo_slots": 1}), 1)
+        for bad in (0, -1, True, False, 8.0, "8", None, [], {"n": 8}, self.mod.PAIR_SLOTS_MAX + 1):
+            self.assertIsNone(slots({"x_alzeo_slots": bad}), bad)
+        self.assertIsNone(slots({}))
+        self.assertIsNone(slots(["x_alzeo_slots"]))
+
+    def test_the_gap_a_box_may_run_ahead_is_half_its_lanes_slots(self):
+        # decision 1014: the 64 of SGLang's router brought to each lane
+        gap = self.mod.pair_spread_gap
+        for slots, want in ((8, 4), (16, 8), (24, 12), (4, 2), (5, 2), (3, 1), (2, 1), (1, 1)):
+            self.assertEqual(gap(slots), want, slots)
+        for unknown in (None, 0, -8, True, 8.0, "16", self.mod.PAIR_SLOTS_MAX + 1):
+            self.assertEqual(gap(unknown), 4, f"{unknown!r}: the 27B's 8, as before v1.43.0")
+
+    def test_the_slots_of_a_lane_are_read_from_its_engines_command(self):
+        slots_in = self.mod.slots_in
+        self.assertEqual(slots_in(["argv[]=docker run x --max-running-requests 8 --mem-fraction-static 0.76 ;"]), 8)
+        self.assertEqual(slots_in(["vllm serve m --max-num-seqs=16 --port 30000"]), 16)
+        self.assertEqual(slots_in(["/home/u/launch.sh", "exec vllm serve m \\\n  --max-num-seqs 24 \\\n"]), 24)
+        self.assertEqual(slots_in(["--max-num-seqs 8", "x --max-num-seqs=8"]), 8, "said twice alike")
+        self.assertIsNone(slots_in(["--max-num-seqs 8", "--max-num-seqs 16"]), "two values: not known")
+        self.assertIsNone(slots_in(["--max-running-requests ${N}", "--max-num-seqs-per-step 9", "--max-num-seqs 8.5"]))
+        self.assertIsNone(slots_in(["xx--max-num-seqs 8"]), "the end of another flag")
+        self.assertIsNone(slots_in([""]))
+        self.assertIsNone(slots_in([]))
+
+    def test_this_box_reads_its_slots_from_its_active_unit_and_the_script_it_runs(self):
+        m = self.mod
+        tmp = pathlib.Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, tmp, True)
+        script = tmp / "launch-lane.sh"
+        script.write_text("#!/bin/bash\n# --max-num-seqs 99, a comment, counts not\nexec vllm serve m --max-num-seqs 16\n")
+        shown = ("ActiveState=inactive\nExecStart={ path=/usr/bin/docker ; argv[]=docker run x --max-running-requests 8 "
+                 f"; }}\n\nActiveState=active\nExecStart={{ path={script} ; argv[]={script} ; }}\n")
+        calls = []
+
+        def run(argv, **kw):
+            calls.append(argv)
+            return subprocess.CompletedProcess(argv, 0, shown, "")
+        saved = (m.HOLD_UNITS, m.subprocess)
+        m.HOLD_UNITS = ("qwen38-a.service", "qwen38-b.service")
+        m.subprocess = types.SimpleNamespace(run=run)
+        m._UNIT_SLOTS.update(ts=-1e9, n=None)
+
+        def restore():
+            m.HOLD_UNITS, m.subprocess = saved
+            m._UNIT_SLOTS.update(ts=-1e9, n=None)
+        self.addCleanup(restore)
+        self.assertEqual(m.unit_slots(), 16, "the active unit's script, its comment left out")
+        self.assertEqual(m.unit_slots(), 16)
+        self.assertEqual(len(calls), 1, "read again 10 s on at most")
+        self.assertEqual(calls[0][:2], ["systemctl", "show"])
+        m.HOLD_UNITS = ()
+        m._UNIT_SLOTS.update(ts=-1e9, n=None)
+        self.assertIsNone(m.unit_slots(), "no unit named: a proxy run by hand or by a test")
+
+    def test_this_box_says_its_slots_in_the_list_it_gives_the_other(self):
+        m = self.mod
+        data = json.dumps({"object": "list", "data": [{"id": "qwen3.8-27b", "object": "model"}]}).encode()
+        saved = m.unit_slots
+        self.addCleanup(setattr, m, "unit_slots", saved)
+        m.unit_slots = lambda: 16
+        self.assertEqual(json.loads(m.running_said(data, "spark2"))["x_alzeo_slots"], 16)
+        m.unit_slots = lambda: None
+        self.assertNotIn("x_alzeo_slots", json.loads(m.running_said(data, "spark2")), "slots not known, none said")
+
+    def test_the_gap_is_that_of_the_box_the_turn_would_go_to(self):
+        m = self.mod
+        conf = {"name": "me", "peers": []}
+        saved = m.unit_slots
+        self.addCleanup(setattr, m, "unit_slots", saved)
+        m.unit_slots = lambda: 24
+        self.assertEqual(m.pair_slots_of("me", conf), 24, "this box: its unit")
+        with m._PAIR_LOCK:
+            m._PAIR_MODELS["peer-s"] = {"slots": 16}
+        self.addCleanup(m._PAIR_MODELS.pop, "peer-s", None)
+        self.assertEqual(m.pair_slots_of("peer-s", conf), 16, "the other box: what its list said")
+        self.assertIsNone(m.pair_slots_of("gone", conf))
 
     def test_the_blocks_kept_for_a_box_are_bounded_and_age_out(self):
         m = self.mod

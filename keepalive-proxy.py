@@ -63,15 +63,16 @@ v6.52: two boxes that serve one model share its requests (role 10, decisions 996
 for a model this box serves, which the other box of its pair serves too, goes to the box it shares its
 longest known prefix with (fingerprints of its first 4 KiB, 8 KiB, 16 KiB and so on, kept 10 minutes
 per box) when that covers 30 % of it or 32 KiB, else to the box with the fewest requests in flight
-(each box says in the list it gives the other how many generations it runs, x_alzeo_running, and how
-many of them the other box sent, x_alzeo_running_yours), and to that one whenever the two are more
-than 4 requests and 1.5 times apart. A box that refuses it before a byte went out hands it back. One
-that does not answer (PAIR_SHARE_CONNECT_S for its connection) or says 503 or 529 then gets no shared
-request for PAIR_SPREAD_COOL_S, one that finds the prompt too long for its pool still gets the shorter
-ones. What this box refuses before it sends (its memory floor, a prompt too long for its pool, a long
-prompt its warming engine cannot measure), and what its engine refuses at the first try (connection
-refused, 502, 503, 504), goes to the other box. A request whose answer began, a token count, and a
-request with X-Alzeo-Here: 1 stay on the box they were sent to.
+(each box says in the list it gives the other how many generations it runs, x_alzeo_running, how
+many of them the other box sent, x_alzeo_running_yours, and how many its lane runs at once, read in
+its unit, x_alzeo_slots), and to that one whenever the box it would go to runs more than half its
+lane's slots ahead of the other, and 1.5 times as many (decision 1014). A box that refuses it before
+a byte went out hands it back. One that does not answer (PAIR_SHARE_CONNECT_S for its connection) or
+says 503 or 529 then gets no shared request for PAIR_SPREAD_COOL_S, one that finds the prompt too long
+for its pool still gets the shorter ones. What this box refuses before it sends (its memory floor, a
+prompt too long for its pool, a long prompt its warming engine cannot measure), and what its engine
+refuses at the first try (connection refused, 502, 503, 504), goes to the other box. A request whose
+answer began, a token count, and a request with X-Alzeo-Here: 1 stay on the box they were sent to.
 
 v6.51: a request body is JSON in UTF-8, or a 415: in UTF-16 or UTF-32, which the vLLM lanes read too
 (FastAPI's json, where the SGLang lanes' orjson refuses it), the guards here found none of the fields
@@ -3530,7 +3531,7 @@ def _peer_models_read(peer):
     # answered: the peer's proxy gave an HTTP answer over the pair's TLS, which proves the pair both ways even
     # when its engine does not answer (a 503 while a lane loads); pair.py's check reads it (found in review,
     # 2026-11-03: add undid a working pair while either engine was stopped)
-    models, rows, err, answered, running = (), [], None, False, None
+    models, rows, err, answered, running, slots = (), [], None, False, None, None
     t0 = time.monotonic()
     try:
         # on the pair port, a hop: the peer answers with its own engine's list, never the union it shows its
@@ -3545,7 +3546,7 @@ def _peer_models_read(peer):
         rows = [_pair_row(m) for m in data["data"] if isinstance(m, dict) and isinstance(m.get("id"), str)
                 and _PAIR_SAFE_ID.fullmatch(m["id"])]
         models = tuple(m["id"] for m in rows)
-        running = pair_running(data)
+        running, slots = pair_running(data), pair_slots(data)
     except urllib.error.HTTPError as e:
         answered, err = True, f"HTTP {e.code} on /v1/models"
     except Exception as e:      # an address that is no HTTP server, a broken answer: the peer does not answer
@@ -3561,7 +3562,8 @@ def _peer_models_read(peer):
         # running: the generations it runs for its own clients (pair_running), which pair_load adds to this box's own
         # requests there, counted here as they go and end
         _PAIR_MODELS[peer["name"]] = {"ts": now, "models": models, "rows": rows, "error": err, "answered": answered,
-                                      "known": known, "known_ts": known_ts, "read_s": now - t0, "running": running}
+                                      "known": known, "known_ts": known_ts, "read_s": now - t0, "running": running,
+                                      "slots": slots}
     return models
 
 
@@ -3737,6 +3739,9 @@ def running_said(data, box):
         return data
     if not isinstance(j, dict) or not isinstance(j.get("data"), list):
         return data
+    slots = unit_slots()
+    if slots is not None:
+        j["x_alzeo_slots"] = slots          # what its lane runs at once: the gap that box allows here (decision 1014)
     with _GEN_LOCK:
         j["x_alzeo_running"] = len(_GENERATIONS)
         j["x_alzeo_running_yours"] = sum(1 for h in _GENERATIONS if getattr(h, "_pair_box", None) == box)
@@ -3768,8 +3773,9 @@ def pair_served_map(conf, local):
 # other box, all of it is computed again (100,000 tokens: tens of seconds on the 27B). So a request goes to the box
 # it shares its longest known prefix with, when that covers PAIR_AFFINITY_MIN of it (the cache_threshold of
 # SGLang's router), any other one to the box with the fewest requests in flight (this one when they tie), and any
-# one while the boxes are far apart to the one with the fewest: PAIR_SPREAD_ABS more AND PAIR_SPREAD_REL times as
-# many, the thresholds of SGLang's router (64 and 1.5) scaled to the 8 requests a lane runs at once.
+# one while the boxes are far apart to the one with the fewest: more than half the requests its lane runs at once
+# ahead (pair_spread_gap) AND PAIR_SPREAD_REL times as many, the thresholds of SGLang's router (64 and 1.5) brought
+# to each lane (decision 1014).
 PAIR_AFFINITY_MIN = 0.30
 # or that much shared, whatever the body's size: Claude Code writes its system prompt and its tools after the conversation
 # ({model, messages, system, tools, ...}), so its bodies share no more than their messages, and 30 % of the whole body
@@ -3778,7 +3784,9 @@ PAIR_AFFINITY_BYTES = 32 * 1024
 PAIR_AFFINITY_FIRST = 4096              # the first block, in bytes; each next one is twice as long
 PAIR_AFFINITY_KEEP_S = float(os.environ.get("PAIR_AFFINITY_KEEP_S") or 600)    # an agent's pause
 PAIR_AFFINITY_MAX = 8192                # the blocks kept per box, the oldest dropped first
-PAIR_SPREAD_ABS, PAIR_SPREAD_REL = 4, 1.5
+PAIR_SPREAD_REL = 1.5
+PAIR_SLOTS_DEFAULT = 8                  # a lane whose slots are not known: the 27B's 8, a gap of 4 as before v1.43.0
+PAIR_SLOTS_MAX = 4096                   # what a peer may say its lane runs at once; past it, its word is not taken
 PAIR_SPREAD_COOL_S = float(os.environ.get("PAIR_SPREAD_COOL_S") or 30)   # a box that refused one gets none so long
 PAIR_RUNNING_MAX = 100000               # what a peer may say it runs; past it, its word is not taken
 _AFFINITY: dict = {}                    # box -> OrderedDict(block fingerprint -> when a request with it went there)
@@ -3882,6 +3890,33 @@ def pair_running(data):
     if total is None or yours is None or yours > total:
         return None
     return total - yours
+
+
+def pair_slots(data):
+    """What a peer's list says its lane runs at once, "x_alzeo_slots", or None when it says nothing it may mean: a
+    count from 1 to PAIR_SLOTS_MAX, never a bool, a float or a string."""
+    n = data.get("x_alzeo_slots") if isinstance(data, dict) else None
+    return n if isinstance(n, int) and not isinstance(n, bool) and 1 <= n <= PAIR_SLOTS_MAX else None
+
+
+def pair_spread_gap(slots):
+    """How many more requests in flight than the least loaded box a box may run before a conversation leaves it
+    (decision 1014): half the requests its lane runs at once, the 64 of SGLang's router brought to each lane. 4 of the
+    27B's 8 as before, 8 of a lane of 16 (Kolibri, Bolt), 12 of Flash's 24, 2 of Nemotron Super's 4: on a lane of 16,
+    5 ahead moved a conversation off a box with room to spare, its prefix computed again elsewhere. A box whose slots
+    are not known counts PAIR_SLOTS_DEFAULT."""
+    n = slots if isinstance(slots, int) and not isinstance(slots, bool) and 1 <= slots <= PAIR_SLOTS_MAX \
+        else PAIR_SLOTS_DEFAULT
+    return max(1, n // 2)
+
+
+def pair_slots_of(box, conf):
+    """The requests box's lane runs at once: this box's as its unit starts its engine, a peer's as its list said at
+    its last read, or None."""
+    if box == conf["name"]:
+        return unit_slots()
+    with _PAIR_LOCK:
+        return (_PAIR_MODELS.get(box) or {}).get("slots")
 
 
 def pair_sent(peer, n):
@@ -4566,6 +4601,51 @@ def unit_sets_rid_override():
     except Exception:
         found = None
     _UNIT_OVERRIDE.update(ts=now, set=found)
+    return found
+
+
+_UNIT_SLOTS = {"ts": -1e9, "n": None}
+_SLOTS_FLAG = re.compile(r"(?<![\w-])--max-(?:running-requests|num-seqs)(?:=|[ \t]+)(\d+)(?![\w.])")
+
+
+def slots_in(texts):
+    """The requests an engine runs at once as its command says, --max-running-requests (SGLang) or --max-num-seqs
+    (vLLM), or None when it says none, or two values."""
+    found = {int(m.group(1)) for x in texts for m in _SLOTS_FLAG.finditer(x)}
+    return found.pop() if len(found) == 1 else None
+
+
+def unit_slots():
+    """The requests the lane this box serves runs at once (decision 1014): what the active unit named in
+    PROXY_HOLD_UNITS starts its engine with, in its ExecStart or in a script it runs, or None when systemd does not
+    say (no unit named, as for a proxy run by hand or by a test) or the unit sets none. Read again 10 s on at most:
+    a Load, or the tier of the Flash lane, changes it."""
+    if not HOLD_UNITS:
+        return None
+    now = time.monotonic()
+    if now - _UNIT_SLOTS["ts"] <= 10:
+        return _UNIT_SLOTS["n"]
+    found = None
+    try:
+        out = subprocess.run(["systemctl", "show", *HOLD_UNITS, "-p", "ActiveState", "-p", "ExecStart"],
+                             capture_output=True, text=True, timeout=3)
+        for block in (out.stdout.split("\n\n") if out.returncode == 0 else ()):
+            props = dict(ln.split("=", 1) for ln in block.splitlines() if "=" in ln)
+            if props.get("ActiveState") != "active":
+                continue
+            texts = [props.get("ExecStart", "")]
+            for script in re.findall(r"(/\S+\.sh)\b", texts[0]):
+                try:
+                    with open(script, encoding="utf-8") as f:
+                        texts.append("\n".join(ln for ln in f.read().splitlines()
+                                               if not ln.lstrip().startswith("#")))
+                except OSError:
+                    pass
+            found = slots_in(texts)
+            break
+    except Exception:
+        found = None
+    _UNIT_SLOTS.update(ts=now, n=found)
     return found
 
 # Every character a reader of the journal takes for the end of a line, and every other
@@ -6654,6 +6734,7 @@ class H(BaseHTTPRequestHandler):
         boxes = ([] if floor_refusal() is not None else [me]) + [p["name"] for p in peers]
         match = {b: affinity_of(b, blocks, now) for b in boxes}
         best = max(match.values())
+        gap = {b: pair_spread_gap(pair_slots_of(b, conf)) for b in boxes}
         with _SPREAD_LOCK:
             # weighed and reserved at once: a burst between two reads of the lists does not all go to one box
             load = {b: pair_load(b, conf) for b in boxes}
@@ -6663,7 +6744,7 @@ class H(BaseHTTPRequestHandler):
             else:
                 pick, why = first(boxes), "balance"
             low = min(load.values())
-            if load[pick] - low > PAIR_SPREAD_ABS and load[pick] > PAIR_SPREAD_REL * low:
+            if load[pick] - low > gap[pick] and load[pick] > PAIR_SPREAD_REL * low:
                 pick, why = first(boxes), "balance"
             if pick == me:
                 with _GEN_LOCK:

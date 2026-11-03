@@ -11,11 +11,12 @@ tens of seconds on the 27B). So the box keeps fingerprints of the first 4 KiB, 8
 each box in the last 10 minutes, and a request goes to the box it shares its longest one with, when that covers 30 %
 of it, the `cache_threshold` of SGLang's own router, or 32 KiB, for Claude Code, which writes its system prompt and
 its tools after the conversation. A new conversation goes to the box with the fewest requests in flight, the entry
-when they tie. When the box a conversation is on has more than 4 requests in flight more than the other, and more
-than 1.5 times as many, its next turn goes to the other box: the thresholds of SGLang's router, 64 and 1.5, brought
-to the 8 requests a lane runs at once. Each box says in the list it gives the other how many generations it runs,
-and how many of them the other box sent it, and the entry counts what it sent since: eight new conversations sent
-at once went 4 to each box, three times in three.
+when they tie. When the box a conversation is on runs more requests than the other by more than half of those its
+lane runs at once (4 on the 27B, which runs 8, and 8 on a lane that runs 16), and more than 1.5 times as many, its
+next turn goes to the other box: the thresholds of SGLang's router, 64 and 1.5, brought to each lane (decision 1014).
+Each box says in the list it gives the other how many generations it runs, how many of them the other box sent it,
+and how many its lane runs at once, read in its unit, and the entry counts what it sent since: eight new
+conversations sent at once went 4 to each box, three times in three.
 
 **A box that cannot serve a request hands it on.** When the other box does not answer (it gets 3 s to take the
 connection), or answers 503 (its engine away, or its memory floor) or 529 (the floor, in the Anthropic dialect),
@@ -41,6 +42,8 @@ paired again kept what the sharing knew of the box before. A request that took o
 other, a box gone without a reset cost every shared request 10 s, and a request no box took over was left out of
 this box's stop and of its load. The tile counted a request that came back as sent there, a prompt too long as a
 box that did not answer, and showed nothing while the other box did not answer, when the counts matter most. The
+threshold of 4 requests ahead, made for the lanes that run 8 at once, moved a conversation off a lane of 16 or 24
+with room to spare, its prefix computed again elsewhere. The
 paired run with the real clients found one more: a token count was shared as a generation is (the Anthropic SDK's
 went to the other box), and a count of a whole conversation, as Claude Code sends, could take the conversation to
 the box that caches nothing for a count. A count is answered by the box it was sent to now.

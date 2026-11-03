@@ -177,9 +177,10 @@ The list a box gives the other on this port carries `x_alzeo_running`, the numbe
 generations it runs, and `x_alzeo_running_yours`, how many of them the other box sent
 it, which the other weighs to share a model both serve (docs/pair.md): counts from 0 to
 100,000, the second no more than the first, are taken, anything else is not, and the
-box then gets no shared request. A box that lies about them can only draw more of the
-other's requests of that model, or send it fewer, which it could do by answering them
-slowly or not at all.
+box then gets no shared request. It also carries `x_alzeo_slots`, how many requests its
+lane runs at once, a count from 1 to 4,096 or nothing (a lane of 8 is then assumed). A
+box that lies about them can only draw more of the other's requests of that model, or
+send it fewer, which it could do by answering them slowly or not at all.
 This box's cockpit reads the other's through `/proxy/pair/<box>/state`, a route of
 this machine only, as `/proxy/stop`. A request that gets past
 it is a hop from the box of that certificate: served there or refused, never sent
