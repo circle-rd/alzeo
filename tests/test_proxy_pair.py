@@ -2054,7 +2054,7 @@ class ThePairsPieces(unittest.TestCase):
         self.mod.COCKPIT_UNIT_FILE = str(unit)
         for text, base in (("", "http://127.0.0.1:30090"),
                            ("Environment=COCKPIT_BIND=0.0.0.0\nEnvironment=COCKPIT_PORT=30091\n", "http://127.0.0.1:30091"),
-                           ("Environment=COCKPIT_BIND=100.114.54.60\n", "http://100.114.54.60:30090"),
+                           ("Environment=COCKPIT_BIND=192.0.2.10\n", "http://192.0.2.10:30090"),   # RFC 5737
                            ('Environment="COCKPIT_BIND=fd7a::1"\n', "http://[fd7a::1]:30090")):
             with self.subTest(unit=text):
                 unit.write_text(text)
