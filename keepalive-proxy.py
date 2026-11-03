@@ -7161,6 +7161,10 @@ class H(BaseHTTPRequestHandler):
                         self._pair_refuse(502, "upstream_too_large", f"the answer of box {peer['name']} is over "
                                           f"{PAIR_ANSWER_MAX} bytes", pair_served_map(conf, local))
                         self._done("502 pair answer too large"); return None
+                    # role 8 on what this box relays too: its own client's request, served there, is this box's to
+                    # watch, and its cockpit showed no banner for a call the other box logged (found in review of
+                    # v1.43.0, 2026-11-03)
+                    self._keep_answer(data)
                     self._plain(resp.status, headers, data)
                     self._bytes = len(data)
                     self._done("ok pair")
@@ -7173,6 +7177,7 @@ class H(BaseHTTPRequestHandler):
                 if sock is not None:
                     try: sock.settimeout(PAIR_STREAM_SILENCE_S)
                     except OSError: pass
+                sse, tail, anthropic = "text/event-stream" in ctype, b"", self.path.startswith("/v1/messages")
                 while True:
                     try:
                         b = resp.read1(65536)
@@ -7193,6 +7198,12 @@ class H(BaseHTTPRequestHandler):
                         break
                     if HOP_CLOSED_B in b:           # its engine closed on it after its hold opened the stream (1019)
                         killer_note(body, self.path.split("?", 1)[0], peer["name"])
+                    if sse:                         # role 8, line by line: a read may end in the middle of one
+                        lines = tail + b
+                        cut = lines.rfind(b"\n")
+                        if cut >= 0:
+                            self._watch_tools(lines[:cut + 1], anthropic)
+                        tail = lines[cut + 1:][-TOOL_WATCH_MAX:]
                     t = time.time() - self._t0
                     self._first = t if self._first is None else self._first
                     self._last, self._bytes = t, self._bytes + len(b)

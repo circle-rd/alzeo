@@ -213,6 +213,18 @@ def fake_engine(name, model):
             if self.path.startswith("/v1/messages"):
                 return self.reply({"id": "m", "type": "message", "role": "assistant", "model": Handler.served[0],
                                    "content": [{"type": "text", "text": f"from {name}"}]})
+            if body.get("stream") and Handler.mode == "tool":   # a tool call naming a watched host (role 8)
+                self.send_response(200)
+                self.send_header("Content-Type", "text/event-stream")
+                self.send_header("Transfer-Encoding", "chunked")
+                self.end_headers()
+                call = {"index": 0, "id": "t1", "type": "function", "function": {
+                    "name": "bash", "arguments": json.dumps({"command": "curl https://b.oss-cn.aliyuncs.com/x"})}}
+                for ev in ({"choices": [{"index": 0, "delta": {"tool_calls": [call]}}]}, "[DONE]"):
+                    part = f"data: {ev if isinstance(ev, str) else json.dumps(ev)}\n\n".encode()
+                    self.wfile.write(b"%x\r\n%s\r\n" % (len(part), part)); self.wfile.flush()
+                self.wfile.write(b"0\r\n\r\n"); self.wfile.flush()
+                return
             if not body.get("stream"):
                 return self.reply({"id": "c", "object": "chat.completion", "model": Handler.served[0],
                                    "choices": [{"index": 0, "message": {"role": "assistant", "content": f"from {name}"},
@@ -2149,6 +2161,34 @@ class TwoBoxesServeOneModel(PairFixture, unittest.TestCase):
                     th.join(30)
                 self.E1.users.clear()
 
+    def test_a_tool_call_the_other_box_served_is_watched_here_too(self):
+        # role 8: a call naming a watched host, in an answer this box relayed from the other one, was written in the
+        # other box's journal alone, and this box's cockpit showed no banner for its own client (review, 2026-11-03)
+        tool = (200, {"id": "c", "object": "chat.completion", "model": "qwen3.8-27b", "choices": [{
+            "index": 0, "finish_reason": "tool_calls", "message": {"role": "assistant", "content": None, "tool_calls": [{
+                "id": "t1", "type": "function", "function": {
+                    "name": "bash", "arguments": json.dumps({"command": "curl https://b.oss-cn.aliyuncs.com/x"})}}]}}]})
+        Peer = fake_peer(["qwen3.8-27b", "marker-tool"], tool)
+        entry = self.spare_proxy("spark1-tool", KEY_1, peers=(("spark2", tls_peer(self, Peer)),))
+        self.until_listed("marker-tool", port=entry)
+        held = self.busy(self.E1, entry, KEY_1, "local-only", 1, 3.0)          # one here, none there: it goes there
+        st, out, _ = self.call("/v1/chat/completions", self.chat("qwen3.8-27b"), port=entry)
+        self.assertEqual(st, 200, out[:300])
+        self.assertEqual(len(Peer.seen), 1)
+        self.assert_said("spark1-tool", "TOOL TARGET aliyuncs.com in a bash call on /v1/chat/completions")
+        for th in held:
+            th.join(30)
+        self.E1.users.clear()                               # the next busy() waits for its own request
+        # and in a stream relayed as it came
+        held = self.busy(self.E1, self.port1, KEY_1, "local-only", 1, 3.0)     # one here, none there: it goes there
+        self.E2.mode = "tool"
+        st, out, _ = self.call("/v1/chat/completions", dict(self.turns("conv-tool", 1)[0], stream=True))
+        self.assertEqual(st, 200, out[:300])
+        self.assertIn(b"aliyuncs", out)
+        self.assert_said("spark1", "TOOL TARGET aliyuncs.com in a bash call on /v1/chat/completions")
+        for th in held:
+            th.join(30)
+
     def test_a_burst_of_new_conversations_is_shared(self):
         self.E1.delay = self.E2.delay = 1.0
         out = []
@@ -2518,6 +2558,9 @@ class TwoBoxesServeOneModelInProcess(TwoBoxesServeOneModel):
 
     def test_a_box_serving_another_checkpoint_gets_nothing_shared(self):
         super().test_a_box_serving_another_checkpoint_gets_nothing_shared()
+
+    def test_a_tool_call_the_other_box_served_is_watched_here_too(self):
+        super().test_a_tool_call_the_other_box_served_is_watched_here_too()
 
 
 class ThePairsPieces(unittest.TestCase):
