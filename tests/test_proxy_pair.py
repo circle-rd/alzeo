@@ -518,6 +518,9 @@ class PairFixture:
         self.E1.served[:], self.E2.served[:] = list(self.MODELS[0]), list(self.MODELS[1])
         self.E1.delay = self.E2.delay = 0.0
         self.E1.mode = self.E2.mode = "ok"
+        # where each journal stood: a line asserted is one this test wrote, never one of an earlier test (review,
+        # 2026-11-03)
+        self.journal_at = {label: len(self.journal_of(label)) for label in ("spark1", "spark2")}
 
     def call(self, path, body=None, port=None, key=KEY_1, headers=None, method="POST"):
         c = http.client.HTTPConnection("127.0.0.1", port or self.port1, timeout=60)
@@ -550,10 +553,11 @@ class PairFixture:
         return self.journal_of(label)
 
     def until_in_journal(self, label, text, within=8.0):
+        start = getattr(self, "journal_at", {}).get(label, 0)
         deadline = time.monotonic() + within
-        while text not in self.journal_of(label) and time.monotonic() < deadline:
+        while text not in self.journal_of(label)[start:] and time.monotonic() < deadline:
             time.sleep(0.1)
-        return text in self.journal_of(label)
+        return text in self.journal_of(label)[start:]
 
     def assert_said(self, label, text):
         """An outcome line of the journal, waited for: it is written after the answer's last byte, and read at
@@ -1904,15 +1908,24 @@ class TwoBoxesServeOneModel(PairFixture, unittest.TestCase):
         self.assertIn(b"from spark2", out, "the turn left the box that holds its conversation")
 
     def test_boxes_far_apart_share_even_a_conversation(self):
-        a = self.turns("conv-c", 2)
+        a = self.turns("conv-c", 3)
         st, out, _ = self.call("/v1/chat/completions", a[0])
         self.assertEqual(st, 200, out[:300])
         self.assertIn(b"from spark1", out, "two idle boxes: the entry serves it, no hop")
-        # spark1 runs 6, spark2 none: more than 4 apart and more than 1.5 times as many, the turn goes to spark2
-        self.busy(self.E1, self.port1, KEY_1, "local-only", 6, 3.0)
+        # the edge, pinned (review, 2026-11-03): spark1 runs 4, spark2 none: 4 apart is not more than 4, the turn stays
+        # on the box that holds its prefix
+        held = self.busy(self.E1, self.port1, KEY_1, "local-only", 4, 4.0)
         st, out, _ = self.call("/v1/chat/completions", a[1])
         self.assertEqual(st, 200, out[:300])
-        self.assertIn(b"from spark2", out)
+        self.assertIn(b"from spark1", out, "4 apart moved a conversation off the box that holds its prefix")
+        for th in held:
+            th.join(30)
+        self.E1.users.clear()
+        # spark1 runs 5, spark2 none: more than 4 apart and more than 1.5 times as many, the turn goes to spark2
+        self.busy(self.E1, self.port1, KEY_1, "local-only", 5, 3.0)
+        st, out, _ = self.call("/v1/chat/completions", a[2])
+        self.assertEqual(st, 200, out[:300])
+        self.assertIn(b"from spark2", out, "5 apart kept a conversation on the busier box")
 
     def test_a_burst_of_new_conversations_is_shared(self):
         self.E1.delay = self.E2.delay = 1.0
@@ -2794,6 +2807,19 @@ class ThePairsPieces(unittest.TestCase):
             m._GENERATIONS.add(a); m._PAIR_HERE.update((a, b))
         self.addCleanup(lambda: (m._GENERATIONS.discard(a), m._PAIR_HERE.difference_update((a, b))))
         self.assertEqual(m.pair_load("me", conf), 2)
+
+    def test_a_request_whose_answer_began_is_never_taken_over(self):
+        # a hold that holds it, or opened its stream with keepalives: bytes may have gone out, and the other box would
+        # start an answer over them (decision 998: never a request whose answer began; review, 2026-11-03)
+        m = self.mod
+        h = object.__new__(m.H)
+        h._peer, tried = "test", []
+        h._forward_peer = lambda *a, **k: tried.append(a)
+        for hold_until, held_sse in ((time.monotonic() + 30, False), (None, True)):
+            h._hold_until, h._held_sse = hold_until, held_sse
+            h._pair_alt = ([{"name": "p"}], "qwen3.8-27b", {"name": "me", "peers": []}, None, [])
+            self.assertFalse(h._pair_take_over(b"{}"))
+        self.assertEqual(tried, [], "a request whose answer began was sent to the other box")
 
     def test_a_request_no_box_took_over_stays_this_boxs(self):
         # the other box in its pause after a refusal: the request stays here, reached by a stop of this box and in its
