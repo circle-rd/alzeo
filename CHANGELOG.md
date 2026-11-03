@@ -7,18 +7,18 @@ its client leaves. A client of a listed key (`keys.json`, the identity wall) cou
 a body or in the `x-override-rid` header, leave, and so end every generation of the box. v1.42.0 kept the other box of
 a pair from doing it, but only for a top-level `"rid"` whose bytes showed it, and SGLang takes the id in three more
 forms: the same key written with escapes (`"r\u0069d"`), `request_id` on `/v1/responses`, and the Vertex route's
-`parameters`, which it spreads into the request. And any client could send its body as JSON in UTF-16 or UTF-32, which
-Python's json and the engines read as well as UTF-8, but in which the proxy's guards, which look at a body's bytes
-first, found none of the fields they look for: a `top_logprobs` that takes SGLang down (sglang#40076), a negative
-token id, an id, all went through. Found by security reviews on 2026-11-03.
+`parameters`, which it spreads into the request. And the vLLM lanes read a body in UTF-16 or UTF-32 as well as UTF-8
+(the SGLang lanes refuse it), in which the proxy's guards, which look at a body's bytes first, found none of the
+fields they look for: any client could send those lanes what the guards refuse, and an id too. Found by security
+reviews on 2026-11-03.
 
-**What changes.** A body that is not UTF-8 gets a 415 (RFC 8259 wants JSON in UTF-8 between systems), and is never
-relayed. The proxy (v6.51) no longer lets a client of a listed key name the engine's request id, as for the other box
-of a pair: the headers are dropped (`x-override-rid`, and vLLM's `X-Request-Id`), the body is read whenever it may
-hold an id and every form is dropped, vLLM's `request_id` too, and a body that may hold one and cannot be read whole
-gets a 400. The proxy or the engine names the request. A client with the engine's key, on a box without the identity
-wall, still names its requests as it did. The tests fail on v1.42.0: for a listed key in every form, for the other box
-in the two new ones and in UTF-16, and for any client in UTF-16 and UTF-32.
+**What changes.** A body that is not UTF-8 gets a 415 on every lane (RFC 8259 wants JSON in UTF-8 between systems),
+and is never relayed. The proxy (v6.51) no longer lets a client of a listed key name the engine's request id, as for
+the other box of a pair: the headers are dropped (`x-override-rid`, and vLLM's `X-Request-Id`), the body is read
+whenever it may hold an id and every form is dropped, vLLM's `request_id` too, and a body that may hold one and cannot
+be read whole gets a 400. The proxy or the engine names the request. A client with the engine's key, on a box without
+the identity wall, still names its requests as it did. The tests fail on v1.42.0: for a listed key in every form, for
+the other box in the two new ones and in UTF-16, and for any client in UTF-16 and UTF-32.
 
 **Also.** The cockpit reads the deployed proxy's version from its first line: it read it from a history line, which
 sits past the first 4,000 bytes it read since v1.40.7, so Lanes and Settings said "unknown", and the warning that the

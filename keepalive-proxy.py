@@ -57,9 +57,9 @@ Ten roles, nothing else:
    serves, and any other name, stays on this box, as on a box alone (decision 986). GET /v1/models
    lists every box's models (see "Two boxes behind one endpoint" below).
 
-v6.51: a request body is JSON in UTF-8, or a 415: in UTF-16 or UTF-32, which Python's json and the
-engines read too, the guards here found none of the fields they look for (a top_logprobs that takes
-SGLang down went through). A client of a listed key never names the engine's request id, as the
+v6.51: a request body is JSON in UTF-8, or a 415: in UTF-16 or UTF-32, which the vLLM lanes read too
+(FastAPI's json, where the SGLang lanes' orjson refuses it), the guards here found none of the fields
+they look for. A client of a listed key never names the engine's request id, as the
 other box of a pair since v6.50, and neither names it in a header (x-override-rid, vLLM's
 X-Request-Id) or in any form an engine reads one from a body: "rid" (written with escapes too, a
 batch's list too), "request_id", the Vertex route's "parameters". A body that may hold one and
@@ -4894,10 +4894,10 @@ class H(BaseHTTPRequestHandler):
         # A request the other box of a pair sent on, or one of a listed key, keeps no rid of its own either, on any
         # route: SGLang aborts by prefix, and their rids "0" to "f" ended every generation here (found in reviews,
         # 2026-11-03); nor vLLM's X-Request-Id
-        hop = self._rid_not_its_own()
+        not_its_own = self._rid_not_its_own()
         h = {k: v for k, v in self.headers.items() if k.lower() not in HOP and k.lower() != PAIR_HOP.lower()
-             and not (k.lower().startswith("x-override-") and (k.lower() != "x-override-rid" or hop))
-             and not (hop and k.lower() == "x-request-id")}
+             and not (k.lower().startswith("x-override-") and (k.lower() != "x-override-rid" or not_its_own))
+             and not (not_its_own and k.lower() == "x-request-id")}
         auth = _upstream_auth(self)
         if auth:
             h["Authorization"] = auth
@@ -7110,7 +7110,8 @@ class H(BaseHTTPRequestHandler):
         """True for a request that never names the engine's request id: one the other box of a pair sent on, and one
         of a listed client key, which reaches no operator route either. SGLang aborts every request whose rid starts
         with one it aborts (when its client leaves, too): either could end every generation of this box by naming
-        rids "0" to "f" (found in review, 2026-11-03). The holder of the engine's key, its operator, still may."""
+        rids "0" to "f" (found in review, 2026-11-03). Without the identity wall, a client with the engine's key still
+        names its requests; with it, every client is a listed key."""
         if self._pair_hop():
             return True
         if CLIENT_KEYS:

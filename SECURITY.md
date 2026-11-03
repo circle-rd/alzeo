@@ -171,7 +171,8 @@ engine reads one from a body: "rid" (written with escapes too), "request_id", th
 Vertex route's "parameters". A body that may hold one and cannot be read whole gets a
 400. SGLang aborts every request whose id starts with one it aborts, and ids "0" to
 "f" could end every generation of the box. Every request body is JSON in UTF-8, or a
-415: in UTF-16 or UTF-32, which the engines read too, the guards saw none of its fields.
+415: in UTF-16 or UTF-32, which the vLLM lanes read too (the SGLang lanes refuse it), the
+guards saw none of its fields.
 This box's cockpit reads the other's through `/proxy/pair/<box>/state`, a route of
 this machine only, as `/proxy/stop`. A request that gets past
 it is a hop from the box of that certificate: served there or refused, never sent
@@ -229,7 +230,7 @@ discussion, not a disclosure.
   what it relays with the engine's own key: a client key generates, counts and
   reads, the label on
   every journal line of its requests, and since v1.42.1 the engine's request id
-  is the proxy's to give, never the client's), and naming is all it does: there are no
+  is never the client's to name), and naming is all it does: there are no
   per-client quotas or ceilings, and the engine behind it still has one key.
 - **`AGENT_AUTO=1` is deliberate escalation.** It sets opencode to allow
   every tool call in the Agent view, behind the cockpit login, on this
