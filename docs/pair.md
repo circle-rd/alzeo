@@ -42,7 +42,8 @@ one its SSH server sees, give that one: `--back 192.168.100.1`.
 
 - A request that names a model of one of this repo's lanes (`qwen3.8-27b`, `qwen3.8-flash-next`,
   `qwen3.8-flash-next-fp4`, `ornith-1.5-122b`, `nemotron-3.5-bolt`, `nemotron-3.5-super-vl`,
-  `kolibri-1`) goes to the box that serves it, streamed or not, OpenAI or Anthropic dialect.
+  `kolibri-1`) goes to the box that serves it, streamed or not, in the OpenAI and Anthropic dialects and on
+  the Ollama (`/api/chat`, `/api/generate`) and SageMaker (`/invocations`) routes.
 - Any other name (`claude-*` from Claude Code's background tasks, `gpt-*`, none) stays on the box it was
   sent to, as on a box alone.
 - `GET /v1/models` lists the models of both boxes, each with a `box` field. It never waits for the other
@@ -91,7 +92,9 @@ cockpit for now.
 - Every request a box sends on comes from one address, so the other box's limit of 64 connections per
   address is shared by all its clients together.
 - Both boxes should keep the default `KEEPALIVE_S`: a stream from the other box that stays silent for
-  four of its keepalives (60 s at least) is cut, as a box that went sends nothing more.
+  four of its keepalives (60 s at least) is cut, as a box that went sends nothing more. A box that loses
+  power or its cable while a request waits on it is seen within about 25 s (TCP keepalive between the
+  boxes), and that request gets a 503.
 - When both boxes serve the same model, its requests stay on the box they were sent to for now.
 - `GET /v1/models/<id>` answers for the box's own models only.
 - To switch the other box's lane, use its own cockpit for now: the tile only shows it.

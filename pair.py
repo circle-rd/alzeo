@@ -218,6 +218,15 @@ def undo_file(token):
     return PAIR_DIR / f"undo-{token}.json"
 
 
+def cancelled(token):
+    """True when the run of that token was undone here before it wrote (a Ctrl-C or a timeout in its step 1, whose
+    command went on there without its terminal): its write would leave this box paired one way (review, 2026-11-03)."""
+    try:
+        return json.loads(undo_file(token).read_text()).get("cancelled") is True
+    except (OSError, ValueError, AttributeError):
+        return False
+
+
 def save_undo(token, name, gone):
     """What a run of add is about to replace on this box (the entries, each with its certificate), kept under
     the run's token, so that the run puts it back if it fails further on (decision 988): run again on a pair
@@ -250,13 +259,18 @@ def undo(mod, token):
         try:
             rec = json.loads(f.read_text())
         except (OSError, ValueError):
+            rec = None
+        if not isinstance(rec, dict) or rec.get("cancelled"):
+            # nothing written here by that run, yet: a write of it that comes later is refused (cancelled())
+            write_atomic(f, json.dumps({"cancelled": True}), 0o600)
             return False
         conf = read_conf()
         new, gone = without_peer(conf, rec.get("name"))
         back = []
         for item in rec.get("replaced") or []:
             q = dict(item.get("entry") or {})
-            if not item.get("pem") or not isinstance(q.get("name"), str):
+            # the name becomes a file name: one of a box's names only, never a path (review, 2026-11-03)
+            if not item.get("pem") or not isinstance(q.get("name"), str) or not mod.PAIR_NAME.fullmatch(q["name"]):
                 continue
             q["cert_file"] = write_peer_cert(q["name"], item["pem"])
             back.append(q)
@@ -265,6 +279,22 @@ def undo(mod, token):
         drop_files(gone, keep=new["peers"])
         f.unlink(missing_ok=True)
     return True
+
+
+def roll_back(mod, dest, token, name, me):
+    """Both boxes as they were before the run of token, said in words for the message."""
+    try:
+        undone = None if undo(mod, token) else "no record of what this run replaced here"
+    except BaseException as e:
+        undone = SAFE_TEXT.sub("?", str(getattr(e, "code", None) or e))[:200]
+    why = undo_there(dest, token)
+    if why is None and undone is None:
+        return "Both boxes are as they were before this run"
+    kept = ("This box is as it was" if undone is None else
+            f"This box keeps the new pair ({undone}): run pair.py remove {name} here")
+    if why is not None:
+        kept += f", and {name} could not be told ({why}): run pair.py remove {me} there"
+    return kept
 
 
 def undo_there(dest, token):
@@ -370,6 +400,8 @@ def do_accept(req):
                              f"(python3 ~/dgx-spark-qwen38/pair.py name <another name>)")
         back = address(req["back"], "--back") if req.get("back") else ssh_client_address()
         pem = ensure_identity(me)
+        if cancelled(token_of(req)):
+            raise SystemExit("pair.py: this run of add was already undone here: nothing written")
         new, gone, _ = with_peer(mod, conf, req["name"], f"https://{url_host(back)}:{int(req['port'])}",
                                  req["cert"], ssh=back)
         save_undo(token_of(req), req["name"], gone)
@@ -395,6 +427,12 @@ def do_undo(req):
     return {"undone": undo(mod, token_of(req))}
 
 
+def do_done(req):
+    """The run of that token succeeded: its record goes."""
+    undo_file(token_of(req)).unlink(missing_ok=True)
+    return {"done": True}
+
+
 def do_check(req):
     mod = proxy_module()
     models, why = reach(mod, req["name"], min(float(req.get("within", 10)), 60.0))
@@ -411,7 +449,8 @@ def do_forget(req):
 def remote(req):
     """The other box's half (run there over SSH by ssh_call): one JSON line on standard output."""
     try:
-        out = {"accept": do_accept, "check": do_check, "forget": do_forget, "undo": do_undo}[req["do"]](req)
+        out = {"accept": do_accept, "check": do_check, "forget": do_forget, "undo": do_undo,
+               "done": do_done}[req["do"]](req)
     except SystemExit as e:
         out = {"error": str(e.code if e.code is not None else "").removeprefix("pair.py: ")[:800]}
     except Exception as e:
@@ -516,7 +555,10 @@ def cmd_add(args, mod):
     try:
         r = ssh_call(dest, "accept", {"name": me, "port": mod.PAIR_PORT, "back": back, "cert": pem, "undo": token})
     except BaseException:
-        undo_there(dest, token)
+        why = undo_there(dest, token)
+        if why is not None:
+            sys.stderr.write(f"pair.py: {dest} could not be told to undo this run ({why}): if pair.py status there "
+                             f"lists {me}, run pair.py remove {me} there\n")
         raise
     name, their_pem = r.get("name"), r.get("cert")
     try:
@@ -553,31 +595,25 @@ def cmd_add(args, mod):
         raise
     # 3. both ways, as the proxies will: this box to its pair port, and that box to this one's
     if not args.no_check:
-        there, why_there = reach(mod, name, 10)
-        back_said = f"https://{url_host(their_back)}:{mod.PAIR_PORT}"
-        here, why_here = None, None
-        if why_there is None:
-            try:
-                got = ssh_call(dest, "check", {"name": me, "within": 10}).get("models") or []
-                here = [m for m in got if isinstance(m, str) and mod._PAIR_SAFE_ID.fullmatch(m)]
-            except SystemExit as e:
-                why_here = str(e.code if e.code is not None else "").removeprefix(f"pair.py: on {dest}: ")
+        try:
+            there, why_there = reach(mod, name, 10)
+            back_said = f"https://{url_host(their_back)}:{mod.PAIR_PORT}"
+            here, why_here = None, None
+            if why_there is None:
+                try:
+                    got = ssh_call(dest, "check", {"name": me, "within": 10}).get("models") or []
+                    here = [m for m in got if isinstance(m, str) and mod._PAIR_SAFE_ID.fullmatch(m)]
+                except SystemExit as e:
+                    why_here = str(e.code if e.code is not None else "").removeprefix(f"pair.py: on {dest}: ")
+        except BaseException:
+            # a Ctrl-C during the checks left the new pair on both boxes, and a pair they had lost (found in
+            # review, 2026-11-03): put back as it was, then the interruption goes on
+            sys.stderr.write(f"pair.py: interrupted during the checks. {roll_back(mod, dest, token, name, me)}.\n")
+            raise
         if why_there is not None or why_here is not None:
             # undone on both boxes whatever fails on the way, and never in place of why the pair failed
             # (found in review, 2026-11-03)
-            try:
-                undo(mod, token)
-                undone = None
-            except BaseException as e:
-                undone = SAFE_TEXT.sub("?", str(getattr(e, "code", None) or e))[:200]
-            why = undo_there(dest, token)
-            if why is None and undone is None:
-                kept = "Both boxes are as they were before this run"
-            else:
-                kept = ("This box is as it was" if undone is None else
-                        f"This box keeps the new pair ({undone}): run pair.py remove {name} here")
-                if why is not None:
-                    kept += f", and {name} could not be told ({why}): run pair.py remove {me} there"
+            kept = roll_back(mod, dest, token, name, me)
             if why_there is not None:
                 raise SystemExit(f"pair.py: this box cannot reach the pair port of {name} at https://{url_host(host)}:{port}: "
                                  f"{why_there}. {kept}. Check that both boxes run this version of Alzeo, that no "
@@ -586,7 +622,13 @@ def cmd_add(args, mod):
             raise SystemExit(f"pair.py: {name} cannot reach the pair port of this box at {back_said}: {why_here}. "
                              f"{kept}. Check that no firewall stops {mod.PAIR_PORT}/tcp toward this box, and give "
                              f"this box's address as {name} reaches it with --back (--no-check keeps a pair anyway).")
-    undo_file(token).unlink(missing_ok=True)       # kept: the other box drops its record within the hour
+    # the run's records go on both boxes (certificates and addresses only; a record left there by a cut goes at
+    # that box's next add, an hour on)
+    undo_file(token).unlink(missing_ok=True)
+    try:
+        ssh_call(dest, "done", {"undo": token}, timeout=60)
+    except SystemExit:
+        pass
     print(f"{me} and {name} are a pair: each box now sends a request for a model the other serves to that box.")
     if not args.no_check:
         print(f"  {me} -> {name} (https://{url_host(host)}:{port}): answers over TLS, serves {', '.join(there) or 'nothing now'}")

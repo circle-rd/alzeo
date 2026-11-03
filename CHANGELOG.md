@@ -29,10 +29,11 @@ sends that summary alone, over the pair's TLS. To switch the other box's lane, u
 
 **Non-streamed answers half a second sooner, on every box.** The proxy watched the caller of a request in a
 select() of 0.5 s, and relayed the answer once that watch had ended, at its next tick: a one-token answer the
-engine gave in 35 ms took 503 ms through the proxy, eight times in eight (measured on the reference box,
+engine gave in 35 ms took 502 ms through the proxy, eight times in eight (measured on the reference box,
 v1.41.0). Every non-streamed request paid it (Claude Code's token counts, the SDKs' default calls), and a
-stream whose engine took more than a second lost up to 0.45 s more before its first byte. The watch now ends
-the moment the answer comes. Found by the code review of the pair.
+stream whose engine took more than a second lost up to 0.45 s more before its first byte. The watch now looks
+every 50 ms with poll(), which holds no descriptor of its own and has no limit at 1,024 descriptors as select()
+had: the same answer takes 51 ms through this release's proxy. Found by the code review of the pair.
 
 **Reviews and tests.** Two independent reviewers, then a code review at max effort, read the pair before this
 release, and every finding was checked in the code. What they found and this release fixes: an API key swapped
@@ -41,6 +42,14 @@ credential now), a client that left a TLS connection was never seen, an answer c
 as a whole one, a box that lost power held the requests in flight to it for up to an hour (TCP keepalive
 between the boxes now sees it within 25 s), `pair.py add` undid a working pair while an engine was loading,
 and the tile's reads every 5 s pushed a paired box's real requests out of the cockpit's view in half an hour.
+Two more reviewers then read what had changed since, and found: a box restarted while the other one stayed off
+held every lane it does not load for as long (a box that may serve a lane now holds it up for 30 s if it was
+never read, 15 min if it served it), a box off without a reset made each such request wait 5 s (it is read
+again in the background), a Ctrl-C during the checks of `pair.py add` lost a working pair (both boxes are put
+back), the other box could end every generation of this one by naming request ids, which SGLang aborts by
+prefix (a request it sends on never names one), nested JSON from it broke this box's model list and froze its
+cockpit (what comes from it is rebuilt field by field), and the Ollama routes reached the client whole at the
+end.
 tests/test_proxy_pair.py runs two proxies over real TLS, as processes and in this one, tests/test_pair_tool.py
 pairs two proxies through a fake ssh, and the tile and its collector have tests of their own. Each fix has a
 test that fails on the code before it.

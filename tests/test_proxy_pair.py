@@ -159,6 +159,7 @@ def fake_engine(name, model):
         protocol_version = "HTTP/1.1"
         served = [model]
         seen: list = []
+        rids: list = []             # (the body's rid, the x-override-rid header) of every POST
         delay = 0.0
         mode = "ok"                 # "down": /v1/models answers 503 (a boot) ; "cut": a stream dies mid-way
 
@@ -187,6 +188,7 @@ def fake_engine(name, model):
             body = json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)) or b"{}")
             Handler.seen.append((self.path, body.get("model"), self.headers.get("Authorization"),
                                  self.headers.get("X-Alzeo-Pair-Hop")))
+            Handler.rids.append((body.get("rid"), self.headers.get("x-override-rid")))
             time.sleep(Handler.delay)
             if self.path.startswith("/v1/messages"):
                 return self.reply({"id": "m", "type": "message", "role": "assistant", "model": Handler.served[0],
@@ -237,6 +239,7 @@ class FakeCockpit(http.server.BaseHTTPRequestHandler):
     keys = {KEY_1, KEY_2}
     logins: list = []
     sessions: set = set()
+    states: list = []                       # one per /api/state read
 
     def log_message(self, *a):
         pass
@@ -263,7 +266,10 @@ class FakeCockpit(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         if (self.headers.get("Cookie") or "").removeprefix("cockpit=") not in FakeCockpit.sessions:
             return self.reply(401, {"error": "auth"})
-        self.reply(200, COCKPIT_STATE) if self.path == "/api/state" else self.reply(404, {"error": "not found"})
+        if self.path == "/api/state":
+            FakeCockpit.states.append(1)
+            return self.reply(200, COCKPIT_STATE)
+        self.reply(404, {"error": "not found"})
 
 
 def tls_peer(test, handler, me="spark2", trusts=("spark1",)):
@@ -430,7 +436,7 @@ class TwoBoxesBehindOneEndpoint(unittest.TestCase):
         shutil.rmtree(cls.tmp, ignore_errors=True)
 
     def setUp(self):
-        self.E1.seen.clear(); self.E2.seen.clear()
+        self.E1.seen.clear(); self.E2.seen.clear(); self.E1.rids.clear(); self.E2.rids.clear()
         self.E1.served[:] = ["qwen3.8-27b"]; self.E2.served[:] = ["qwen3.8-flash-next-fp4"]
         self.E1.delay = self.E2.delay = 0.0
         self.E1.mode = self.E2.mode = "ok"
@@ -760,6 +766,85 @@ class TwoBoxesBehindOneEndpoint(unittest.TestCase):
         self.assertEqual([r["id"] for r in json.loads(out)["data"]], ["qwen3.8-27b"], "its own list, not the union")
         self.assert_said("spark1", "sent on by spark2")
 
+    def test_the_other_boxs_rows_and_summary_are_rebuilt_from_their_fields(self):
+        # nested 9,990 deep, a row parsed and then made every GET /v1/models here drop when written back, and a
+        # summary froze every view of the cockpit (review, 2026-11-03)
+        deep = "[" * 9990 + "]" * 9990
+
+        class Deep(http.server.BaseHTTPRequestHandler):
+            protocol_version = "HTTP/1.1"
+
+            def log_message(self, *a):
+                pass
+
+            def do_GET(self):
+                if self.path.startswith("/pair/cockpit/state"):
+                    out = ('{"name": "spark2", "models": ["qwen3.8-flash-next-fp4"], "job": {"action": ' + deep
+                           + '}, "extra": 1}').encode()
+                else:
+                    out = ('{"object": "list", "data": [{"id": "qwen3.8-flash-next-fp4", "owned_by": "sglang", '
+                           '"nested": ' + deep + '}]}').encode()
+                self.send_response(200); self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(out))); self.end_headers(); self.wfile.write(out)
+        port = self.spare_proxy("deep", KEY_1, peers=[("spark2", tls_peer(self, Deep))])
+        st, rows = self.models_once_known(port=port)
+        self.assertEqual((st, rows.get("qwen3.8-flash-next-fp4")), (200, "spark2"))
+        st, out, _ = self.call("/v1/models", port=port, method="GET")
+        row = [r for r in json.loads(out)["data"] if r["id"] == "qwen3.8-flash-next-fp4"][0]
+        self.assertEqual(set(row), {"id", "owned_by", "box"}, "its scalar fields alone")
+        st, out, _ = self.call("/proxy/pair/spark2/state", port=port, method="GET")
+        self.assertEqual(st, 200, out[:200])
+        s = json.loads(out)
+        self.assertEqual((s["models"], s["job"]["action"], "extra" in s), (["qwen3.8-flash-next-fp4"], None, False))
+
+    def test_an_ndjson_stream_from_the_other_box_arrives_as_it_comes(self):
+        # the Ollama routes stream NDJSON, and the entry read every answer but SSE whole (review, 2026-11-03)
+        class Ollama(http.server.BaseHTTPRequestHandler):
+            protocol_version = "HTTP/1.1"
+
+            def log_message(self, *a):
+                pass
+
+            def do_GET(self):
+                out = json.dumps({"object": "list", "data": [{"id": "qwen3.8-flash-next-fp4"}]}).encode()
+                self.send_response(200); self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(out))); self.end_headers(); self.wfile.write(out)
+
+            def do_POST(self):
+                self.rfile.read(int(self.headers.get("Content-Length") or 0))
+                self.send_response(200); self.send_header("Content-Type", "application/x-ndjson")
+                self.send_header("Transfer-Encoding", "chunked"); self.end_headers()
+                for line, pause in ((b'{"message": {"content": "one"}, "done": false}\n', 2.0),
+                                    (b'{"message": {"content": "two"}, "done": true}\n', 0.0)):
+                    self.wfile.write(b"%x\r\n%s\r\n" % (len(line), line)); self.wfile.flush()
+                    time.sleep(pause)
+                self.wfile.write(b"0\r\n\r\n"); self.wfile.flush()
+        port = self.spare_proxy("ndjson", KEY_1, peers=[("spark2", tls_peer(self, Ollama))])
+        c = http.client.HTTPConnection("127.0.0.1", port, timeout=30)
+        self.addCleanup(c.close)
+        t0 = time.monotonic()
+        c.request("POST", "/api/chat", json.dumps(self.chat("qwen3.8-flash-next-fp4", stream=True)).encode(),
+                  {"Content-Type": "application/json", "Authorization": f"Bearer {KEY_1}"})
+        r = c.getresponse()
+        first = r.readline()
+        self.assertIn(b'"one"', first)
+        self.assertLess(time.monotonic() - t0, 1.5, "its first line before its end")
+        self.assertIn(b'"two"', r.read())
+
+    def test_the_other_box_never_names_the_engines_requests_here(self):
+        # SGLang aborts every request whose rid starts with one it aborts: the other box naming rids "0" to "f",
+        # in a body or in the header, and leaving, ended every generation here (review, 2026-11-03)
+        for path in ("/v1/completions", "/v1/chat/completions", "/invocations"):
+            with self.subTest(path=path):
+                st, out, _ = self.tls_call(self.pport1, path, dict(self.chat("qwen3.8-27b"), rid="0"),
+                                           headers={"X-Override-Rid": "0"})
+                self.assertEqual(st, 200, out[:300])
+                rid, header = self.E1.rids[-1]
+                self.assertIsNone(rid, "no rid of the other box's in the body")
+                self.assertNotEqual(header, "0", "nor in the header")
+                if path == "/v1/chat/completions":
+                    self.assertRegex(header or "", r"^[0-9a-f]{32}$", "this box names it")
+
     def test_the_cockpits_stop_is_never_taken_from_the_pair_port(self):
         # the other box's connection may come from loopback (a tunnel's end, these tests): POST /proxy/stop is
         # this machine's operator's, never a pair's
@@ -1005,6 +1090,8 @@ class TwoBoxesBehindOneEndpoint(unittest.TestCase):
         # decision 975: this box's cockpit asks its own proxy; the other box's proxy sums its own cockpit up, logged
         # in with its own key, never relayed whole
         FakeCockpit.logins.clear()
+        time.sleep(2.2)                     # past the summary another test may have had kept (PAIR_SUMMARY_KEEP_S)
+        FakeCockpit.states.clear()
         lines = (self.journal("spark1").count("pair/spark2/state"), self.journal("spark2").count("/pair/cockpit/state"))
         for _ in range(2):
             st, out, _ = self.call("/proxy/pair/spark2/state", method="GET")
@@ -1023,6 +1110,8 @@ class TwoBoxesBehindOneEndpoint(unittest.TestCase):
         for kept_home in ("feed", "repo_dir", "argv", "secret log", "10.0.0.9", "disks"):
             self.assertNotIn(kept_home, out.decode(), "its feed, paths and logs stay on the other box")
         self.assertEqual(FakeCockpit.logins, [KEY_2], "logged in once, with that box's own key, its session kept")
+        # the other box could ask for it as fast as it liked, each time a read of this cockpit (review, 2026-11-03)
+        self.assertEqual(len(FakeCockpit.states), 1, "two reads within PAIR_SUMMARY_KEEP_S: one read of the cockpit")
 
     def test_the_tiles_route_is_this_machines_alone(self):
         st, out, _ = self.tls_call(self.pport1, "/proxy/pair/spark2/state", method="GET")
@@ -1046,6 +1135,79 @@ class TwoBoxesBehindOneEndpoint(unittest.TestCase):
         finally:
             self.E2.mode = "ok"
             time.sleep(PAIR_TTL + 0.5)
+
+    def test_a_box_never_read_holds_no_lane_past_its_first_read(self):
+        # the entry restarted while the other box stays off (a power cut): every lane it does not load got a 503
+        # for as long as that box was off (review, 2026-11-03); past its first read, it holds nothing up (986)
+        port = self.spare_proxy("first-read", KEY_1, peers=[("spark2", localports.held(self))],
+                                extra={"PAIR_FIRST_READ_S": "1"})
+        time.sleep(1.5)
+        st, out, _ = self.call("/v1/chat/completions", self.chat("qwen3.8-flash-next-fp4"), port=port)
+        self.assertEqual(st, 200, out[:300])
+        self.assertIn(b"from spark1", out)
+
+    def test_a_box_that_went_off_holds_its_lanes_for_a_while_then_none(self):
+        class Going(http.server.BaseHTTPRequestHandler):
+            protocol_version = "HTTP/1.1"
+            up = True
+
+            def log_message(self, *a):
+                pass
+
+            def reply(self, code, obj):
+                out = json.dumps(obj).encode()
+                self.send_response(code); self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(out))); self.end_headers(); self.wfile.write(out)
+
+            def do_GET(self):
+                if not Going.up:
+                    return self.reply(503, {"error": "its lane is loading"})
+                self.reply(200, {"object": "list", "data": [{"id": "qwen3.8-flash-next-fp4"}]})
+
+            def do_POST(self):
+                self.rfile.read(int(self.headers.get("Content-Length") or 0))
+                self.reply(200, {"id": "c", "choices": [{"message": {"content": "from going"}}]})
+        port = self.spare_proxy("known-wait", KEY_1, peers=[("spark2", tls_peer(self, Going))],
+                                extra={"PAIR_KNOWN_WAIT_S": "3", "PAIR_TTL_S": "0.5"})
+        st, out, _ = self.call("/v1/chat/completions", self.chat("qwen3.8-flash-next-fp4"), port=port)
+        self.assertIn(b"from going", out)
+        Going.up = False
+        time.sleep(1)
+        st, out, _ = self.call("/v1/chat/completions", self.chat("qwen3.8-flash-next-fp4"), port=port)
+        self.assertEqual(st, 503, out[:300])           # it served it at its last good read: try again
+        time.sleep(3.5)
+        st, out, _ = self.call("/v1/chat/completions", self.chat("qwen3.8-flash-next-fp4"), port=port)
+        self.assertEqual(st, 200, out[:300])           # off for longer than a switch: this box's lane answers it
+        self.assertIn(b"from spark1", out)
+
+    def test_a_box_that_lists_a_model_and_refuses_it_twice_gets_a_503_never_this_boxs_answer(self):
+        # docs/pair.md promises that a box never answers the other box's model with its own: a 409 twice from a
+        # box whose list says it serves it fell through to this box's lane (review, 2026-11-03)
+        class Lagging(http.server.BaseHTTPRequestHandler):
+            protocol_version = "HTTP/1.1"
+            posts: list = []
+
+            def log_message(self, *a):
+                pass
+
+            def reply(self, code, obj):
+                out = json.dumps(obj).encode()
+                self.send_response(code); self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(out))); self.end_headers(); self.wfile.write(out)
+
+            def do_GET(self):
+                self.reply(200, {"object": "list", "data": [{"id": "qwen3.8-flash-next-fp4"}]})
+
+            def do_POST(self):
+                self.rfile.read(int(self.headers.get("Content-Length") or 0))
+                Lagging.posts.append(1)
+                self.reply(409, {"error": {"type": "model_not_served", "message": "another model here now"}})
+        port = self.spare_proxy("twice-409", KEY_1, peers=[("spark2", tls_peer(self, Lagging))])
+        st, out, _ = self.call("/v1/chat/completions", self.chat("qwen3.8-flash-next-fp4"), port=port)
+        self.assertEqual(st, 503, out[:300])
+        self.assertIn("refused it twice", json.loads(out)["error"]["message"])
+        self.assertNotIn(b"from spark1", out)
+        self.assertEqual(len(Lagging.posts), 2)
 
     def test_a_lane_the_box_that_does_not_answer_never_served_is_answered_here(self):
         # decision 986 holds while the other box is off: only a model it served at its last good read waits
@@ -1361,6 +1523,15 @@ class TwoBoxesBehindOneEndpointInProcess(TwoBoxesBehindOneEndpoint):
     def test_a_request_on_the_pair_port_is_a_hop_from_the_box_of_its_certificate(self):
         super().test_a_request_on_the_pair_port_is_a_hop_from_the_box_of_its_certificate()
 
+    def test_the_other_boxs_rows_and_summary_are_rebuilt_from_their_fields(self):
+        super().test_the_other_boxs_rows_and_summary_are_rebuilt_from_their_fields()
+
+    def test_an_ndjson_stream_from_the_other_box_arrives_as_it_comes(self):
+        super().test_an_ndjson_stream_from_the_other_box_arrives_as_it_comes()
+
+    def test_the_other_box_never_names_the_engines_requests_here(self):
+        super().test_the_other_box_never_names_the_engines_requests_here()
+
     def test_the_cockpits_stop_is_never_taken_from_the_pair_port(self):
         super().test_the_cockpits_stop_is_never_taken_from_the_pair_port()
 
@@ -1408,6 +1579,15 @@ class TwoBoxesBehindOneEndpointInProcess(TwoBoxesBehindOneEndpoint):
 
     def test_a_peer_whose_engine_restarts_gets_a_503_to_try_again_not_a_404(self):
         super().test_a_peer_whose_engine_restarts_gets_a_503_to_try_again_not_a_404()
+
+    def test_a_box_never_read_holds_no_lane_past_its_first_read(self):
+        super().test_a_box_never_read_holds_no_lane_past_its_first_read()
+
+    def test_a_box_that_went_off_holds_its_lanes_for_a_while_then_none(self):
+        super().test_a_box_that_went_off_holds_its_lanes_for_a_while_then_none()
+
+    def test_a_box_that_lists_a_model_and_refuses_it_twice_gets_a_503_never_this_boxs_answer(self):
+        super().test_a_box_that_lists_a_model_and_refuses_it_twice_gets_a_503_never_this_boxs_answer()
 
     def test_a_lane_the_box_that_does_not_answer_never_served_is_answered_here(self):
         super().test_a_lane_the_box_that_does_not_answer_never_served_is_answered_here()
@@ -1596,6 +1776,32 @@ class ThePairsPieces(unittest.TestCase):
             time.sleep(0.05)
         self.assertEqual((self.mod._PAIR_MODELS.get("early") or {}).get("models"), ("kolibri-1",), "read with no request")
 
+    def test_a_box_that_did_not_answer_is_read_again_in_the_background_once(self):
+        # a box off without a reset took each read's whole timeout, and every request for a lane loaded nowhere
+        # waited 5 s for it (review, 2026-11-03); the first fix of it handed the read back to the background from
+        # the background, a thread after a thread: one read at a time, never waited for
+        class Frozen(http.server.BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+
+            def do_GET(self):
+                time.sleep(30)
+        conf = self.mod._pair_parse(json.dumps({"name": "spark1", "peers": [
+            peer_entry(self.cfg, "frozen", tls_peer(self, Frozen), who="spark2")]}))
+        self.mod._pair_tls(conf)
+        peer = conf["peers"][0]
+        self.mod._PAIR_MODELS.pop("frozen", None)
+        self.assertEqual(self.mod.peer_models(peer), ())          # its first read: its whole timeout, once
+        self.assertTrue(self.mod._PAIR_MODELS["frozen"]["error"])
+        self.mod._PAIR_MODELS["frozen"]["ts"] -= 60                # stale: read again, in the background
+        t0 = time.monotonic()
+        for _ in range(20):
+            self.assertEqual(self.mod.peer_models(peer, fresh=True, since=time.monotonic()), ())
+        self.assertLess(time.monotonic() - t0, 1.0, "no request waits for a box that did not answer")
+        time.sleep(0.3)
+        self.assertLessEqual(sum(t.name == "pair-list-frozen" for t in threading.enumerate()), 1,
+                             "one read of it in the background at a time")
+
     def test_a_peers_list_is_read_kept_and_read_again(self):
         class Lists(http.server.BaseHTTPRequestHandler):
             protocol_version = "HTTP/1.1"
@@ -1781,7 +1987,8 @@ class ThePairsPieces(unittest.TestCase):
         got = (c.getsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE), c.getsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPIDLE),
                c.getsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPINTVL), c.getsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT),
                c.getsockopt(socket.IPPROTO_TCP, socket.TCP_USER_TIMEOUT))
-        self.assertEqual(got, (1, 10, 5, 3, 25000))
+        # no TCP_USER_TIMEOUT: it also cut a live stream whose client stopped reading for 25 s (review, 2026-11-03)
+        self.assertEqual(got, (1, 10, 5, 3, 0))
         # both ends of a pair: the connection a box opens to its peer, and the one its pair port accepts
         src = (REPO / "keepalive-proxy.py").read_text()
         self.assertIn("        super().connect()\n        _pair_keepalive(self.sock)\n", src)

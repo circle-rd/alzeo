@@ -9,6 +9,7 @@ no box ever holds the other's API key, and nothing secret is on a command line o
 box writes is what its proxy takes, and a request then goes from one box to the other over TLS; a check that
 fails, or an SSH cut once the other box wrote, keeps nothing on either box; `remove` unpairs both; an SSH
 that does not reach the other box, two boxes of one name and an older proxy are said with what to do."""
+import base64
 import hashlib
 import http.client
 import http.server
@@ -17,6 +18,7 @@ import json
 import os
 import pathlib
 import shutil
+import signal
 import socketserver
 import ssl
 import stat
@@ -220,14 +222,18 @@ class PairTool(unittest.TestCase):
     def add(self, *extra):
         return self.run_tool(self.b1, "add", "127.0.0.1", "--ssh", "box2", *extra)
 
-    def call_until_200(self, box, model, within=15.0):
-        """A call made again until it answers 200: a proxy reads pair.json again within 2 s of a change."""
+    def call_until_from(self, box, model, there, within=15.0):
+        """A call made again until the box `there` answers it: a proxy reads pair.json again within 2 s of a change."""
         deadline = time.monotonic() + within
         while True:
             st, body = self.call(box, model)
-            if st == 200 or time.monotonic() > deadline:
+            if (st == 200 and f"from {there}".encode() in body) or time.monotonic() > deadline:
                 return st, body
             time.sleep(0.5)
+
+    def tool_env(self, box):
+        return {"PATH": f"{self.bin}:{os.environ['PATH']}", "HOME": str(box.home), "PAIR_PORT": str(box.pair_port),
+                "FAKE_SSH_BOXES": str(self.boxes_file), "FAKE_SSH_LOG": str(self.ssh_log)}
 
     def call(self, box, model):
         c = http.client.HTTPConnection("127.0.0.1", box.port, timeout=60)
@@ -341,9 +347,11 @@ class PairTool(unittest.TestCase):
         self.assertEqual(([p["name"] for p in self.b1.pair()["peers"]], [p["name"] for p in self.b2.pair()["peers"]]),
                          (["box2"], ["box1"]), "the pair as it was, on both boxes")
         self.assertEqual((len(self.b1.peer_files()), len(self.b2.peer_files())), (1, 1), "each certificate back")
-        for here, model in ((self.b1, "qwen3.8-flash-next-fp4"), (self.b2, "qwen3.8-27b")):
-            st, body = self.call_until_200(here, model)
-            self.assertEqual(st, 200, body[:300])
+        # each box's request for the other box's model is answered by that box: since decision 986 a box alone
+        # answers 200 too, from its own lane (review, 2026-11-03: these calls could not fail)
+        for here, model, there in ((self.b1, "qwen3.8-flash-next-fp4", "box2"), (self.b2, "qwen3.8-27b", "box1")):
+            st, body = self.call_until_from(here, model, there)
+            self.assertIn(f"from {there}".encode(), body, body[:300])
 
     def test_a_check_that_fails_on_a_working_pair_puts_both_boxes_back(self):
         rc, out = self.add()
@@ -354,9 +362,71 @@ class PairTool(unittest.TestCase):
         self.assertNotEqual(rc, 0)
         self.assertIn("Both boxes are as they were before this run", out)
         self.ssh_boxes({})
-        for here, model in ((self.b1, "qwen3.8-flash-next-fp4"), (self.b2, "qwen3.8-27b")):
-            st, body = self.call_until_200(here, model)
-            self.assertEqual(st, 200, body[:300])
+        # each box's request for the other box's model is answered by that box: since decision 986 a box alone
+        # answers 200 too, from its own lane (review, 2026-11-03: these calls could not fail)
+        for here, model, there in ((self.b1, "qwen3.8-flash-next-fp4", "box2"), (self.b2, "qwen3.8-27b", "box1")):
+            st, body = self.call_until_from(here, model, there)
+            self.assertIn(f"from {there}".encode(), body, body[:300])
+
+    def test_a_ctrl_c_during_the_checks_puts_both_boxes_back(self):
+        # step 3 had no handler of its own: a Ctrl-C left the new pair on both boxes, and lost the one they had
+        # (review, 2026-11-03)
+        rc, out = self.add()
+        self.assertEqual(rc, 0, out)
+        held = localports.held(self)        # box2 now says a pair port nothing listens on: the check waits 10 s
+        self.ssh_boxes({"box2": {"home": str(self.b2.home), "pair_port": held, "from": "127.0.0.1"}})
+        proc = subprocess.Popen([sys.executable, str(REPO / "pair.py"), "add", "127.0.0.1", "--ssh", "box2"],
+                                env=self.tool_env(self.b1), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline:
+            peers = (self.b1.pair() or {}).get("peers") or []
+            if peers and peers[0].get("proxy", "").endswith(f":{held}"):
+                break                       # step 2 wrote: the run is in its checks now
+            time.sleep(0.1)
+        time.sleep(1)
+        proc.send_signal(signal.SIGINT)
+        out, _ = proc.communicate(timeout=60)
+        self.assertNotEqual(proc.returncode, 0, out)
+        self.assertIn("interrupted during the checks. Both boxes are as they were before this run", out)
+        self.ssh_boxes({})
+        for here, model, there in ((self.b1, "qwen3.8-flash-next-fp4", "box2"), (self.b2, "qwen3.8-27b", "box1")):
+            st, body = self.call_until_from(here, model, there)
+            self.assertIn(f"from {there}".encode(), body, body[:300])
+
+    def remote(self, box, req):
+        """The other box's half of pair.py, run on `box` as ssh_call runs it there: its answer."""
+        spec = importlib.util.spec_from_file_location(f"pair_boot_{time.time_ns()}", REPO / "pair.py")
+        tool = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(tool)       # its main() runs only as a script
+        code = tool.REMOTE_BOOT
+        stdin = base64.b64encode((REPO / "pair.py").read_bytes()).decode() + "\n" + json.dumps(req) + "\n"
+        r = subprocess.run([sys.executable, "-I", "-c", code], input=stdin, env=self.tool_env(box),
+                           capture_output=True, text=True, timeout=60)
+        return json.loads(r.stdout.strip().splitlines()[-1])
+
+    def test_a_run_undone_there_before_it_wrote_writes_nothing_after(self):
+        # a Ctrl-C or a timeout in step 1 ends the local ssh, not the command there: its undo could come first,
+        # find nothing, and its write land after it, a pair one way (review, 2026-11-03)
+        token = "ab" * 16
+        self.assertEqual(self.run_tool(self.b1, "identity")[0], 0)      # box1's certificate, made once
+        self.assertEqual(self.remote(self.b2, {"do": "undo", "undo": token}), {"undone": False})
+        out = self.remote(self.b2, {"do": "accept", "undo": token, "name": "box1", "port": self.b1.pair_port,
+                                    "back": "127.0.0.1", "cert": (self.b1.cfg / "pair/identity/cert.pem").read_text()})
+        self.assertIn("already undone", out.get("error", ""), out)
+        self.assertEqual((self.b2.pair() or {"peers": []})["peers"], [], "nothing written there")
+
+    def test_an_undo_never_writes_outside_its_folder(self):
+        # the name of an entry put back becomes a file name: one with a path in it wrote outside pair/ (review,
+        # 2026-11-03); it is passed over
+        self.assertEqual(self.run_tool(self.b1, "identity")[0], 0)
+        pem = (self.b1.cfg / "pair/identity/cert.pem").read_text()
+        token = "cd" * 16
+        (self.b2.cfg / "pair").mkdir(mode=0o700, exist_ok=True)
+        (self.b2.cfg / f"pair/undo-{token}.json").write_text(json.dumps({"name": "box1", "replaced": [
+            {"entry": {"name": "../../evil", "proxy": "https://127.0.0.1:1", "cert_file": "x", "sha256": "00" * 32},
+             "pem": pem}]}))
+        self.assertEqual(self.remote(self.b2, {"do": "undo", "undo": token}), {"undone": True})
+        self.assertEqual(sorted(str(f) for f in self.b2.home.rglob("evil@*")), [], "no file outside pair/")
 
     def test_a_check_the_other_way_that_fails_keeps_nothing_either(self):
         # box2 reaches box1 at an address where box1 does not listen

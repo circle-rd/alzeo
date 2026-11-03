@@ -340,6 +340,27 @@ class AnAnswerIsRelayedTheMomentItComes(unittest.TestCase):
         self.assertLess(min(took), 0.25, took)
 
 
+class ARequestInFlightHoldsItsSocketsAlone(unittest.TestCase):
+    """A first fix of the relay's wait gave each request in flight a pipe of its own, two descriptors more: the other
+    box of a pair could then exhaust the proxy's 1024, and select() refused any past 1024 (review, 2026-11-03). Its
+    keepers now poll(): a request in flight holds its client's socket and its engine's, nothing else."""
+    INPROC = False
+
+    def test_eight_requests_in_flight_hold_no_more_than_their_sockets(self):
+        box = Box(self, inproc=self.INPROC)
+        box.start_engine(delay=2.0)
+        where = f"/proc/{os.getpid() if self.INPROC else box.proc.pid}/fd"
+        before = len(os.listdir(where))
+        replies = [box.send(stream=False) for _ in range(8)]
+        time.sleep(1.0)                     # all of them in flight, their engine still working
+        during = len(os.listdir(where))
+        for r in replies:
+            self.assertTrue(r.done.wait(15))
+            self.assertEqual(r.status, 200)
+        # in this process: the test's client socket and the fake engine's too, two per request more
+        self.assertLessEqual((during - before) / 8, 4.5 if self.INPROC else 2.5, (before, during))
+
+
 class WhatIsNotWaitedFor(unittest.TestCase):
     INPROC = False
 
@@ -666,6 +687,13 @@ class AnAnswerIsRelayedTheMomentItComesInProcess(AnAnswerIsRelayedTheMomentItCom
         super().test_a_stream_whose_engine_took_over_a_second_is_relayed_at_once()
 
 
+class ARequestInFlightHoldsItsSocketsAloneInProcess(ARequestInFlightHoldsItsSocketsAlone):
+    INPROC = True
+
+    def test_eight_requests_in_flight_hold_no_more_than_their_sockets(self):
+        super().test_eight_requests_in_flight_hold_no_more_than_their_sockets()
+
+
 class WhatIsNotWaitedForInProcess(WhatIsNotWaitedFor):
     INPROC = True
 
@@ -725,7 +753,8 @@ class AHoldEndsInProcess(AHoldEnds):
 class EveryCaseHasItsInProcessTwin(unittest.TestCase):
     def test_each_twin_declares_every_case_of_its_class(self):
         for twin in (AStreamedRequestWaitsForItsEngineInProcess, ANonStreamedRequestWaitsInSilenceInProcess,
-                     AnAnswerIsRelayedTheMomentItComesInProcess, WhatIsNotWaitedForInProcess, AHoldEndsInProcess):
+                     AnAnswerIsRelayedTheMomentItComesInProcess, ARequestInFlightHoldsItsSocketsAloneInProcess,
+                     WhatIsNotWaitedForInProcess, AHoldEndsInProcess):
             base = twin.__bases__[0]
             cases = {n for n in vars(base) if n.startswith("test_")}
             self.assertTrue(cases, base.__name__)

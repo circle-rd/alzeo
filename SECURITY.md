@@ -159,9 +159,15 @@ request is read. The certificate is the pair's only credential: no box holds the
 other's API key, which is also its cockpit's login (root on a box, as above), and
 the pair port takes the generation routes and `GET /v1/models` only (403 for any
 other), admitted to the engine with this box's own key, and `GET /pair/cockpit/state`:
-a summary of this box (what serves, its lanes' units, memory, CPU, GPU, the job under way,
-the version, whether its cockpit answers, the time), which the proxy reads from its own
-cockpit with its own key, never relayed whole.
+a summary of this box (its name in the pair, what serves, its lanes' units, memory, CPU,
+GPU, the job under way, the version, why its cockpit does not answer when it does not,
+the time), which the proxy reads from its own cockpit with its own key, never relayed
+whole, and keeps 2 s, so the other box's reads cost this one a cockpit read every 2 s
+at most. What a box takes from the other (its list of models, its summary) is rebuilt
+field by field, each of its type: nothing nested, no NaN, comes through. A request the
+other box sends on never names the engine's request id, in its body or in a header:
+SGLang aborts every request whose id starts with one it aborts, and a box naming the
+ids "0" to "f" could end every generation of the other.
 This box's cockpit reads the other's through `/proxy/pair/<box>/state`, a route of
 this machine only, as `/proxy/stop`. A request that gets past
 it is a hop from the box of that certificate: served there or refused, never sent

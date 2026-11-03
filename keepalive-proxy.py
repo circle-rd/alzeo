@@ -3087,6 +3087,25 @@ VLLM_MODEL_ROUTES = ("/v1/chat/completions", "/v1/completions", "/v1/messages",
                      "/invocations")
 
 
+def strip_rid(body):
+    """The body without a rid of its own (top level): (body, True) when one was dropped. SGLang takes a rid from
+    the body of a generation, and aborts every request whose rid starts with one it aborts (when its client
+    leaves, too)."""
+    if not body or b'"rid"' not in body:
+        return body, False
+    try:
+        j = json.loads(body)
+    except Exception:
+        return body, False
+    if not isinstance(j, dict) or "rid" not in j:
+        return body, False
+    j.pop("rid")
+    try:
+        return rewritten(j), True
+    except Exception:
+        return body, False
+
+
 def route_model_name(body, path):
     """(the body to forward, the name it replaced or None). On vLLM only, which answers 404
     to a model it does not serve where SGLang answers any name: a body naming another model
@@ -3129,7 +3148,7 @@ def route_model_name(body, path):
 # name no box serves, and any other name (claude-*, gpt-*, none), stays on this box, as on a box alone
 # ("any name reaches the lane that serves", claude-local.py; decision 986). A request a peer sends on comes in on
 # the pair port: it is served here or refused (409), never sent on again, so two boxes that name each
-# other cannot bounce it. The peer runs every guard of its own on it (sizes, tools, efforts, holds),
+# other cannot bounce it. The peer runs every guard of its own on it (sizes, tools, efforts; never a hold),
 # so it goes there as the client wrote it. pair.json is read again when it changes: no restart.
 # The boxes talk over TLS both ways (decisions 971-978, the model of NVIDIA PAIR's nodes: a
 # certificate of its own per box, pinned by the other, a client certificate demanded). pair.py makes
@@ -3178,7 +3197,17 @@ PAIR_CONNECT_S = PAIR_CONNECT_S if PAIR_CONNECT_S > 0 else 10.0    # 0 made the 
 # MAX_SILENCE_S with nothing (found in review, 2026-11-02)
 PAIR_STREAM_SILENCE_S = float(os.environ.get("PAIR_STREAM_SILENCE_S") or 0) or max(4 * KEEPALIVE_S, 60.0)
 PAIR_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,39}")
-_PAIR = {"stamp": None, "conf": None, "error": None, "seen": 0.0}
+_PAIR = {"stamp": None, "conf": None, "error": None, "seen": 0.0, "loaded": 0.0}
+# decision 986 and what a review of it found (2026-11-03): a lane name no box lists waits (503) only for a box
+# that may serve it and does not answer, and for a while: one that served it at its last good read, for
+# PAIR_KNOWN_WAIT_S from that read (a lane switch, a reboot), and one never read, for PAIR_FIRST_READ_S from the
+# pair's load (its first read). Past that, this box's lane answers it, as on a box alone: a box restarted while
+# the other one stays off held every lane it does not load for as long as that one was off.
+PAIR_KNOWN_WAIT_S = float(os.environ.get("PAIR_KNOWN_WAIT_S") or 900)
+PAIR_FIRST_READ_S = float(os.environ.get("PAIR_FIRST_READ_S") or 30)
+PAIR_SLOW_READ_S = 1.0
+PAIR_SUMMARY_KEEP_S = 2.0
+_PAIR_SUMMARY = {"ts": 0.0, "data": None}
 _PAIR_MODELS: dict = {}
 _PAIR_LOCK = threading.Lock()
 
@@ -3314,7 +3343,7 @@ def pair_conf():
                 conf = _pair_parse(f.read())
             if conf["peers"]:
                 _pair_tls(conf)
-            _PAIR.update(conf=conf, error=None)
+            _PAIR.update(conf=conf, error=None, loaded=time.monotonic())
             _PAIR_MODELS.clear()
             tls = f", over TLS, this box's certificate sha256 {conf['tls']['mine'][:16]}..." if conf["peers"] else ""
             log(f"pair: {conf['name']} with {', '.join(p['name'] + ' (' + p['proxy'] + ')' for p in conf['peers']) or 'no peer'}"
@@ -3342,6 +3371,15 @@ def peer_models(peer, fresh=False, since=None):
     asked = time.monotonic()
     with _PAIR_LOCK:
         lock = _PAIR_READING.setdefault(peer["name"], threading.Lock())
+    row = _PAIR_MODELS.get(peer["name"])
+    if row and row.get("error") and row.get("read_s", 0) > PAIR_SLOW_READ_S:
+        # a box whose last read failed slowly is read again in the background, never waited for by a request, nor
+        # the read under way: one off without a reset (power, a cable) took the read's whole timeout, and every
+        # request for a lane loaded nowhere waited 5 s for it (found in review, 2026-11-03). One that refused at
+        # once (a proxy restarting, its engine's 503) is read again in the request, as before: the request after
+        # it came back reaches it.
+        _peer_models_soon(peer)
+        return row["models"]
     with lock:
         row = _PAIR_MODELS.get(peer["name"])
         if row and since is not None and row["ts"] >= since:
@@ -3362,7 +3400,46 @@ def _peer_models_soon(peer):
         lock = _PAIR_READING.setdefault(peer["name"], threading.Lock())
     if lock.locked():
         return                              # a read is under way
-    threading.Thread(target=peer_models, args=(peer,), daemon=True).start()
+    threading.Thread(target=_peer_models_refresh, args=(peer,), daemon=True, name=f"pair-list-{peer['name']}").start()
+
+
+def _peer_models_refresh(peer):
+    """The background read of a peer's list: one at a time per peer, and only while it is still stale. Not
+    peer_models, which hands a box that did not answer back to the background without reading it."""
+    with _PAIR_LOCK:
+        lock = _PAIR_READING.setdefault(peer["name"], threading.Lock())
+    with lock:
+        row = _PAIR_MODELS.get(peer["name"])
+        if row and time.monotonic() - row["ts"] < PAIR_TTL_S:
+            return
+        _peer_models_read(peer)
+
+
+def _pair_row(m):
+    """A row of the other box's list as this box gives it on: its id and its scalar fields, nothing nested (a
+    row nested 9,990 deep parsed, then made every GET /v1/models here drop when written back: found in review,
+    2026-11-03)."""
+    return {k: v for k, v in m.items() if k in ("id", "object", "created", "owned_by", "root", "max_model_len")
+            and (v is None or isinstance(v, (str, int, float, bool)))}
+
+
+def _pair_summary_clean(s):
+    """The other box's summary as the tile reads it: the fields cockpit_summary writes, each of its type, nothing
+    else (one nested 9,988 deep froze every view of this cockpit once written back: found in review, 2026-11-03)."""
+    num = lambda v: v if isinstance(v, (int, float)) and not isinstance(v, bool) else None
+    word = lambda v: v[:200] if isinstance(v, str) else None
+    job = s.get("job") if isinstance(s.get("job"), dict) else None
+    lanes = s.get("lanes") if isinstance(s.get("lanes"), dict) else {}
+    models = s.get("models") if isinstance(s.get("models"), list) else []
+    return {"name": word(s.get("name")), "version": word(s.get("version")),
+            "models": [m for m in models if isinstance(m, str) and _PAIR_SAFE_ID.fullmatch(m)][:16],
+            "lanes": {k[:80]: v[:40] for k, v in list(lanes.items())[:16] if isinstance(k, str) and isinstance(v, str)},
+            "mem_total": num(s.get("mem_total")), "mem_available": num(s.get("mem_available")),
+            "cpu_pct": num(s.get("cpu_pct")), "gpu_temp_c": num(s.get("gpu_temp_c")),
+            "gpu_power_w": num(s.get("gpu_power_w")),
+            "job": ({"action": word(job.get("action")), "status": word(job.get("status")),
+                     "elapsed": num(job.get("elapsed"))} if job else None),
+            "cockpit": word(s.get("cockpit")), "ts": num(s.get("ts"))}
 
 
 def _json_finite(data):
@@ -3385,6 +3462,7 @@ def _peer_models_read(peer):
     # when its engine does not answer (a 503 while a lane loads); pair.py's check reads it (found in review,
     # 2026-11-03: add undid a working pair while either engine was stopped)
     models, rows, err, answered = (), [], None, False
+    t0 = time.monotonic()
     try:
         # on the pair port, a hop: the peer answers with its own engine's list, never the union it shows its
         # clients, so two boxes that name each other do not ask each other in a loop, and a refusal says
@@ -3395,7 +3473,7 @@ def _peer_models_read(peer):
             data = _json_finite(r.read(1 << 20).decode())
         if not isinstance(data, dict) or not isinstance(data.get("data"), list):
             raise ValueError("its /v1/models is not a list of models")
-        rows = [m for m in data["data"] if isinstance(m, dict) and isinstance(m.get("id"), str)
+        rows = [_pair_row(m) for m in data["data"] if isinstance(m, dict) and isinstance(m.get("id"), str)
                 and _PAIR_SAFE_ID.fullmatch(m["id"])]
         models = tuple(m["id"] for m in rows)
     except urllib.error.HTTPError as e:
@@ -3406,9 +3484,11 @@ def _peer_models_read(peer):
     # not answer now may still serve those, and a request for one of them waits for it (503); a box never read
     # may serve any (another certificate at its address, a box not reached yet: the 503 says why); any other
     # name is this box's own (decision 986), even while that box is off
-    known = models if err is None else (_PAIR_MODELS.get(peer["name"]) or {}).get("known")
-    _PAIR_MODELS[peer["name"]] = {"ts": time.monotonic(), "models": models, "rows": rows, "error": err,
-                                  "answered": answered, "known": known}
+    prev = _PAIR_MODELS.get(peer["name"]) or {}
+    now = time.monotonic()
+    known, known_ts = (models, now) if err is None else (prev.get("known"), prev.get("known_ts"))
+    _PAIR_MODELS[peer["name"]] = {"ts": now, "models": models, "rows": rows, "error": err,
+                                  "answered": answered, "known": known, "known_ts": known_ts, "read_s": now - t0}
     return models
 
 
@@ -3922,14 +4002,15 @@ def _pair_keepalive(sock):
     """TCP keepalive on a connection between the boxes of a pair: a box that loses power or its cable sends no
     FIN, and a request in flight to it waited up to pair_read_s (MAX_SILENCE_S, an hour in the unit) while its
     client heard nothing; these boxes have had hard power-offs (found in review, 2026-11-03). Probes after 10 s
-    of silence, every 5 s, and a box that acknowledges nothing for 25 s is gone: the request gets the 503 a box
-    that does not answer gets. A box that is there acknowledges the probes however long its engine works."""
+    of silence, every 5 s, and a box that answers 3 of them with nothing is gone, about 25 s on: the request gets
+    the 503 a box that does not answer gets. A box that is there answers the probes however long its engine works.
+    No TCP_USER_TIMEOUT: it also cut a live stream whose client stopped reading for 25 s (a full window, a review
+    of 2026-11-03 measured it), where a box alone waits CLIENT_IO_S for such a client."""
     try:
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
         sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPIDLE, 10)
         sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, 5)
         sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT, 3)
-        sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_USER_TIMEOUT, 25000)
     except (OSError, AttributeError):
         pass                                # not Linux: the read timeout alone, as before
 
@@ -4402,34 +4483,13 @@ def _peek(sock):
     return sock.recv(1, socket.MSG_PEEK | socket.MSG_DONTWAIT)
 
 
-class _Wake(threading.Event):
-    """The end of a request's wait, as an Event a select() also waits on: set() makes its pipe readable. The
-    keepers watched the caller in a select() of 0.5 s and _forward joins them before relaying, so every
-    non-streamed answer, and every stream whose engine took more than a second, waited for the keeper's next
-    tick: 503 ms through the proxy for an answer the engine gave in 35 ms (measured on the reference box,
-    v1.41.0, 2026-11-03)."""
-
-    def __init__(self):
-        super().__init__()
-        self._r, self._w = os.pipe()
-        os.set_blocking(self._w, False)
-
-    def fileno(self):
-        return self._r
-
-    def set(self):
-        super().set()
-        try:
-            os.write(self._w, b"x")
-        except OSError:
-            pass                            # already written, or closed: the Event says it
-
-    def close(self):
-        for fd in (self._r, self._w):
-            try:
-                os.close(fd)
-            except OSError:
-                pass
+# The keepers watch their caller in poll() ticks of KEEPER_TICK_S, and see the end of their request's wait at the next
+# tick. With a select() of 0.5 s, and _forward joining them before it relays, every non-streamed answer, and every
+# stream whose engine took more than a second, waited for that tick: 503 ms through the proxy for an answer the engine
+# gave in 35 ms (measured on the reference box, v1.41.0, 2026-11-03). A pipe per request ended the wait at once and
+# doubled the descriptors of a request in flight, which the other box of a pair could then exhaust, and select()
+# refuses any past 1024 (found in review, 2026-11-03): poll() takes no descriptor and has no such limit.
+KEEPER_TICK_S = 0.05
 
 
 def _counted_peer(addr):
@@ -4785,7 +4845,10 @@ class H(BaseHTTPRequestHandler):
         if getattr(self, "_frid", "unset") != "unset":
             return self._frid
         if self.path.split("?")[0] in RID_OVERRIDE_ROUTES:
-            self._frid = self.headers.get("x-override-rid") or uuid.uuid4().hex
+            # a request the other box of a pair sent on never names the rid: it could name "0" to "f" and end
+            # every generation here (SGLang aborts by prefix; found in review, 2026-11-03)
+            mine = None if self._pair_hop() else self.headers.get("x-override-rid")
+            self._frid = mine or uuid.uuid4().hex
         else:
             self._frid = None
         return self._frid
@@ -4798,8 +4861,11 @@ class H(BaseHTTPRequestHandler):
         # conversation_id): fields of its scheduler no client of this port has to set. By the
         # prefix, so that one a later release adds stays here too (found in a cloud review,
         # 2026-10-18).
+        # A request the other box of a pair sent on keeps no rid of its own either, on any route: SGLang aborts by
+        # prefix, and its rids "0" to "f" ended every generation here (found in review, 2026-11-03)
+        hop = self._pair_hop()
         h = {k: v for k, v in self.headers.items() if k.lower() not in HOP and k.lower() != PAIR_HOP.lower()
-             and not (k.lower().startswith("x-override-") and k.lower() != "x-override-rid")}
+             and not (k.lower().startswith("x-override-") and (k.lower() != "x-override-rid" or hop))}
         auth = _upstream_auth(self)
         if auth:
             h["Authorization"] = auth
@@ -5400,8 +5466,11 @@ class H(BaseHTTPRequestHandler):
         makes, for a non-streamed request that waits in silence while the engine is away."""
         sock = self.connection
         try:
-            readable, _, _ = select.select([sock], [], [], 0)
-            if not readable:
+            # poll(), not select(): select() refuses a descriptor past 1024, and that ValueError read as the
+            # caller gone, a request aborted for a busy proxy (found in review, 2026-11-03)
+            poller = select.poll()
+            poller.register(sock, select.POLLIN)
+            if not poller.poll(0):
                 return False
             return not _peek(sock)
         except BlockingIOError:
@@ -5489,15 +5558,20 @@ class H(BaseHTTPRequestHandler):
         sock = self.connection
         # Under TLS too (_peek): this keeper returned at once on TLS before the pair, and a stop of the
         # cockpit went unseen while a request waited
+        poller = select.poll()
+        try:
+            poller.register(sock, select.POLLIN)
+        except (OSError, ValueError):
+            return
         while not done.is_set():
             if self._stopped_while_routed(done):
                 return
             try:
-                readable, _, _ = select.select([sock, done] if isinstance(done, _Wake) else [sock], [], [], 0.5)
-            except (OSError, ValueError):
+                readable = poller.poll(KEEPER_TICK_S * 1000)
+            except OSError:
                 return
             if done.is_set():
-                return                   # the answer came: woken at once (_Wake), not at the next tick
+                return                   # the answer came: seen within a tick (KEEPER_TICK_S)
             if not readable:
                 continue
             try:
@@ -5573,6 +5647,11 @@ class H(BaseHTTPRequestHandler):
             return
         sock = self.connection
         peek = True                      # through TLS too (_peek; a streamed request of the pair, 2026-11-03)
+        poller = select.poll()
+        try:
+            poller.register(sock, select.POLLIN)
+        except (OSError, ValueError):
+            peek = False                 # its keepalives still go, on done.wait() ticks
         anthropic = self.path.startswith("/v1/messages")
         next_ka = start + KEEPALIVE_S
         while not done.is_set():
@@ -5602,15 +5681,14 @@ class H(BaseHTTPRequestHandler):
                     return
                 next_ka = now + KEEPALIVE_S
             if not peek:
-                done.wait(min(0.5, max(0.0, next_ka - time.time())))
+                done.wait(min(KEEPER_TICK_S, max(0.0, next_ka - time.time())))
                 continue
             try:
-                readable, _, _ = select.select([sock, done] if isinstance(done, _Wake) else [sock], [], [],
-                                               min(0.5, max(0.0, next_ka - time.time())))
-            except (OSError, ValueError):
+                readable = poller.poll(min(KEEPER_TICK_S, max(0.0, next_ka - time.time())) * 1000)
+            except OSError:
                 return
             if done.is_set():
-                return                   # the engine answered: woken at once (_Wake)
+                return                   # the engine answered: seen within a tick (KEEPER_TICK_S)
             if not readable:
                 continue
             try:
@@ -6081,7 +6159,15 @@ class H(BaseHTTPRequestHandler):
         return True
 
     def _pair_cockpit_state(self):
-        """GET PAIR_COCKPIT_STATE on the pair port: this box summed up for the other box's tile (decision 975)."""
+        """GET PAIR_COCKPIT_STATE on the pair port: this box summed up for the other box's tile (decision 975). Kept
+        PAIR_SUMMARY_KEEP_S: each summary reads this box's cockpit, and the other box could ask for it as fast as
+        it liked, unseen, its reads being quiet in the journal (found in review, 2026-11-03)."""
+        with _PAIR_LOCK:
+            kept = _PAIR_SUMMARY["data"] if time.monotonic() - _PAIR_SUMMARY["ts"] < PAIR_SUMMARY_KEEP_S else None
+        if kept is not None:
+            self._plain(200, {"Content-Type": "application/json"}, kept)
+            self._done("ok pair cockpit", quiet=True)
+            return
         try:
             summary = cockpit_summary()
         except Exception as e:
@@ -6092,7 +6178,10 @@ class H(BaseHTTPRequestHandler):
                                               f"keepalive-proxy: the cockpit of this box does not answer ({why})"}}).encode())
             self._done("503 pair cockpit unreachable")
             return
-        self._plain(200, {"Content-Type": "application/json"}, json.dumps(summary).encode())
+        data = json.dumps(summary).encode()
+        with _PAIR_LOCK:
+            _PAIR_SUMMARY.update(ts=time.monotonic(), data=data)
+        self._plain(200, {"Content-Type": "application/json"}, data)
         self._done("ok pair cockpit", quiet=True)
 
     def _pair_peer_state(self, name):
@@ -6122,8 +6211,11 @@ class H(BaseHTTPRequestHandler):
         try:
             with peer["list_opener"].open(urllib.request.Request(peer["proxy"] + PAIR_COCKPIT_STATE), timeout=5) as r:
                 data = r.read((1 << 20) + 1)
-            if len(data) > 1 << 20 or not isinstance(_json_finite(data), dict):
+            summary = _json_finite(data) if len(data) <= 1 << 20 else None
+            if not isinstance(summary, dict):
                 why = "its summary is no JSON object of 1 MiB at most"
+            else:
+                data = json.dumps(_pair_summary_clean(summary)).encode()     # its fields alone, rebuilt
         except urllib.error.HTTPError as e:
             why = f"HTTP {e.code}"
         except Exception as e:
@@ -6200,9 +6292,15 @@ class H(BaseHTTPRequestHandler):
                                   "(~/.config/qwen38/api-key), so it sends no request on to another box", {})
                 self._done("503 pair own key unreadable")
                 return True
-            if attempt == 2 or self._forward_peer(body, peer, name, conf, local) != "moved":
-                if attempt == 2:
-                    return False if local is None else self._pair_served_nowhere(name, conf, local)
+            if attempt == 2:
+                # a box lists it and refused it twice (its list lags a switch): never answered here with this box's
+                # own model, which docs/pair.md promises; the client tries again (found in review, 2026-11-03)
+                log(f"{self._peer} pair: {peer['name']} lists {name} and refused it twice: try again")
+                self._pair_refuse(503, "engine_unavailable", f"box {peer['name']} lists {name} and refused it "
+                                  f"twice (it is switching lanes): try again", pair_served_map(conf, local))
+                self._done("503 pair peer unreachable")
+                return True
+            if self._forward_peer(body, peer, name, conf, local) != "moved":
                 return True
             since = time.monotonic()        # the peer serves another model since its list was read
         if local is None:
@@ -6220,7 +6318,11 @@ class H(BaseHTTPRequestHandler):
         said = "; ".join(f"{b}: {v if isinstance(v, str) else (', '.join(v) or 'nothing')}" for b, v in served.items())
         def waited_for(p):
             row = _PAIR_MODELS.get(p["name"]) or {}
-            return bool(row.get("error")) and (row.get("known") is None or name in row["known"])
+            if not row.get("error"):
+                return False
+            if row.get("known") is None:
+                return time.monotonic() - _PAIR["loaded"] < PAIR_FIRST_READ_S
+            return name in row["known"] and time.monotonic() - (row.get("known_ts") or 0) < PAIR_KNOWN_WAIT_S
         unread = [p["name"] for p in conf["peers"] if waited_for(p)]
         if unread:
             # a peer whose list cannot be read may be the box that serves it (unreachable, or its engine
@@ -6237,12 +6339,12 @@ class H(BaseHTTPRequestHandler):
 
     def _pair_held_refused(self, body, route):
         """Role 10, after a hold: the lane that came back may serve another model than the one this request
-        names. On a box of a pair, or for a request an entry sent on, it is refused then (409 sent on, 404
-        otherwise), never answered by that other lane (found in review, 2026-11-02: a peer in the middle of
-        a switch held a request for Flash, and Ornith answered it)."""
+        names. On a box of a pair it is refused then, with a 503 the client tries again, never answered by that
+        other lane on the spot (found in review, 2026-11-02: a peer in the middle of a switch held a request for
+        Flash, and Ornith answered it); sent again, it goes to the box that serves it, or, served by no box, to
+        this box's lane (decision 986). A request the other box sent on is never held (_hold)."""
         conf = pair_conf()
-        hop = self._pair_hop()
-        if (not (conf and conf["peers"]) and not hop) or route not in PAIR_ROUTES or not body:
+        if not (conf and conf["peers"]) or route not in PAIR_ROUTES or not body:
             return False
         name = body_model(body)
         if name not in LANE_NAMES:
@@ -6252,20 +6354,14 @@ class H(BaseHTTPRequestHandler):
             local = served_models() or None
         except EngineUnreachable:
             local = None
-        if name in (local or ()) or (local is None and not hop):
+        if local is None or name in local:
             return False
-        me = (conf or {}).get("name") or "this box"
-        now = ", ".join(local) if local else "a lane whose name it does not give yet"
+        me = conf.get("name") or "this box"
+        now = ", ".join(local)
         log(f"{self._peer} REFUSED {name} after a hold: the lane that came back serves {now}")
-        if hop and local:
-            self._pair_refuse(409, "model_not_served", f"this box ({me}) serves {now}, not {name}", {me: list(local)})
-            self._done("409 pair another model here")
-        else:
-            # a 503 the client tries again (a 404 it would take as final): sent again, it goes to the box that
-            # serves it, or is told that none does (found in review, 2026-11-02)
-            self._pair_refuse(503, "engine_unavailable", f"this box ({me}) came back serving {now}, not {name}: "
-                              f"try again", {me: list(local) if local else "does not answer"})
-            self._done("503 engine unreachable")
+        self._pair_refuse(503, "engine_unavailable", f"this box ({me}) came back serving {now}, not {name}: "
+                          f"try again", {me: list(local)})
+        self._done("503 engine unreachable")
         return True
 
     def _forward_peer(self, body, peer, name, conf, local):
@@ -6344,7 +6440,10 @@ class H(BaseHTTPRequestHandler):
                 self._done("CLIENT GONE during pair"); return None
             headers = {k: v for k, v in resp.headers.items() if k.lower() not in PAIR_DROP_IN}
             try:
-                if "text/event-stream" not in (resp.headers.get("Content-Type") or ""):
+                # a stream is relayed as it comes: SSE, and the NDJSON of the Ollama routes, which reached the
+                # client whole at its end (found in review, 2026-11-03)
+                ctype = resp.headers.get("Content-Type") or ""
+                if "text/event-stream" not in ctype and "application/x-ndjson" not in ctype:
                     try:
                         data = _pair_read_whole(resp, PAIR_ANSWER_MAX)
                     except (OSError, http.client.HTTPException) as e:
@@ -6444,6 +6543,13 @@ class H(BaseHTTPRequestHandler):
     def _served_name(self, body):
         """The body as the engine that serves now takes it (route_model_name, qwen_effort_none, nemotron_effort,
         ornith_effort), each change said once."""
+        if self._pair_hop():
+            # role 10: the rid is this box's to give. The other box naming rids "0" to "f" in its bodies and leaving
+            # ended every generation here, SGLang aborting by prefix (found in review, 2026-11-03)
+            body, dropped = strip_rid(body)
+            if dropped:
+                _say_once_a_minute("hop rid", f"{self._peer} pair: a rid in the body of a request the other box "
+                                              f"sent on is dropped: this box names its engine's requests")
         body, renamed = route_model_name(body, self.path)
         if renamed and _model_rename_logged.first(renamed):   # once per name, not per request
             shown = repr(renamed[:60]) + ("..." if len(renamed) > 60 else "")
@@ -6567,7 +6673,7 @@ class H(BaseHTTPRequestHandler):
             if not self._floor_refused():
                 self._cut_stopped()
             return None
-        done = _Wake()
+        done = threading.Event()
         self._wlock = threading.Lock()      # the keeper writes into the stream until _open returns
         whole = bool(body) and answered_whole(body)
         keeper = None
@@ -6581,8 +6687,6 @@ class H(BaseHTTPRequestHandler):
             done.set()                      # headers, or an error: the generation is over
             if keeper is not None:
                 keeper.join(timeout=CLIENT_IO_S)
-            if keeper is None or not keeper.is_alive():
-                done.close()                # a keeper still in select() keeps its pipe: never a reused fd there
             with self._wlock:               # and nothing is half-written into the stream
                 pass
         if getattr(self, "_caller_left", False):
@@ -6663,10 +6767,15 @@ class H(BaseHTTPRequestHandler):
         sock = self.connection
         if isinstance(sock, ssl.SSLSocket):
             return                       # a peek through TLS is not this simple; drain instead
+        poller = select.poll()           # not select(): it refuses a descriptor past 1024 (review, 2026-11-03)
+        try:
+            poller.register(sock, select.POLLIN)
+        except (OSError, ValueError):
+            return
         while not cancel.is_set():
             try:
-                readable, _, _ = select.select([sock], [], [], 0.5)
-            except (OSError, ValueError):
+                readable = poller.poll(500)
+            except OSError:
                 return
             if not readable:
                 continue
