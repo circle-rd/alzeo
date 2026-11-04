@@ -1114,6 +1114,38 @@ class ARecoveryRestartIsMarkedByItsOwnJob(Base):
         self.assertEqual(job.rc, 1, job.lines)
         self.assertEqual((self.mark() or {}).get("invocation"), "run-7", "the mark of a restart that went was removed")
 
+    def test_a_restart_whose_systemd_does_not_answer_keeps_its_mark(self):
+        # systemd silent under memory pressure, the very case of a systemctl that failed after PID 1 took its job: its
+        # silence read as no restart removed the mark (the 8th review of v1.43.0, 2026-11-05)
+        cp = self.cp
+        for silent in ("list-jobs", "show"):
+            with self.subTest(silent=silent):
+                self.marks.unlink(missing_ok=True)
+                shown = []
+
+                def answer(argv, timeout=5.0, merge_err=False, errors="strict"):
+                    if argv[:2] == ["systemctl", "show"] and not shown:
+                        shown.append(argv)
+                        return "InvocationID=run-7\n"                  # read for the mark, before the restart
+                    if argv[1] == silent:
+                        out = cp.Ran("")                                # a timeout: "" and not ok
+                        out.ok = False
+                        return out
+                    return "" if argv[1] == "list-jobs" else "InvocationID=run-7\n"
+                cp.run = answer
+                job = self.run_job("autoheal", 1)
+                self.assertEqual(job.rc, 1, job.lines)
+                self.assertEqual((self.mark() or {}).get("invocation"), "run-7", f"systemd's silence ({silent}) "
+                                                                                "removed the mark")
+
+    def test_a_restart_whose_stop_is_done_keeps_its_mark(self):
+        # its job reads "start" once its stop is done (systemd's job.c patches a restart job so)
+        self.box({f"systemctl show {self.U}": "InvocationID=run-7\n",
+                  "systemctl list-jobs": f"12 {self.U} start waiting\n"})
+        job = self.run_job("zombie", 1)
+        self.assertEqual(job.rc, 1, job.lines)
+        self.assertEqual((self.mark() or {}).get("invocation"), "run-7", "a restart past its stop lost its mark")
+
     def test_a_run_systemd_does_not_say_now_is_the_ticks(self):
         # systemd slow to answer at the restart: no mark and nothing said, the proxy then reading the restart of a lane
         # with a staged checkpoint as an order (the 7th review of v1.43.0, 2026-11-04)

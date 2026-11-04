@@ -2362,19 +2362,27 @@ LAST_RUN: dict = {}           # unit -> its InvocationID at the lifecycle tick's
 
 
 def restart_due(unit: str, invocation: str) -> bool:
-    """True while systemd has a restart of unit queued or running, or once its run is another than invocation: a
+    """True while systemd has a restart of unit queued or running (its job reads "restart", then "start" once its stop is
+    done: systemd's job.c patches it so), once its run is another than invocation, or when systemd does not answer: a
     systemctl that failed after PID 1 took the job (sd-bus's timeout under memory pressure) restarted it all the same, and
-    its mark, removed, let that restart read as an order (the 7th review of v1.43.0, 2026-11-04)."""
+    its mark, removed, let that restart read as an order (the 7th review of v1.43.0, 2026-11-04). Its silence read as no
+    restart removed the mark in that very case (the 8th review, 2026-11-05): kept, a mark counts only for a restart that
+    leaves active within RECOVERY_START_S of it (keepalive-proxy.py)."""
     jobs = run(["systemctl", "list-jobs", "--no-legend", "--no-pager", unit])
-    if any(f[1:3] == [unit, "restart"] for f in (ln.split() for ln in jobs.splitlines()) if len(f) >= 3):
+    if not answered(jobs):
+        return True
+    if any(f[1:3] in ([unit, "restart"], [unit, "start"]) for f in (ln.split() for ln in jobs.splitlines())
+           if len(f) >= 3):
         return True
     now = unit_invocation(unit)
-    return bool(now) and now != invocation
+    return now is None or (bool(now) and now != invocation)
 
 
-def unit_invocation(unit: str) -> str:
-    """The unit's run now, its InvocationID, or "" when systemd does not say."""
+def unit_invocation(unit: str) -> str | None:
+    """The unit's run now, its InvocationID; "" when systemd says none, None when it does not answer."""
     raw = run(["systemctl", "show", unit, "-p", "InvocationID"])
+    if not answered(raw):
+        return None
     return dict(ln.split("=", 1) for ln in raw.splitlines() if "=" in ln).get("InvocationID", "")
 
 
