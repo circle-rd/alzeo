@@ -2444,7 +2444,7 @@ class TwoBoxesServeOneModel(PairFixture, unittest.TestCase):
         finally:
             c.close()
         self.assertEqual(st, 503, out[:300])
-        self.assertIn(b"serves another model now", out)
+        self.assertIn(b"serves another model or checkpoint now", out)
         self.assertNotIn("conv-bound-409-0", self.E1.users, "served here, where no engine closed on it")
         for th in held:
             th.join(30)
@@ -3137,6 +3137,18 @@ class TwoBoxesServeOneModelInProcess(TwoBoxesServeOneModel):
     def test_a_request_bound_to_a_box_that_left_the_pair_goes_nowhere(self):
         super().test_a_request_bound_to_a_box_that_left_the_pair_goes_nowhere()
 
+    def test_a_box_that_refuses_this_boxs_certificate_never_had_the_request(self):
+        super().test_a_box_that_refuses_this_boxs_certificate_never_had_the_request()
+
+    def test_a_client_that_leaves_while_a_box_that_took_its_request_reads_it_pauses_nothing(self):
+        super().test_a_client_that_leaves_while_a_box_that_took_its_request_reads_it_pauses_nothing()
+
+    def test_a_shared_request_carries_this_boxs_checkpoint_and_never_the_clients(self):
+        super().test_a_shared_request_carries_this_boxs_checkpoint_and_never_the_clients()
+
+    def test_a_request_for_a_model_only_the_other_box_serves_carries_no_checkpoint(self):
+        super().test_a_request_for_a_model_only_the_other_box_serves_carries_no_checkpoint()
+
     def test_a_request_sent_on_for_another_checkpoint_than_this_boxs_is_refused(self):
         super().test_a_request_sent_on_for_another_checkpoint_than_this_boxs_is_refused()
 
@@ -3148,6 +3160,17 @@ class TwoBoxesServeOneModelInProcess(TwoBoxesServeOneModel):
 
     def test_a_request_bound_here_goes_nowhere_once_this_box_serves_another_model(self):
         super().test_a_request_bound_here_goes_nowhere_once_this_box_serves_another_model()
+
+
+class EveryCaseHasItsInProcessTwin(unittest.TestCase):
+    def test_each_twin_declares_every_case_of_its_class(self):
+        # as tests/test_proxy_hold.py checks its own: four tests of the sharing were not declared in its twin (found on
+        # 2026-11-04), which ran them by inheritance, so a twin that stops inheriting would drop them unseen
+        for twin in (TwoBoxesBehindOneEndpointInProcess, TwoBoxesServeOneModelInProcess):
+            base = twin.__bases__[0]
+            cases = {n for n in vars(base) if n.startswith("test_")}
+            self.assertTrue(cases, base.__name__)
+            self.assertEqual({n for n in vars(twin) if n.startswith("test_")}, cases, twin.__name__)
 
 
 class ThePairsPieces(unittest.TestCase):
@@ -3893,10 +3916,17 @@ class ThePairsPieces(unittest.TestCase):
             self.assertIsNone(m.pair_revision({"x_alzeo_revision": bad}), bad)
         self.assertIsNone(m.pair_revision([rev]))
 
-    def test_this_box_reads_its_checkpoint_from_its_unit_and_forgets_it_with_its_engine(self):
+    def test_this_box_reads_its_checkpoint_from_its_engines_command_and_forgets_it_with_its_engine(self):
         m = self.mod
         rev = "ef" * 20
-        shown = f"ActiveState=active\nExecStart={{ path=/usr/bin/docker ; argv[]=docker run x --revision {rev} ; }}\n"
+        engines = []
+        for r in (rev, "01" * 20):                                              # this engine, then another one
+            p = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)", "docker", "run", "x",
+                                  "--revision", r])
+            self.addCleanup(p.wait)
+            self.addCleanup(p.kill)
+            engines.append(p)
+        shown = f"ActiveState=active\nMainPID={engines[0].pid}\n"
         calls = []
 
         def run(argv, **kw):
@@ -3913,7 +3943,7 @@ class ThePairsPieces(unittest.TestCase):
         self.assertEqual(m.unit_revision(), rev)
         self.assertEqual(m.unit_slots(), None, "no slots in that command")
         self.assertEqual(len(calls), 1, "one read for the revision and the slots")
-        shown = shown.replace(rev, "01" * 20)
+        shown = f"ActiveState=active\nMainPID={engines[1].pid}\n"
         self.assertEqual(m.unit_revision(), rev, "kept 10 s")
         m.forget_engine_rules()                             # another engine serves: its unit is read again
         self.assertEqual(m.unit_revision(), "01" * 20)
