@@ -355,6 +355,18 @@ class FakeCockpit(http.server.BaseHTTPRequestHandler):
         self.reply(404, {"error": "not found"})
 
 
+def silent_port(test):
+    """A held port with a socket listening on it that takes the connection and never answers its TLS: a box gone without
+    a reset. Its number from localports.held, never read out of a socket (test_localports, NoTestFile)."""
+    port = localports.held(test)
+    hole = socket.socket()
+    hole.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)     # beside the socket that holds it, as serve() is
+    hole.bind((localports.HOST, port))
+    hole.listen(16)
+    test.addCleanup(hole.close)
+    return port
+
+
 def tls_peer(test, handler, me="spark2", trusts=("spark1",)):
     """A fake peer's pair port, on a held port: `handler` behind TLS both ways (the handshake in its accept,
     a test's server), `me`'s certificate shown and one of `trusts`' demanded."""
@@ -2046,11 +2058,7 @@ class TwoBoxesServeOneModel(PairFixture, unittest.TestCase):
         # connection timeout (10 s) for it (review, 2026-11-03)
         if not self.INPROC:
             self.skipTest("the kept list is set in this test's process")
-        hole = socket.socket()
-        hole.bind(("127.0.0.1", 0))
-        hole.listen(16)                     # takes the connection, never answers its TLS
-        self.addCleanup(hole.close)
-        self.repoint(hole.getsockname()[1])
+        self.repoint(silent_port(self))
         self.mod._PAIR_MODELS["spark2"] = {"ts": time.monotonic(), "models": ("qwen3.8-27b",), "rows": [],
                                            "error": None, "answered": True, "known": ("qwen3.8-27b",),
                                            "known_ts": time.monotonic(), "read_s": 0.01, "running": 0,
@@ -2068,11 +2076,7 @@ class TwoBoxesServeOneModel(PairFixture, unittest.TestCase):
         # forgotten, and each retry waited the 3 s again (review, 2026-11-03)
         if not self.INPROC:
             self.skipTest("the kept list is set in this test's process")
-        hole = socket.socket()
-        hole.bind(("127.0.0.1", 0))
-        hole.listen(16)                     # takes the connection, never answers its TLS
-        self.addCleanup(hole.close)
-        self.repoint(hole.getsockname()[1])
+        self.repoint(silent_port(self))
         self.mod._PAIR_MODELS["spark2"] = {"ts": time.monotonic(), "models": ("qwen3.8-27b",), "rows": [],
                                            "error": None, "answered": True, "known": ("qwen3.8-27b",),
                                            "known_ts": time.monotonic(), "read_s": 0.01, "running": 0,
