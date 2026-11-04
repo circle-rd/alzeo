@@ -977,6 +977,19 @@ class AServerWithoutItsSchedulerIsRestartedOnce(Base):
         self.tick()
         self.assertEqual(len(self.actions), 1, "one restart per half hour, not one per tick")
 
+    def test_its_restart_is_marked_as_a_recovery_for_the_proxy(self):
+        # decision 1049: the proxy took this restart for the Load of a checkpoint an update had staged, an order, and
+        # bound nothing (the 4th review of v1.43.0, 2026-11-04): the cockpit says it first, with the run it restarts
+        marks = self.cp.CONFIG_DIR / "recovery-restarts.json"
+        marks.unlink(missing_ok=True)
+        self.addCleanup(marks.unlink, missing_ok=True)
+        self.tick()
+        self.cp.ZOMBIE_SINCE[self.U] = __import__("time").time() - 121
+        self.tick()
+        self.assertEqual(self.actions, [("unit", {"verb": "restart", "unit": self.U}, "zombie")])
+        mark = json.loads(marks.read_text())[self.U]
+        self.assertEqual((mark["invocation"], mark["why"]), ("abc", "zombie"))
+
     def test_a_server_with_its_scheduler_is_left_alone(self):
         self.alive = True
         e = self.tick()
@@ -992,6 +1005,46 @@ class AServerWithoutItsSchedulerIsRestartedOnce(Base):
         self.cp.ZOMBIE_SINCE[self.U] = __import__("time").time() - 600
         self.assertTrue(self.tick()["zombie"])
         self.assertEqual(self.actions, [])
+
+
+class AWedgedEngineTheAutohealRestartsIsMarkedFirst(Base):
+    """Decision 1049: the autoheal's restart of a wedged engine is the restart the proxy took for an order when an update
+    had staged another checkpoint (the 4th review of v1.43.0, 2026-11-04). Its decision to restart is given here (the
+    wedge's own tests are lifecycle.py's); what is checked is what the restart says first."""
+    U = "qwen38-sglang.service"
+    FIRED = AServerWithoutItsSchedulerIsRestartedOnce.FIRED
+
+    def setUp(self):
+        cp = self.cp
+        saved = (cp.start_action, cp.lc.decide_wedge, cp.lc.wedge_plan, cp.POOL_GUARD)
+        self.addCleanup(lambda: (setattr(cp, "start_action", saved[0]), setattr(cp.lc, "decide_wedge", saved[1]),
+                                 setattr(cp.lc, "wedge_plan", saved[2]), setattr(cp, "POOL_GUARD", saved[3])))
+        self.actions = []
+        cp.start_action = lambda kind, args, origin="": (self.actions.append((kind, args, origin)), (0, "ok"))[1]
+        cp.lc.decide_wedge = lambda **kw: True
+        cp.lc.wedge_plan = lambda **kw: {"state": "wedged", "since": 0.0, "first": False, "restart": True}
+        cp.POOL_GUARD = False
+        self.marks = cp.CONFIG_DIR / "recovery-restarts.json"
+        self.marks.unlink(missing_ok=True)
+        self.addCleanup(self.marks.unlink, missing_ok=True)
+
+    def test_the_autoheals_restart_names_the_run_it_restarts(self):
+        cp = self.cp
+        with cp.STATE_LOCK:
+            cp.STATE["engine_fast"] = {"data": {"healthy": True, "load": [{"num_reqs": 1}]}}
+        with cp.LIFE_LOCK:
+            cp.LIFE["states"] = {self.U: "ready"}
+        cp.READY_SINCE[self.U] = __import__("time").time() - 3600
+        self.addCleanup(cp.READY_SINCE.pop, self.U, None)
+        self.box({f"systemctl show {self.U}": "ActiveState=active\nSubState=running\n"
+                                              "ActiveEnterTimestampMonotonic=1000\nInvocationID=run-7\n",
+                  "docker ps -q -f name=^qwen38-sglang$": "c0ffee\n",
+                  "docker logs --tail 300 qwen38-sglang": self.FIRED,
+                  "docker logs --since": self.FIRED})
+        cp.collect_lifecycle()
+        self.assertEqual(self.actions, [("unit", {"verb": "restart", "unit": self.U}, "autoheal")])
+        mark = json.loads(self.marks.read_text())[self.U]
+        self.assertEqual((mark["invocation"], mark["why"]), ("run-7", "autoheal"))
 
 
 class ACrashWhileServingIsNoCrashLoop(Base):

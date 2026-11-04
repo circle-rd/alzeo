@@ -2300,6 +2300,33 @@ def scheduler_alive(container: str):
     return any(n.startswith("sglang::schedul") for n in names)
 
 
+# Decision 1049 (2026-11-04): the restarts this cockpit makes to recover an engine are said to the proxy, which reads
+# this file (keepalive-proxy.py, unit_recovering)
+RECOVERY_FILE = CONFIG_DIR / "recovery-restarts.json"
+
+
+def mark_recovery(unit: str, invocation: str, why: str) -> None:
+    """Say to the proxy that this cockpit restarts unit to recover its engine (autoheal, zombie), and which run: its
+    InvocationID. The proxy then binds the request that may have wedged it (decision 1019) even when the restart loads a
+    checkpoint an update or a switch staged ("next start loads"), which it took for the Load of that checkpoint, an
+    order that binds nothing (decision 1041; the 4th review of v1.43.0, 2026-11-04). The run named, a later Load of the
+    same unit is never taken for this recovery. A file that cannot be written says nothing."""
+    if not invocation:
+        return
+    try:
+        marks = json.loads(RECOVERY_FILE.read_text())
+        marks = marks if isinstance(marks, dict) else {}
+    except (OSError, ValueError):
+        marks = {}
+    marks[unit] = {"invocation": invocation, "at": round(time.time(), 3), "why": why}
+    tmp = RECOVERY_FILE.with_name(RECOVERY_FILE.name + ".tmp")
+    try:
+        tmp.write_text(json.dumps(marks))
+        os.replace(tmp, RECOVERY_FILE)
+    except OSError:
+        pass
+
+
 @guard
 def collect_lifecycle():
     """Explicit per-engine state + progress + ETA + action gates (2s tier)."""
@@ -2547,6 +2574,7 @@ def collect_lifecycle():
                     add_event("autoheal", f"{unit} wedged (health ok, {CANARY['fails']} "
                               f"probes failed, {num_reqs} req): restarting it"
                               + (" (dry run: not really)" if DRY_RUN else ""))
+                    mark_recovery(unit, d.get("InvocationID", ""), "autoheal")     # decision 1049
                     code, out = start_action("unit", {"verb": "restart", "unit": unit}, origin="autoheal")
                     audit({"kind": "autoheal", "unit": unit, "code": code, "out": out})
             else:
@@ -2571,6 +2599,7 @@ def collect_lifecycle():
                     LAST_ZOMBIE_RESTART[unit] = time.time()
                     add_event("zombie", f"{unit}: restarting it (no scheduler for {ZOMBIE_AFTER_S:.0f} s)"
                               + (" (dry run: not really)" if DRY_RUN else ""))
+                    mark_recovery(unit, d.get("InvocationID", ""), "zombie")       # decision 1049
                     code, out = start_action("unit", {"verb": "restart", "unit": unit}, origin="zombie")
                     audit({"kind": "zombie_restart", "unit": unit, "code": code, "out": out})
             else:
