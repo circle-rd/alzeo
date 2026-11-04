@@ -426,14 +426,15 @@ cockpit say, and has the new settings from there. Nothing else moves.
 
 ## v1.40.6 (2026-10-31): the engines' own coordination ports stay off the network, where SECURITY.md said no setting could keep them
 
-**Why.** SECURITY.md has said since 2026-09-30 that each engine opens its own coordination port on every interface, with
-no key and no setting to narrow it, and advised a firewall: an engine of one process still runs torch.distributed's
-store, which torch binds to every interface whatever address it is given. No model and no data sit behind those ports,
-but a hostile connection can disturb the engine. There are settings after all. Measured again on the reference box on
-2026-10-30, which has no firewall: the installed image and video lanes listened on *:30005 and on four ports of
-192.168.1.71, the box's LAN address, the 27B lane on *:23906, a port drawn at each start, and under the real clients the
-27B and flash lanes on four ports of 192.168.1.71 as well, though the box's name resolves to 127.0.0.1. A connection to
-30005 from the box's LAN address and from its tailnet address went through. The vLLM lanes opened no such port.
+**Why.** SECURITY.md has said since 2026-09-30 that each engine opens its own coordination port on every interface,
+with no key and no setting to narrow it, and advised a firewall: an engine of one process still runs
+torch.distributed's store, which torch binds to every interface whatever address it is given. No model and no data sit
+behind those ports, but a hostile connection can disturb the engine. There are settings after all. Measured again on
+the reference box on 2026-10-30, which has no firewall: the installed image and video lanes listened on *:30005 and on
+four ports of the box's LAN address, the 27B lane on *:23906, a port drawn at each start, and under the real clients
+the 27B and flash lanes on four ports of that address as well, though the box's name resolves to 127.0.0.1. A
+connection to 30005 from the box's LAN address and from its tailnet address went through. The vLLM lanes opened no
+such port.
 
 **The image and video lanes.** Their units pin gloo and NCCL to lo (GLOO_SOCKET_IFNAME, NCCL_SOCKET_IFNAME) and, with a
 bind on any loopback address (127.* or localhost, 127.0.0.1 by default), set IPAddressDeny=any with
