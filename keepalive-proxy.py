@@ -850,13 +850,15 @@ PAIR_KILLER_KEEP_S = PAIR_KILLER_KEEP_S if math.isfinite(PAIR_KILLER_KEEP_S) and
 PAIR_KILLER_MAX = 1024                  # the fingerprints kept, the oldest dropped first
 _KILLERS: "collections.OrderedDict[str, tuple]" = collections.OrderedDict()    # fingerprint -> (box, until)
 _KILLERS_LOCK = threading.Lock()
+_LAST_REV: dict = {}                    # model -> the checkpoint this box's lane served it from, last seen (1018)
 
 
-def killer_note(body, route, box):
-    """The engine of box (this box: its name, or "" for a box alone) closed the connection on this request."""
-    if not body or PAIR_KILLER_KEEP_S <= 0:
+def killer_note(fp, box):
+    """The engine of box (this box: its name, or "" for a box alone) closed the connection on the request of fingerprint
+    fp: its body as routing saw it (_pair_routed), never a body this proxy rewrote since (a tool schema, a reasoning
+    effort, the served name), whose fingerprint the client's retry never matched (found in review, 2026-11-04)."""
+    if not fp or PAIR_KILLER_KEEP_S <= 0:
         return
-    fp = body_fingerprint(body, route)
     with _KILLERS_LOCK:
         _KILLERS.pop(fp, None)
         _KILLERS[fp] = (box, time.monotonic() + PAIR_KILLER_KEEP_S)
@@ -864,11 +866,11 @@ def killer_note(body, route, box):
             _KILLERS.popitem(last=False)
 
 
-def killer_box(body, route):
-    """The box an engine closed on this request moments ago, or None (no fingerprint is computed while none is kept)."""
-    if not _KILLERS or not body:
+def killer_box(fp):
+    """The box an engine closed on the request of fingerprint fp moments ago, or None."""
+    if not _KILLERS or not fp:
         return None
-    fp, now = body_fingerprint(body, route), time.monotonic()
+    now = time.monotonic()
     with _KILLERS_LOCK:
         got = _KILLERS.get(fp)
         if got is not None and got[1] <= now:
@@ -3799,9 +3801,11 @@ def running_said(data, box):
         j["x_alzeo_slots"] = slots          # what its lane runs at once: the gap that box allows here (decision 1014)
     if revision is not None:
         j["x_alzeo_revision"] = revision    # the checkpoint it serves: shared with the same one only (decision 1018)
-    j["x_alzeo_running"] = busy_here()
-    with _GEN_LOCK:
-        j["x_alzeo_running_yours"] = sum(1 for h in _GENERATIONS if getattr(h, "_pair_box", None) == box)
+    with _GEN_LOCK:                     # one read: a hop between two said more of the other box's than of all
+        total = len(_GENERATIONS | _PAIR_HERE | _HELD)
+        yours = sum(1 for h in _GENERATIONS if getattr(h, "_pair_box", None) == box)
+    j["x_alzeo_running"] = total + _SYSTEMONE_SENT[0]
+    j["x_alzeo_running_yours"] = yours
     return rewritten(j)
 
 
@@ -6251,6 +6255,7 @@ class H(BaseHTTPRequestHandler):
                     f"({type(cut).__name__}); relayed without its end")
                 try: self.connection.shutdown(socket.SHUT_RDWR)
                 except Exception: pass
+                self._killed_here()             # it died during its answer (decision 1019)
                 self._done("UPSTREAM CUT non-sse"); return
             self._finish()
             if worst >= CORRUPTION_RUN:
@@ -6373,6 +6378,7 @@ class H(BaseHTTPRequestHandler):
                 except Exception: pass
                 try: resp.close()
                 except Exception: pass
+                self._killed_here()             # it died during its answer (decision 1019)
                 self._done("UPSTREAM CUT"); return
             now = time.time() - self._t0
             if self._first is None: self._first = now
@@ -6410,6 +6416,8 @@ class H(BaseHTTPRequestHandler):
         self._finish()
         try: resp.close()          # the pump thread already ended at EOF; without this
         except Exception: pass    # the socket waits for the refcount (or cyclic GC)
+        if kind != "f":
+            self._killed_here()             # it died during its answer (decision 1019)
         self._done("ok" if kind == "f" else "UPSTREAM CUT")
 
     # ---- verbs -------------------------------------------------------------
@@ -6420,6 +6428,7 @@ class H(BaseHTTPRequestHandler):
         self._tool_calls = {}; self._tool_bytes = 0; self._answer_body = bytearray()   # role 8
         self._prompt_fp = None                                                         # role 9
         self._pair_alt = None                                                          # role 10, decision 998
+        self._killer_fp = None                                                         # role 10, decision 1019
         self._pair_here_count = None                                                   # role 10, the tile
         self._answer_hit = False; self._answer_tail = b""; self._tool_last = {}; self._tool_seq = 0
         n0 = self.headers.get("Content-Length") or "0"
@@ -6592,7 +6601,7 @@ class H(BaseHTTPRequestHandler):
             kind, why, detail = gone
             if kind == "unreachable" and detail is None:
                 # the engine closed the connection while it had this request, which may be what took it down
-                killer_note(asked, route, (pair_conf() or {}).get("name") or "")         # decision 1019
+                self._killed_here()             # decision 1019
             # decision 998, as Hasan worded it: a box that does not answer, its connection refused or its lane's 502, 503
             # or 504; never an engine that closed the connection while it had the request
             if (kind == "upstream" or (kind == "unreachable" and detail in ("refused", "count"))) \
@@ -6781,8 +6790,13 @@ class H(BaseHTTPRequestHandler):
             local = served_models() or None     # an engine that names nothing yet (a boot) is unknown
         except EngineUnreachable:
             local = None
+        if local is not None and name in local:
+            served_rev = unit_revision()
+            if served_rev:
+                _LAST_REV[name] = served_rev    # what this box's clients get here: kept for while its engine is away
         if not hop:
-            bound = killer_box(body, route)
+            self._killer_fp = body_fingerprint(body, route)
+            bound = killer_box(self._killer_fp)
             if bound is not None:
                 peer = next((p for p in conf["peers"] if p["name"] == bound), None)
                 if peer is None:
@@ -6802,9 +6816,18 @@ class H(BaseHTTPRequestHandler):
                                       f"served nowhere else for a while; send it again later", pair_served_map(conf, local))
                     self._done("503 pair request bound elsewhere")
                     return True
+                if not CLIENT_KEYS and not _door_key():
+                    return False                # nothing goes to another box on the say of a box that reads no key
                 log(f"{self._peer} pair: {bound}'s engine or connection closed on this request moments ago: "
                     f"{bound} or nowhere (decision 1019)")
-                self._forward_peer(body, peer, name, conf, local, fallback=False)
+                if self._forward_peer(body, peer, name, conf, local, fallback=False) == "moved":
+                    # that box serves another model now: the client got no answer at all, its 409 written nowhere
+                    # (found in review, 2026-11-04)
+                    self._pair_refused(bound, name, "moved", "this request goes nowhere for a while")
+                    self._pair_refuse(503, "engine_unavailable", f"box {bound}, whose engine or connection closed on "
+                                      f"this request moments ago, serves another model now: this request is served "
+                                      f"nowhere else for a while; send it again later", pair_served_map(conf, local))
+                    self._done("503 pair request bound elsewhere")
                 return True
         if local is not None and name in local:
             # a request the other box sent on is this box's to serve: sent back, two boxes would hand it to each other
@@ -6845,6 +6868,18 @@ class H(BaseHTTPRequestHandler):
                 self._pair_refuse(503, "engine_unavailable", "this box cannot read its own key "
                                   "(~/.config/qwen38/api-key), so it sends no request on to another box", {})
                 self._done("503 pair own key unreadable")
+                return True
+            theirs = (_PAIR_MODELS.get(peer["name"]) or {}).get("revision")
+            if local is None and _LAST_REV.get(name) and theirs != _LAST_REV[name]:
+                # this box's engine away (a crash, a restart), the model its lane served sent to the other box: only
+                # from the same checkpoint (decision 1018), where a client of the stock 27B got the uncensored one
+                # while this box restarted (found in review, 2026-11-04)
+                log(f"{self._peer} pair: this box's engine does not answer, and {peer['name']} serves {name} from "
+                    f"another checkpoint: not sent there (decision 1018)")
+                self._pair_refuse(503, "engine_unavailable", f"this box's engine does not answer now, and box "
+                                  f"{peer['name']} serves {name} from another checkpoint than this box: try again "
+                                  f"once this box answers", pair_served_map(conf, local))
+                self._done("503 pair another checkpoint")
                 return True
             if attempt == 2:
                 # a box lists it and refused it twice (its list lags a switch): never answered here with this box's
@@ -6971,6 +7006,12 @@ class H(BaseHTTPRequestHandler):
                 row = _PAIR_MODELS.get(pick)
                 if row:
                     _PAIR_MODELS[pick] = dict(row, models=tuple(m for m in row["models"] if m != name), ts=0.0)
+
+    def _killed_here(self):
+        """This box's engine closed the connection on this request, before its answer or during it (decision 1019):
+        a request that took it down, sent again, goes nowhere else for PAIR_KILLER_KEEP_S. Its death during the
+        answer bound nothing, and the client's retry went to the other engine (found in review, 2026-11-04)."""
+        killer_note(getattr(self, "_killer_fp", None), (pair_conf() or {}).get("name") or "")
 
     def _pair_lost(self, pick, name, conf, local):
         """A 503 for a request box pick had whole and closed the connection on with no answer: it is not run here
@@ -7158,7 +7199,7 @@ class H(BaseHTTPRequestHandler):
                                       f"{PAIR_ANSWER_MAX} bytes", pair_served_map(conf, local))
                     self._done("502 pair answer too large"); return None
                 if e.code == 502 and b'"upstream_closed"' in data:
-                    killer_note(body, self.path.split("?", 1)[0], peer["name"])         # decision 1019
+                    killer_note(self._killer_fp, peer["name"])                          # decision 1019
                 if e.code == 409 and b'"model_not_served"' in data:
                     log(f"{self._peer} pair: {peer['name']} serves another model now; the lists are read again")
                     return "moved"
@@ -7184,7 +7225,7 @@ class H(BaseHTTPRequestHandler):
                 # does not take this one down too (decision 1017, review of v1.43.0, 2026-11-03)
                 had = not isinstance(e, urllib.error.URLError)
                 if had:
-                    killer_note(body, self.path.split("?", 1)[0], peer["name"])         # decision 1019
+                    killer_note(self._killer_fp, peer["name"])                          # decision 1019
                 log(f"{self._peer} pair: {peer['name']} "
                     + (f"had the request and closed the connection with no answer ({why})" if had
                        else f"does not answer ({why})"))
@@ -7209,6 +7250,7 @@ class H(BaseHTTPRequestHandler):
                         if left.is_set():
                             self._done("CLIENT GONE during pair"); return None
                         log(f"{self._peer} pair: {peer['name']} cut its answer short ({type(e).__name__})")
+                        killer_note(self._killer_fp, peer["name"])          # it died during its answer (1019)
                         self._pair_refuse(502, "upstream_cut", f"box {peer['name']} cut its answer short",
                                           pair_served_map(conf, local))
                         self._done("UPSTREAM CUT pair"); return None
@@ -7246,14 +7288,15 @@ class H(BaseHTTPRequestHandler):
                         # review, 2026-11-02: a closing chunk here made a cut answer look whole)
                         log(f"{self._peer} pair: the stream from {peer['name']} was cut ({type(e).__name__}); "
                             f"the client's is cut too, not ended")
+                        killer_note(self._killer_fp, peer["name"])          # it died during its answer (1019)
                         self.close_connection = True
                         try: self.connection.shutdown(socket.SHUT_RDWR)
                         except Exception: pass
                         self._done("UPSTREAM CUT pair"); return None
                     if not b:
                         break
-                    if HOP_CLOSED_B in b:           # its engine closed on it after its hold opened the stream (1019)
-                        killer_note(body, self.path.split("?", 1)[0], peer["name"])
+                    if HOP_CLOSED_B in tail + b:    # its engine closed on it after its hold opened the stream (1019)
+                        killer_note(self._killer_fp, peer["name"])
                     if sse:                         # role 8, line by line: a read may end in the middle of one
                         lines = tail + b
                         cut = lines.rfind(b"\n")

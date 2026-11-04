@@ -112,8 +112,10 @@ that says none, keep their own requests:
   - A request whose answer began is never sent again, nor one an engine closed the connection on while it
     had it: the same request could take the other engine down too. Clients send a request again by
     themselves after a 5xx (Claude Code, opencode, the SDKs): for 10 minutes, a request an engine closed
-    on, or that the other box had and dropped, goes to that box or nowhere, never shared, handed back or
-    taken over. It can take one box down, as on a box alone (decision 1019).
+    on, before its answer or during it, or that the other box had and dropped, goes to that box or nowhere,
+    never shared, handed back or taken over. It can take one box down, as on a box alone (decision 1019).
+  - While the entry's engine is away (a crash, a restart), a model its lane served goes to the other box
+    only from the same checkpoint (decision 1018): its clients get a 503 to try again otherwise.
 - A token count (`/v1/messages/count_tokens`) is answered by the box it was sent to: both boxes count the same
   way, and a count fills no cache, so it moves no conversation.
 - A request with the header `X-Alzeo-Here: 1` is served by the box it was sent to. The cockpit's smoke test
@@ -162,7 +164,8 @@ cockpit for now.
   connection, then the entry serves it, and that box gets none for 30 s.
 - An update restarts the box's proxy, which ends the requests it serves, those the other box sent it too.
   While it restarts, the other box serves its own requests of a model both serve itself. Update both boxes:
-  a box of a version before v1.43.0 gets no shared request.
+  a box of a version before v1.43.0 gets no shared request, and writes each read of its list by the other
+  box in its journal (some 12 lines a minute while the other box has traffic) until it is updated.
 - `bench-agent.py`, `needle.sh` and `tools-check.py` go through port 30001: on a pair that shares a model,
   they measure the pair. To measure one box, point them at its engine (`--port 30000`, or `PORT=30000` for
   `needle.sh`).
