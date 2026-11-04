@@ -118,12 +118,15 @@ list was read): the entry then serves it itself.
     themselves after a 5xx (Claude Code, opencode, the SDKs): for 10 minutes, a request an engine closed
     on, before its answer or during it, died with (vLLM answers those with a 500), or that the other box had
     and dropped, goes to that box or nowhere, never shared, handed back or taken over, and nowhere once that
-    box left the pair. It can take one box down, as on a box alone (decision 1019). A stop or a restart of the
-    lane's unit (a Load, an update, `switch-model.sh`), an Abort all and the memory floor end requests by
-    order: those are sent again as any other.
+    box left the pair, or the pair was dissolved. It can take one box down, as on a box alone (decision 1019).
+    A stop of the lane's unit (a Load of another lane, the Stop button), an Abort all and the memory floor end
+    requests by order, which bind nothing, and a box that ends so a request the other box sent tells it before
+    the cut. A restart binds them as an engine's death, the cockpit's own restart of a wedged engine included:
+    their retries wait for that engine (decision 1030).
   - While the entry's engine is away (a crash, a restart), a model its lane serves (as the command of its
-    engine starting says, or as it served last) goes to the other box only from the same checkpoint (decision
-    1018): its clients get a 503 to try again otherwise.
+    engine says, what its unit starts, or as it served last) goes to the other box only from the same
+    checkpoint (decision 1018): otherwise the entry holds it while its own engine comes back, as for a model no
+    other box serves.
 - A token count (`/v1/messages/count_tokens`) is answered by the box it was sent to: both boxes count the same
   way, and a count fills no cache, so it moves no conversation.
 - A request with the header `X-Alzeo-Here: 1` is served by the box it was sent to. The cockpit's smoke test

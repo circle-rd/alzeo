@@ -34,9 +34,12 @@ measure yet, or one its engine does not answer at the first try (connection refu
 that starts or stops), instead of a wait for the lane. A request whose answer began is never sent again, nor one an
 engine closed the connection on or died with (vLLM answers those with a 500), which could take the other engine down
 too, and for 10 minutes such a request, sent again by its client, goes to that box or nowhere (decision 1019). A stop
-or a restart of the lane's unit (a Load, an update, switch-model.sh), an Abort all and the memory floor end requests
-by order, which bind nothing. The tile of each cockpit says what it sent the other box, and why, even while that box
-does not answer. docs/pair.md says it all.
+of the lane's unit (a Load of another lane, the Stop button), an Abort all and the memory floor end requests by order,
+which bind nothing, and a box that ends so a request the other box sent tells it before the cut (decision 1031). A
+restart binds them as an engine's death, the cockpit's own restart of a wedged engine included: their retries wait for
+that engine (decision 1030). While the entry's engine is away, a model its lane serves goes to the other box from the
+same checkpoint only, and waits for the entry's engine otherwise. The tile of each cockpit says what it sent the other
+box, and why, even while that box does not answer. docs/pair.md says it all.
 
 **Reviews and tests.** An independent reviewer read the sharing, then a code review and three verifiers read it again
 (decision 1005), and every finding was checked in the code. What they found and this release fixes: the other box's
@@ -64,8 +67,13 @@ A box said the checkpoint its unit names for its next start, which switch-model.
 entry restarted with its engine (an update) sent the 27B's clients to the other box whatever its checkpoint, and a box
 that switched checkpoints under the same name got shared requests until its list was read again. A box that no longer
 knows the entry's certificate made a request look lost, and a client that left paused a box that had taken its
-request. tests/test_proxy_pair.py has two boxes that serve the 27B from their start, each rule its test, and each test
-fails on v1.42.1 or on the commit before its fix.
+request. A code review of those fixes found more, fixed too: the cockpit's restart of a wedged engine counted as an
+order, so the request that may have wedged it went to the other box, and the other box's ordered ends looked like
+deaths from the entry, its retries refused 10 minutes after a Load there. A box restarted with its engine read no
+checkpoint while its unit started, an engine's command read in the instant between fork and exec was kept empty 10 s,
+a request of a lane name no box serves was refused once bound here, and one bound to the other box ran here on a box
+that reads no key or once the pair was dissolved. tests/test_proxy_pair.py has two boxes that serve the 27B from their
+start, each rule its test, and each test fails on v1.42.1 or on the commit before its fix.
 
 **What an update does.** The proxy (v6.52) and the cockpit restart. No engine, no lane and no unit file changes. A
 box without a pair works as before, and so does a pair that serves two models, but for one case: a request the other

@@ -79,7 +79,9 @@ when no unit says it), and a request sent on carries the entry's (X-Alzeo-Pair-C
 other box refuses with a 409 when it serves another. A request the other box had whole and closed the
 connection on runs nowhere else, its client told 503 (decision 1017). One an engine closed the
 connection on, or died with, goes to that engine's box or nowhere for PAIR_KILLER_KEEP_S (decision
-1019); a stop ordered to the lane's unit, an Abort all or the memory floor binds nothing.
+1019); a stop ordered to the lane's unit, an Abort all or the memory floor binds nothing, and a box
+that ends so a request the other box sent tells it before the cut (X-Alzeo-Pair-Ended, decision 1031); a
+restart binds as an engine's death (decision 1030).
 
 v6.51: a request body is JSON in UTF-8, or a 415: in UTF-16 or UTF-32, which the vLLM lanes read too
 (FastAPI's json, where the SGLang lanes' orjson refuses it), the guards here found none of the fields
