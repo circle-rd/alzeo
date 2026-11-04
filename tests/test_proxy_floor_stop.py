@@ -57,6 +57,8 @@ class FakeEngine(http.server.BaseHTTPRequestHandler):
     rid_abort_delay = 0.0        # an engine the memory floor finds slow: seconds before an abort by rid answers
     abort_404_delay = 0.0        # vLLM under the same pressure: seconds before its 404 to /abort_request
     abort_all_fails = False      # an SGLang that answers abort_all with a 503
+    split_lines = False          # Ollama streams: each line written in two pieces, a pause between them
+    slow_body = 0.0              # Ollama, not streamed: the seconds between the two halves of its finished answer
     closed = []                  # rids whose reader went away mid-generation
     closed_at = {}               # rid -> when its reader went away during the prefill (time.monotonic())
     finished = []                # rids written to their end
@@ -231,8 +233,16 @@ class FakeEngine(http.server.BaseHTTPRequestHandler):
         done_reason "stop" whatever ended the generation, an abort included."""
         if not stream:
             sent = list(self._words(ev))
-            self._json(200, {"model": "m", "message": {"role": "assistant", "content": " ".join(sent)}, "done": True,
-                             "done_reason": "stop"})
+            raw = json.dumps({"model": "m", "message": {"role": "assistant", "content": " ".join(sent)}, "done": True,
+                              "done_reason": "stop"}).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(raw)))
+            self.end_headers()
+            half = len(raw) // 2 if self.slow_body else len(raw)
+            self.wfile.write(raw[:half]); self.wfile.flush()
+            time.sleep(self.slow_body)
+            self.wfile.write(raw[half:]); self.wfile.flush()
             return
         self.send_response(200)
         self.send_header("Content-Type", "application/x-ndjson")
@@ -240,8 +250,14 @@ class FakeEngine(http.server.BaseHTTPRequestHandler):
         self.send_header("Connection", "close")
         self.end_headers()
         for w in self._words(ev):
-            self._chunk(json.dumps({"model": "m", "message": {"role": "assistant", "content": w + " "},
-                                    "done": False}).encode() + b"\n")
+            line = json.dumps({"model": "m", "message": {"role": "assistant", "content": w + " "},
+                               "done": False}).encode() + b"\n"
+            if self.split_lines:        # its word in the first piece, the line's end in the second
+                self._chunk(line[:-10])
+                time.sleep(0.5)
+                self._chunk(line[-10:])
+            else:
+                self._chunk(line)
             time.sleep(GAP)
         self._chunk(json.dumps({"model": "m", "message": {"role": "assistant", "content": ""}, "done": True,
                                 "done_reason": "stop"}).encode() + b"\n")
@@ -281,6 +297,7 @@ class FloorStop(unittest.TestCase):
             FakeEngine.live.clear()
             FakeEngine.closed_at.clear()
         FakeEngine.owner, FakeEngine.prefill, FakeEngine.self_abort_after = "sglang", 0.0, None
+        FakeEngine.split_lines, FakeEngine.slow_body = False, 0.0
         FakeEngine.rid_abort_delay = FakeEngine.abort_404_delay = 0.0
         FakeEngine.abort_all_fails = False
         self.addCleanup(self._join_stop_threads)
@@ -357,6 +374,18 @@ class FloorStop(unittest.TestCase):
             time.sleep(0.02)
         return False
 
+    @staticmethod
+    def _dechunk(raw):
+        """The body of a chunked answer as read raw, its chunks joined, up to where it was cut."""
+        rest, out = raw.split(b"\r\n\r\n", 1)[1], b""
+        while b"\r\n" in rest:
+            size, rest = rest.split(b"\r\n", 1)
+            n = int(size, 16)
+            if n == 0:
+                break
+            out, rest = out + rest[:n], rest[n + 2:]
+        return out
+
     def _stream_then_stop(self, path, body, stop_body=None):
         s = self._post(path, {**body, "stream": True})
         head = self._read(s, until=b"w03")
@@ -428,6 +457,34 @@ class FloorStop(unittest.TestCase):
         self.assertNotIn(b'"done": true', got)
         self.assertFalse(got.endswith(b"0\r\n\r\n"), got[-80:])
         self.assertNotIn(b"w%02d" % WORDS, got)
+
+    def test_a_stopped_ollama_stream_never_leaves_half_a_line(self):
+        # the relay cut a stopped Ollama stream where it was, half a line out; on a hop, the order line then joined that
+        # half, and the other box read neither (the 5th review of v1.43.0, 2026-11-04)
+        FakeEngine.split_lines = True
+        got, status, out = self._stream_then_stop("/api/chat", {"model": "m",
+                                                                "messages": [{"role": "user", "content": "hi"}]})
+        self.assertEqual(out["stopped"], 1)
+        payload = self._dechunk(got)
+        self.assertIn(b"w03", payload)
+        self.assertTrue(payload.endswith(b"\n"), payload[-120:])
+        for line in payload.splitlines():
+            json.loads(line)
+
+    def test_a_finished_answer_that_is_not_streamed_goes_whole_through_a_stop(self):
+        # every answer a stop found under way was cut, one the engine had finished too, and not streamed: its client
+        # asked it again of a box short of memory, and the other box of a pair bound it (the 5th review of v1.43.0)
+        FakeEngine.slow_body = 1.0
+        s = self._post("/api/chat", {"model": "m", "stream": False, "messages": [{"role": "user", "content": "hi"}]})
+        head = self._read(s, until=b'"model"')
+        self.assertIn(b'"model"', head)
+        status, out, _ = self._stop()
+        self.assertEqual((status, out["stopped"]), (200, 1), out)
+        rest = self._read(s)
+        s.close()
+        got = head + rest
+        self.assertTrue(got.endswith(b"0\r\n\r\n"), got[-80:])
+        self.assertIs(json.loads(self._dechunk(got))["done"], True)
 
     def test_streams_that_finish_end_as_before(self):
         for path in ("/v1/messages", "/v1/chat/completions"):

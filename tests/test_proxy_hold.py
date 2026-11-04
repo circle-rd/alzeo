@@ -75,6 +75,14 @@ class Engine(http.server.BaseHTTPRequestHandler):
             out = b"bad request, said in plain text"
             self.send_response(400); self.send_header("Content-Type", "text/plain")
             self.send_header("Content-Length", str(len(out))); self.end_headers(); self.wfile.write(out); return
+        if self.path == "/api/chat" and req.get("stream"):         # SGLang's Ollama route: NDJSON
+            self.send_response(200); self.send_header("Content-Type", "application/x-ndjson")
+            self.send_header("Transfer-Encoding", "chunked"); self.end_headers()
+            for ln in (b'{"model": "m", "message": {"role": "assistant", "content": "four"}, "done": false}\n',
+                       b'{"model": "m", "message": {"role": "assistant", "content": ""}, "done": true}\n'):
+                self.wfile.write(b"%x\r\n" % len(ln) + ln + b"\r\n"); self.wfile.flush()
+            self.wfile.write(b"0\r\n\r\n"); self.wfile.flush()
+            return
         if not req.get("stream") or self.server.mode == "json-for-stream":
             return self._json(200, {"id": "x", "object": "chat.completion", "choices": [
                 {"index": 0, "message": {"role": "assistant", "content": "four"}, "finish_reason": "stop"}]})
@@ -277,6 +285,21 @@ class AStreamedRequestWaitsForItsEngine(unittest.TestCase):
         box.start_engine(mode="up")
         self.assertTrue(reply.done.wait(15))
         self.assertTrue(any('"content":"four"' in e for e in reply.content()), reply.events)
+
+    def test_an_ollama_stream_waits_in_silence_and_gets_its_ndjson(self):
+        # the hold opened a text/event-stream for every streamed request, an Ollama one too, whose client reads a JSON
+        # object a line and no SSE event (found in the 5th review of v1.43.0, 2026-11-04)
+        box = self.box()
+        reply = box.send(path="/api/chat")
+        time.sleep(2.5)
+        self.assertIsNone(reply.status, f"a stream was opened for an Ollama client: {reply.raw[:200]!r}")
+        box.start_engine()
+        self.assertTrue(reply.done.wait(15))
+        self.assertIsNone(reply.err)
+        self.assertEqual(reply.status, 200)
+        self.assertIn("application/x-ndjson", reply.ctype)
+        self.assertIn(b'"content": "four"', reply.raw)
+        self.assertNotIn(b"keepalive", reply.raw)
 
     def test_the_anthropic_dialect_waits_on_pings(self):
         box = self.box()
@@ -668,6 +691,9 @@ class AStreamedRequestWaitsForItsEngineInProcess(AStreamedRequestWaitsForItsEngi
 
     def test_the_anthropic_dialect_waits_on_pings(self):
         super().test_the_anthropic_dialect_waits_on_pings()
+
+    def test_an_ollama_stream_waits_in_silence_and_gets_its_ndjson(self):
+        super().test_an_ollama_stream_waits_in_silence_and_gets_its_ndjson()
 
 
 class ANonStreamedRequestWaitsInSilenceInProcess(ANonStreamedRequestWaitsInSilence):

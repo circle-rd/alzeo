@@ -4501,6 +4501,12 @@ def answered_whole(body):
     return all(m.group(1) == b"f" for m in STREAM_KEY.finditer(body))
 
 
+# The Ollama routes stream NDJSON, a JSON object a line: role 1's keepalive events, or the text/event-stream a hold opens,
+# are no line an Ollama client reads (found in the 5th review of v1.43.0, 2026-11-04). Their requests wait in silence while
+# held or kept, as a non-streamed request does, its leaving caller watched the same way.
+OLLAMA_ROUTES = frozenset({"/api/chat", "/api/generate"})
+
+
 class _KeptSocketHTTPConnection(http.client.HTTPConnection):
     """An HTTPConnection that keeps the socket it opened: an answer that says Connection: close
     takes the socket from the connection (sock = None) and keeps it open until the answer is
@@ -6503,7 +6509,7 @@ class H(BaseHTTPRequestHandler):
         if not sse and getattr(self, "_held_sse", False):
             # the stream this proxy opened while it held the request cannot carry a document:
             # the engine answered a streamed request without a stream, so say so in it
-            raw = resp.read(65536)
+            raw = resp.read1(65536)         # read(65536) of a chunked body waited for its end (the 5th review)
             try: resp.close()
             except Exception: pass
             self._answer(502, {}, json.dumps({"error": {"type": "engine_unavailable", "message":
@@ -6518,6 +6524,8 @@ class H(BaseHTTPRequestHandler):
             worst = 0
             detached = False
             cut = None
+            nd = getattr(self, "_out_ndjson", False)      # the Ollama routes' NDJSON stream
+            part = b""                      # its line not whole yet
             try:
                 while True:
                     # read1, as role 1 reads SSE (v6.6): read(65536) of a chunked body waited for 64 KiB or its end,
@@ -6525,8 +6533,18 @@ class H(BaseHTTPRequestHandler):
                     # 2026-11-04)
                     c = resp.read1(65536)
                     if not c: break
-                    if getattr(self, "_stop_why", None):
-                        break               # stopped (v6.47): what the engine sends now is the end it gives an abort
+                    if nd:
+                        if getattr(self, "_stop_why", None):
+                            break           # stopped (v6.47): what the engine sends now is the end it gives an abort
+                        # whole lines only: a stop or a cut left half a line out, which the other box's order line then
+                        # joined, unread there (the 5th review of v1.43.0, 2026-11-04)
+                        lines = part + c
+                        end = lines.rfind(b"\n") + 1
+                        c, part = lines[:end], lines[end:]
+                        if len(part) > 65536:
+                            c, part = c + part, b""     # a line that never ends goes as it comes
+                        if not c:
+                            continue
                     self._keep_answer(c)
                     if CORRUPTION_RUN:
                         run = 0
@@ -6553,10 +6571,11 @@ class H(BaseHTTPRequestHandler):
                 if not detached:
                     try: resp.close()
                     except Exception: pass
-            if getattr(self, "_stop_why", None):
-                # v6.47 for every answer that is not SSE: cut, never ended. SGLang ends an aborted Ollama stream with a
-                # last line, done_reason "stop", and its client took the part it got for the whole answer (the 4th review
-                # of v1.43.0, 2026-11-04)
+            if nd and getattr(self, "_stop_why", None):
+                # v6.47 for the Ollama routes' NDJSON: cut, never ended. SGLang ends an aborted Ollama stream with a last
+                # line, done_reason "stop", and its client took the part it got for the whole answer (the 4th review of
+                # v1.43.0). A non-streamed answer the engine had finished goes whole, as before: cut, its client asked it
+                # again of a box short of memory, and the other box of a pair bound it (the 5th review, 2026-11-04)
                 self._cut_stopped(); return
             if cut is not None:
                 # The engine ended mid-body (it died, or dropped the socket). The answer is
@@ -6572,6 +6591,11 @@ class H(BaseHTTPRequestHandler):
                 except Exception: pass
                 self._killed_here()             # it died during its answer (decision 1019)
                 self._done("UPSTREAM CUT non-sse"); return
+            if part:
+                try:
+                    self._chunk(part)           # its last line, with no line end
+                except Exception:
+                    self._done("CLIENT GONE on write"); return
             self._finish()
             if worst >= CORRUPTION_RUN:
                 log(f"corrupted output in a non-streamed answer ({worst} marker chars)")
@@ -6913,7 +6937,7 @@ class H(BaseHTTPRequestHandler):
         # or held while the pool was unmeasured, it could not learn it (found in review,
         # 2026-09-24).
         count_only = self.path.split("?", 1)[0] in COUNT_ONLY_PATHS
-        streamed = bool(body) and not answered_whole(body)
+        streamed = bool(body) and not answered_whole(body) and self.path.split("?", 1)[0] not in OLLAMA_ROUTES
         self._hold_until = None
         self._held_sse = False
         while True:
@@ -7965,7 +7989,7 @@ class H(BaseHTTPRequestHandler):
             return None
         done = threading.Event()
         self._wlock = threading.Lock()      # the keeper writes into the stream until _open returns
-        whole = bool(body) and answered_whole(body)
+        whole = bool(body) and (answered_whole(body) or self.path.split("?", 1)[0] in OLLAMA_ROUTES)
         keeper = None
         if body:
             keeper = threading.Thread(target=self._watch_client if whole else self._keep_waiting,
