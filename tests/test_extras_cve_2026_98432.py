@@ -31,13 +31,24 @@ class TheCveExtra(unittest.TestCase):
 
     def test_the_unit_follows_nftables_service_and_a_table_already_gone(self):
         # nftables.service's stock config flushes the whole ruleset, this table included: at a boot that ran it after the
-        # unit, or at its reload, the table went and the unit still said active; and a stop with the table gone failed
-        # (the 4th review of v1.43.0, 2026-11-04)
+        # unit the table went and the unit still said active; and a stop with the table gone failed (the 4th review)
         u = (D / "cve-2026-98432-nft.service").read_text().splitlines()
-        for line in ("After=nftables.service", "PartOf=nftables.service", "ReloadPropagatedFrom=nftables.service",
-                     "ExecReload=/usr/sbin/nft -f /etc/nft-cve-2026-98432.nft",
+        for line in ("After=nftables.service", "ExecReload=/usr/sbin/nft -f /etc/nft-cve-2026-98432.nft",
                      "ExecStop=-/usr/sbin/nft delete table ip cve_2026_98432"):
             self.assertIn(line, u)
+
+    def test_a_stop_of_nftables_service_never_stops_the_mitigation_and_its_flushes_are_undone(self):
+        # PartOf=nftables.service propagated every stop of nftables.service, already inactive too (systemd 255, measured
+        # with two units), and this unit's stop deleted the table; its start and reload flushed it with nothing to load
+        # it again (the 5th review of v1.43.0, 2026-11-04). A drop-in on nftables.service loads it after each (1053)
+        u = (D / "cve-2026-98432-nft.service").read_text().splitlines()
+        self.assertFalse([ln for ln in u if ln.startswith(("PartOf=", "ReloadPropagatedFrom=", "BindsTo=", "Requires="))],
+                         "a stop of nftables.service would stop the mitigation")
+        drop = (D / "nftables-cve-2026-98432.conf").read_text().splitlines()
+        for line in ("[Service]", "ExecStartPost=-/usr/sbin/nft -f /etc/nft-cve-2026-98432.nft",
+                     "ExecReload=-/usr/sbin/nft -f /etc/nft-cve-2026-98432.nft",
+                     "ExecStopPost=-/usr/sbin/nft -f /etc/nft-cve-2026-98432.nft"):
+            self.assertIn(line, drop)
 
     def test_the_sysctls_are_the_mitigations_two(self):
         keys = {ln.split("=")[0].strip(): ln.split("=")[1].strip()
@@ -94,7 +105,8 @@ class TheCveExtra(unittest.TestCase):
             (root / d).mkdir(parents=True)
         bin_.mkdir()
         stubs = {
-            "sudo": 'echo "sudo $*" >> "$LOG"\n[ "$1" = -n ] && exit $SUDO_N\nexec "$@"',
+            "sudo": ('echo "sudo $*" >> "$LOG"\n[ -n "$SUDO_DENY" ] && { echo "sudo: a password is required" >&2; '
+                     'exit 1; }\n[ "$1" = -n ] && exit $SUDO_N\nexec "$@"'),
             "nft": ('echo "nft $*" >> "$LOG"\n[ "$1" = -c ] && exit $NFT_C\n'
                     'case "$*" in "list table ip cve_2026_98432") echo "ip hdrlength != 5 counter packets 3 bytes 9 drop";; '
                     'esac\nexit 0'),
@@ -141,10 +153,52 @@ class TheCveExtra(unittest.TestCase):
         self.assertIn("systemctl reload-or-restart cve-2026-98432-nft.service", calls)
         self.assertEqual((root / "etc/nft-cve-2026-98432.nft").read_text(), (D / "cve-2026-98432.nft").read_text())
 
+    def test_the_drop_in_on_nftables_service_comes_and_goes_with_the_mitigation(self):
+        root, env, run = self._box(mptcp="0")
+        drop = root / "etc/systemd/system/nftables.service.d/cve-2026-98432.conf"
+        p, _ = run()
+        self.assertEqual(p.returncode, 0, p.stderr + p.stdout)
+        self.assertEqual(drop.read_text(), (D / "nftables-cve-2026-98432.conf").read_text())
+        p, _ = run("--uninstall")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertFalse(drop.exists())
+        self.assertFalse(drop.parent.exists(), "its directory, empty, stayed")
+
+    def test_a_box_already_mitigated_records_no_mptcp_of_its_own(self):
+        # a run over a mitigation installed before (its sysctls set, MPTCP 0) wrote that 0 as MPTCP's value before the
+        # install, and --uninstall left MPTCP off (the 5th review of v1.43.0, 2026-11-04)
+        root, env, run = self._box(mptcp="0")
+        (root / "etc/sysctl.d/99-cve-2026-98432.conf").write_text("net.mptcp.enabled = 0\n")
+        p, _ = run()
+        self.assertEqual(p.returncode, 0, p.stderr + p.stdout)
+        self.assertFalse((root / "etc/nft-cve-2026-98432.before").exists(), "the mitigation's own 0 was recorded")
+        p, calls = run("--uninstall")
+        self.assertIn("sysctl -w net.mptcp.enabled=1", calls)
+
+    def test_an_install_with_sudo_n_refused_ends_well(self):
+        # a sudoers with timestamp_timeout=0: every sudo asked for works, sudo -n never; the install's own check said 2 and
+        # a complete install ended in an error (the 5th review of v1.43.0, 2026-11-04)
+        root, env, run = self._box(mptcp="0", sudo=False)
+        p, _ = run()
+        self.assertEqual(p.returncode, 0, p.stderr + p.stdout)
+        self.assertIn("nft table: present", p.stdout)
+
+    def test_a_refused_sudo_is_said_as_sudo(self):
+        # the table's check was the first sudo, and a refused sudo read as a table that does not parse (the 5th review)
+        root, env, run = self._box()
+        env["SUDO_DENY"] = "1"
+        p, _ = run()
+        self.assertNotEqual(p.returncode, 0)
+        self.assertIn("sudo is refused", p.stderr)
+        self.assertNotIn("does not parse", p.stderr)
+
     def test_the_check_without_sudo_says_the_table_was_not_read(self):
         # without sudo at hand it read the sysctls and the unit, not the table, and said 0: in place (the 4th review of
         # v1.43.0, 2026-11-04)
         root, env, run = self._box(mptcp="0", sudo=False)
+        drop = root / "etc/systemd/system/nftables.service.d/cve-2026-98432.conf"
+        drop.parent.mkdir(parents=True)
+        drop.write_text("installed")                                           # all in place but the table, not read
         p, _ = run("--check")
         self.assertEqual(p.returncode, 2, p.stdout)
         self.assertIn("nft table: not read", p.stdout)

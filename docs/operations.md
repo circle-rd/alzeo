@@ -118,8 +118,8 @@ handshake reachable over the network with no login, which Ubuntu rates Critical 
 2026-11-04 Ubuntu's tracker listed `linux-nvidia-6.17` as "Ignored (end of life)", so no fix will
 come for it, and `linux-nvidia-7.0` as "Vulnerable". It installs an nftables table of its own that
 drops IPv4 TCP packets carrying IP options, the trigger, loaded before the network by its own unit
-and never through `nftables.service` (whose stock config would flush Docker's rules), and turns MPTCP
-off. Nothing restarts; on the reference box Docker's rules were unchanged, the API and the cockpit
+and never through `nftables.service` (whose stock config would flush Docker's rules; a drop-in on it
+loads the table again after it flushes), and turns MPTCP off. Nothing restarts; on the reference box Docker's rules were unchanged, the API and the cockpit
 answered, and a connect carrying an IP option was dropped. Remove it once a fixed kernel runs.
 Details in [extras/cve-2026-98432/README.md](../extras/cve-2026-98432/README.md).
 
