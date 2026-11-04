@@ -2615,6 +2615,35 @@ class TwoBoxesServeOneModel(PairFixture, unittest.TestCase):
         self.assertEqual(st, 200, out[:300])                                    # its lane serves another model: there
         self.assertIn(b"from spark2", out)
 
+    def test_a_box_that_serves_no_text_lane_now_sends_the_others_model_there(self):
+        # decision 1018 holds for a model this box's lane serves: a box switched to images (or stopped) kept the 27B it
+        # served last as its own, and refused its clients the other box's 27B of another checkpoint (found re-reading
+        # the rule, 2026-11-04). A crash on its way back keeps it
+        if not self.INPROC:
+            self.skipTest("systemd's answer is set in this test's process")
+        m = self.mod
+        saved = (m.served_models, m.unit_texts, m.text_lane_coming, m.HOLD_UNITS, m._LAST_LANE["lane"])
+
+        def restore():
+            m.served_models, m.unit_texts, m.text_lane_coming, m.HOLD_UNITS = saved[:4]
+            m._LAST_LANE["lane"] = saved[4]
+        self.addCleanup(restore)
+
+        def away(*a, **k):
+            raise m.EngineUnreachable("connection refused (the test's text lane stopped)")
+        m.served_models = away
+        m.HOLD_UNITS = ("qwen38-sglang.service",)
+        m.unit_texts = lambda: None                                             # no text unit active
+        m._LAST_LANE["lane"] = (frozenset({"qwen3.8-27b"}), "ab" * 20)       # the 27B it served before, another one
+        m.text_lane_coming = lambda: False                                      # images now, or no lane
+        st, out, _ = self.call("/v1/chat/completions", self.chat("qwen3.8-27b"))
+        self.assertEqual(st, 200, out[:300])
+        self.assertIn(b"from spark2", out, "a box that serves no text lane kept the other box's model from its client")
+        m.text_lane_coming = lambda: True                                       # a crash on its way back: its own 27B
+        st, out, _ = self.call("/v1/chat/completions", self.chat("qwen3.8-27b"))
+        self.assertEqual(st, 503, out[:300])
+        self.assertIn(b"another checkpoint", out)
+
     def test_a_request_sent_on_for_another_checkpoint_than_this_boxs_is_refused(self):
         # decision 1018, the receiving side: the other box's row of this one, read minutes ago, said the checkpoint this
         # box served before a switch under the same name, and the hop said nothing this box could check (review,
@@ -3110,6 +3139,9 @@ class TwoBoxesServeOneModelInProcess(TwoBoxesServeOneModel):
 
     def test_a_request_sent_on_for_another_checkpoint_than_this_boxs_is_refused(self):
         super().test_a_request_sent_on_for_another_checkpoint_than_this_boxs_is_refused()
+
+    def test_a_box_that_serves_no_text_lane_now_sends_the_others_model_there(self):
+        super().test_a_box_that_serves_no_text_lane_now_sends_the_others_model_there()
 
     def test_a_request_bound_to_a_box_whose_list_is_unknown_is_tried_there(self):
         super().test_a_request_bound_to_a_box_whose_list_is_unknown_is_tried_there()

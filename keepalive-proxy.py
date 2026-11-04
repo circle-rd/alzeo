@@ -552,6 +552,14 @@ def engine_coming():
     restarted an engine left without its scheduler). systemd is asked at most every 2 s."""
     if not HOLD_UNITS or HOLD_MAX_S <= 0:
         return False
+    return text_lane_coming()
+
+
+def text_lane_coming():
+    """engine_coming's reading of systemd, whatever the hold's settings: a unit named in PROXY_HOLD_UNITS up, starting,
+    waiting for its next attempt, or stopping to start again. False when none is named."""
+    if not HOLD_UNITS:
+        return False
     with _HOLD_LOCK:
         now = time.monotonic()
         if now - _HOLD_SEEN["ts"] > 2:
@@ -4822,13 +4830,18 @@ def names_in(texts):
 
 def lane_away():
     """(names, checkpoint) of the lane this box serves while its engine does not answer: what the command of its
-    engine says (a start under way: an update restarts this proxy and an engine of minutes of loading together), else
-    what this proxy saw it serve last, else nothing known. A client of the stock 27B got the uncensored one from the
+    engine says (a start under way: an update restarts this proxy and an engine of minutes of loading together), else,
+    while a text lane is on its way back (a crash), what this proxy saw it serve last, else nothing. A client of the stock 27B got the uncensored one from the
     other box while this box restarted (found in review, 2026-11-04)."""
     texts = unit_texts()
     names = names_in(texts) if texts else frozenset()
     if names:
         return names, (revision_in(texts) or PAIR_CHECKPOINT)
+    if HOLD_UNITS and not text_lane_coming():
+        # no text lane up or on its way back: this box serves images, video or no lane now, and the model its lane
+        # served before is the other box's alone, sent there whatever its checkpoint (found re-reading this rule,
+        # 2026-11-04: a box switched to images refused its clients the other box's 27B)
+        return frozenset(), None
     return _LAST_LANE["lane"]
 
 
