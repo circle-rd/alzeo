@@ -977,45 +977,6 @@ class AServerWithoutItsSchedulerIsRestartedOnce(Base):
         self.tick()
         self.assertEqual(len(self.actions), 1, "one restart per half hour, not one per tick")
 
-    def _marks_seen_by_the_restart(self, code):
-        """start_action stubbed again: it answers code, and writes down the mark there is when it is called."""
-        marks = self.cp.CONFIG_DIR / "recovery-restarts.json"
-        marks.unlink(missing_ok=True)
-        self.addCleanup(marks.unlink, missing_ok=True)
-        dry = self.cp.DRY_RUN
-        self.cp.DRY_RUN = False                    # start_action is this test's: nothing runs
-        self.addCleanup(setattr, self.cp, "DRY_RUN", dry)
-        self.seen_at_call = []
-
-        def start(kind, args, origin=""):
-            self.seen_at_call.append(json.loads(marks.read_text()).get(self.U) if marks.exists() else None)
-            self.actions.append((kind, args, origin))
-            return code, {"job": "j"}
-        self.cp.start_action = start
-        return marks
-
-    def test_its_restart_is_marked_as_a_recovery_for_the_proxy(self):
-        # decision 1049: the proxy took this restart for the Load of a checkpoint an update had staged, an order, and
-        # bound nothing (the 4th review of v1.43.0, 2026-11-04): the cockpit says it first, with the run it restarts
-        marks = self._marks_seen_by_the_restart(202)
-        self.tick()
-        self.cp.ZOMBIE_SINCE[self.U] = __import__("time").time() - 121
-        self.tick()
-        self.assertEqual(self.actions, [("unit", {"verb": "restart", "unit": self.U}, "zombie")])
-        self.assertEqual((self.seen_at_call[0] or {}).get("invocation"), "abc", "not marked when the restart went")
-        mark = json.loads(marks.read_text())[self.U]
-        self.assertEqual((mark["invocation"], mark["why"]), ("abc", "zombie"))
-
-    def test_a_restart_refused_leaves_no_mark(self):
-        # a mark left on a run whose restart never went made a later Load of the same run a recovery, which binds
-        # what it ends (the 5th review of v1.43.0, 2026-11-04)
-        marks = self._marks_seen_by_the_restart(409)
-        self.tick()
-        self.cp.ZOMBIE_SINCE[self.U] = __import__("time").time() - 121
-        self.tick()
-        self.assertEqual(len(self.actions), 1)
-        self.assertNotIn(self.U, json.loads(marks.read_text()) if marks.exists() else {})
-
     def test_a_server_with_its_scheduler_is_left_alone(self):
         self.alive = True
         e = self.tick()
@@ -1033,35 +994,25 @@ class AServerWithoutItsSchedulerIsRestartedOnce(Base):
         self.assertEqual(self.actions, [])
 
 
-class AWedgedEngineTheAutohealRestartsIsMarkedFirst(Base):
+class AWedgedEngineTheAutohealRestartsIsARecovery(Base):
     """Decision 1049: the autoheal's restart of a wedged engine is the restart the proxy took for an order when an update
     had staged another checkpoint (the 4th review of v1.43.0, 2026-11-04). Its decision to restart is given here (the
-    wedge's own tests are lifecycle.py's); what is checked is what the restart says first."""
+    wedge's own tests are lifecycle.py's); what is checked is the action it asks, origin autoheal."""
     U = "qwen38-sglang.service"
     FIRED = AServerWithoutItsSchedulerIsRestartedOnce.FIRED
 
     def setUp(self):
         cp = self.cp
-        saved = (cp.start_action, cp.lc.decide_wedge, cp.lc.wedge_plan, cp.POOL_GUARD, cp.DRY_RUN)
+        saved = (cp.start_action, cp.lc.decide_wedge, cp.lc.wedge_plan, cp.POOL_GUARD)
         self.addCleanup(lambda: (setattr(cp, "start_action", saved[0]), setattr(cp.lc, "decide_wedge", saved[1]),
-                                 setattr(cp.lc, "wedge_plan", saved[2]), setattr(cp, "POOL_GUARD", saved[3]),
-                                 setattr(cp, "DRY_RUN", saved[4])))
-        cp.DRY_RUN = False                         # start_action is this test's: nothing runs
-        self.actions, self.seen_at_call = [], []
-        self.marks = cp.CONFIG_DIR / "recovery-restarts.json"
-
-        def start(kind, args, origin=""):
-            self.seen_at_call.append(json.loads(self.marks.read_text()).get(self.U) if self.marks.exists() else None)
-            self.actions.append((kind, args, origin))
-            return 202, {"job": "j"}
-        cp.start_action = start
+                                 setattr(cp.lc, "wedge_plan", saved[2]), setattr(cp, "POOL_GUARD", saved[3])))
+        self.actions = []
+        cp.start_action = lambda kind, args, origin="": (self.actions.append((kind, args, origin)), (202, {}))[1]
         cp.lc.decide_wedge = lambda **kw: True
         cp.lc.wedge_plan = lambda **kw: {"state": "wedged", "since": 0.0, "first": False, "restart": True}
         cp.POOL_GUARD = False
-        self.marks.unlink(missing_ok=True)
-        self.addCleanup(self.marks.unlink, missing_ok=True)
 
-    def test_the_autoheals_restart_names_the_run_it_restarts(self):
+    def test_the_autoheal_restarts_a_wedged_engine_as_a_recovery(self):
         cp = self.cp
         with cp.STATE_LOCK:
             cp.STATE["engine_fast"] = {"data": {"healthy": True, "load": [{"num_reqs": 1}]}}
@@ -1075,61 +1026,60 @@ class AWedgedEngineTheAutohealRestartsIsMarkedFirst(Base):
                   "docker logs --tail 300 qwen38-sglang": self.FIRED,
                   "docker logs --since": self.FIRED})
         cp.collect_lifecycle()
+        # its origin is what its job marks for the proxy (ARecoveryRestartIsMarkedByItsOwnJob)
         self.assertEqual(self.actions, [("unit", {"verb": "restart", "unit": self.U}, "autoheal")])
-        self.assertEqual((self.seen_at_call[0] or {}).get("invocation"), "run-7", "not marked when the restart went")
-        mark = json.loads(self.marks.read_text())[self.U]
-        self.assertEqual((mark["invocation"], mark["why"]), ("run-7", "autoheal"))
 
 
-class AnOperatorsStopOfAStuckEngineIsMarkedFirst(Base):
-    """Decision 1055: the page tells the operator to stop a wedged or zombie engine and start it again, and that stop was
-    an order to the proxy, which bound nothing: the request that wedged it could wedge the other box too (the 5th review
-    of v1.43.0, 2026-11-04). The action itself is this test's: nothing runs."""
+class ARecoveryRestartIsMarkedByItsOwnJob(Base):
+    """Decisions 1049 and 1058: the job that runs a recovery restart (autoheal, zombie) marks it for the proxy just before
+    its systemctl, under JOB_LOCK, and removes the mark when that fails. Marked where the action was asked, a duplicate
+    refused busy erased the running restart's mark, a refused sudo left it, and two threads wrote the file at once (the
+    6th review of v1.43.0, 2026-11-04). The job's command is this test's: a shell that says whether the mark was there
+    when it ran, never systemctl."""
     U = "qwen38-sglang.service"
 
     def setUp(self):
         cp = self.cp
-        # the action is replaced below: without the wrapper (a cockpit before decision 1055), the real one would run
-        self.assertTrue(hasattr(cp, "_start_action"), "no operator's recovery is marked by this cockpit")
-        saved = (cp._start_action, cp.DRY_RUN, dict(cp.LIFE["states"]))
-        self.addCleanup(lambda: (setattr(cp, "_start_action", saved[0]), setattr(cp, "DRY_RUN", saved[1]),
-                                 cp.LIFE.__setitem__("states", saved[2])))
-        cp.DRY_RUN = False
         self.marks = cp.CONFIG_DIR / "recovery-restarts.json"
         self.marks.unlink(missing_ok=True)
         self.addCleanup(self.marks.unlink, missing_ok=True)
-        self.calls, self.code = [], 202
+        dry = cp.DRY_RUN
+        cp.DRY_RUN = False                         # the job's command below is this test's own
+        self.addCleanup(setattr, cp, "DRY_RUN", dry)
+        self.box({f"systemctl show {self.U}": "InvocationID=run-7\n"})
 
-        def start(name, params, origin="ui"):
-            self.calls.append((name, params, origin, self.mark()))
-            return self.code, {"job": "j"}
-        cp._start_action = start
-        self.box({f"systemctl show {self.U}": "InvocationID=run-9\n"})
-        zombie = cp.ZOMBIE_SINCE.pop(self.U, None)                              # no zombie left by another test
-        self.addCleanup(lambda: zombie is None or cp.ZOMBIE_SINCE.__setitem__(self.U, zombie))
-        with cp.LIFE_LOCK:
-            cp.LIFE["states"] = {self.U: "wedged"}
+    def run_job(self, origin, rc):
+        cp = self.cp
+        argv = ["/bin/sh", "-c", f'grep -q run-7 "{self.marks}" 2>/dev/null && exit {rc}; exit 9']
+        job = cp.Job("unit", argv, 30, params={"verb": "restart", "unit": self.U}, origin=origin)
+        self.assertTrue(cp.JOB_LOCK.acquire(blocking=False), "a job still holds the lock")
+        cp.run_job(job)                            # it releases JOB_LOCK
+        return job
 
     def mark(self):
         return json.loads(self.marks.read_text()).get(self.U) if self.marks.exists() else None
 
-    def test_a_stop_of_a_wedged_engine_is_marked_before_it_goes(self):
-        code, _ = self.cp.start_action("unit", {"verb": "stop", "unit": self.U}, origin="ui")
-        self.assertEqual(code, 202)
-        self.assertEqual((self.calls[0][3] or {}).get("invocation"), "run-9", "not marked when the stop went")
-        self.assertEqual(self.mark()["why"], "operator")
+    def test_a_recovery_restart_is_marked_before_it_runs_and_kept_once_it_ran(self):
+        job = self.run_job("autoheal", 0)
+        self.assertEqual(job.rc, 0, f"no mark when its command ran (9): {job.lines}")
+        self.assertEqual((self.mark() or {}).get("why"), "autoheal")
 
-    def test_a_refused_one_leaves_no_mark(self):
-        self.code = 409
-        self.cp.start_action("unit", {"verb": "restart", "unit": self.U}, origin="ui")
+    def test_a_recovery_restart_that_failed_leaves_no_mark(self):
+        job = self.run_job("zombie", 1)
+        self.assertEqual(job.rc, 1, f"no mark when its command ran (9): {job.lines}")
+        self.assertIsNone(self.mark(), "a restart that failed left its mark")
+
+    def test_an_operators_restart_is_no_recovery(self):
+        job = self.run_job("ui", 0)
+        self.assertEqual(job.rc, 9)
         self.assertIsNone(self.mark())
 
-    def test_an_engine_that_serves_is_not_marked(self):
-        with self.cp.LIFE_LOCK:
-            self.cp.LIFE["states"] = {self.U: "ready"}
-        self.cp.start_action("unit", {"verb": "stop", "unit": self.U}, origin="ui")
-        self.assertIsNone(self.mark())
-        self.assertEqual(len(self.calls), 1)
+    def test_only_the_job_writes_the_marks(self):
+        src = (DASH / "cockpit.py").read_text()
+        calls = [m.start() for m in re.finditer(r"(?<!def )\bmark_recovery\(", src)]
+        start = src.index("\ndef run_job(")
+        self.assertEqual(len(calls), 1, "a mark written elsewhere than by run_job")
+        self.assertTrue(start < calls[0] < src.index("\ndef ", start + 1), "a mark written elsewhere than by run_job")
 
 
 class ACrashWhileServingIsNoCrashLoop(Base):
