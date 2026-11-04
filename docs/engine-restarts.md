@@ -104,7 +104,9 @@ both in the proxy's unit):
 
 - a **streamed** request gets its `200` and the keepalives at once, the ones the proxy sends
   during a long prefill (an authentic empty chunk on the OpenAI dialect, the `ping` event on
-  the Anthropic one), and its answer once the engine is back;
+  the Anthropic one), and its answer once the engine is back; but a streamed request of the
+  Ollama routes (`/api/chat`, `/api/generate`) waits in silence, as a non-streamed one does:
+  its client reads NDJSON, which carries no keepalive;
 - a **non-streamed** one waits in silence;
 - one that still fails after the wait (the engine not back in time, a prompt too long for
   the lane that came back) ends its stream with an error event, which both clients answer by

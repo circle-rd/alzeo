@@ -37,11 +37,11 @@ minutes such a request, sent again by its client, goes to that box or nowhere (d
 unit (a Load of another lane, the Stop button), a restart of it to another checkpoint than the one the box served (the
 cockpit's Load of another checkpoint, decision 1041), an Abort all and the memory floor end requests by order, which
 bind nothing, and a box that ends so a request the other box sent tells it before the cut (decision 1031). Any other
-restart binds them as an engine's death, and so do the cockpit's restart of a wedged or stuck engine, whatever
-checkpoint an update staged for its next start, and the operator's stop or restart of an engine the cockpit shows so:
-their retries wait for that engine (decisions 1030, 1049 and 1055). While the entry's engine is away, a model its lane
-serves goes to the other box from the same checkpoint only, and waits for the entry's engine otherwise. The tile of
-each cockpit says what it sent the other box, and why, even while that box does not answer. docs/pair.md says it all.
+restart binds them as an engine's death, and so does the cockpit's restart of a wedged or stuck engine, whatever
+checkpoint an update staged for its next start: their retries wait for that engine (decisions 1030 and 1049). While
+the entry's engine is away, a model its lane serves goes to the other box from the same checkpoint only, and waits for
+the entry's engine otherwise. The tile of each cockpit says what it sent the other box, and why, even while that box
+does not answer. docs/pair.md says it all.
 
 **Reviews and tests.** An independent reviewer read the sharing, then a code review and three verifiers read it again
 (decision 1005), and every finding was checked in the code. What they found and this release fixes: the other box's
@@ -89,10 +89,16 @@ the mitigation's own MPTCP value. A recovery's mark outlived a restart that neve
 names could change. A stopped Ollama stream could end in half a line, a stop cut a non-streamed answer the engine had
 finished, and an Ollama stream from the other box was cut after 60 s of prefill. A request whose client left at a
 death the other box relayed was bound at once, before an order that box said after it: it waits 5 s for one (decision
-1054). And the page's advice for a wedged engine with the autoheal off, a stop and a start, bound nothing: the cockpit
-marks the operator's stop or restart of such an engine too (decision 1055). tests/test_proxy_pair.py has two boxes
-that serve the 27B from their start, each rule its test, and each test fails on v1.42.1 or on the commit before its
-fix.
+1054). A sixth review found more, fixed here too (decision 1058). That wait never held: the request's own watch closed
+the connection to the other box within a second. The box that relays never said an order it saw only after a vLLM
+death, whose stream ends cleanly. A recovery's mark could be erased by the same action refused busy, outlive a sudo
+refused after its start, and be written by two threads at once: only the job that runs the restart writes it now,
+around its systemctl. On vLLM a stop cut a non-streamed answer being relayed, taken for its engine's death, and a
+floor stop that cut nothing held new generations back: an answer relayed whole is no stop target. A refusal for
+another checkpoint of the model read as one for another model. And the operator's stop of a stuck engine, marked as a
+recovery in the fifth review's fixes, marked the Load's own steps with it: withdrawn, to be done with a Restart button
+in v1.44.0 (decision 1059). tests/test_proxy_pair.py has two boxes that serve the 27B from their start, each rule its
+test, and each test fails on v1.42.1 or on the commit before its fix.
 
 **Ollama clients get their stream as it comes.** The proxy relayed every answer that is not SSE in blocks of 64 KiB,
 so a client of the Ollama routes (`/api/chat`, `/api/generate`) got its NDJSON stream in bursts, most answers whole at
@@ -119,8 +125,8 @@ without a pair works as before but for the Ollama routes: their streams reach th
 them, and a hold waits for their engine in silence. A pair that serves two models works as before but for one case: a
 request the other box sent, whose engine closed the connection while it had it, gets a 502 at once (a 503 that says so
 when its lane stopped by order), where it could wait for that engine to come back and go to it again. The cockpit
-writes ~/.config/qwen38/recovery-restarts.json before it restarts or stops an engine to recover it. Update both boxes
-of a pair: a box of v1.42 gets no shared request.
+writes ~/.config/qwen38/recovery-restarts.json when it restarts an engine to recover it. Update both boxes of a pair:
+a box of v1.42 gets no shared request.
 
 ## v1.42.1 (2026-11-03): no client can hide a field from the proxy's guards in UTF-16, and a listed key or the other box of a pair can no longer end every generation of the box
 
