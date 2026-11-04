@@ -2103,7 +2103,8 @@ class TwoBoxesServeOneModel(PairFixture, unittest.TestCase):
         # other box that serves the model answers at once. Every test passed with a refusal never handed over (review,
         # 2026-11-03)
         h = fake_engine("spark1-refuses", "qwen3.8-27b")
-        eng = Engine(("127.0.0.1", 0), h)
+        port = localports.held(self)        # kept to the end: once the engine stops, no other test's server takes it
+        eng = localports.serve(port, Engine, h)
         threading.Thread(target=eng.serve_forever, daemon=True).start()
         stopped = []
 
@@ -2115,7 +2116,7 @@ class TwoBoxesServeOneModel(PairFixture, unittest.TestCase):
         self.addCleanup(stop)
         Peer = fake_peer(["qwen3.8-27b", "marker-refuses"], PEER_ANSWER)
         entry = self.spare_proxy("spark1-refuses", KEY_1, peers=(("spark2", tls_peer(self, Peer)),),
-                                 upstream=f"http://127.0.0.1:{eng.server_address[1]}")
+                                 upstream=f"http://127.0.0.1:{port}")
         self.until_listed("marker-refuses", port=entry)
         st, out, _ = self.call("/v1/chat/completions", self.chat("qwen3.8-27b"), port=entry)
         self.assertEqual(st, 200, out[:300])

@@ -63,10 +63,13 @@ one its SSH server sees, give that one: `--back 192.168.100.1`.
 ## A model both boxes serve
 
 When both boxes load the same lane, from the same checkpoint, they share its requests, and the box they were sent
-to decides where each one goes. Each box says in the list it gives the other the checkpoint its lane serves, the
-revision its unit names (`--revision`): `switch-model.sh` serves the 27B's stock, uncensored, fp8 and
-uncensored-fp8 checkpoints, and Flash's three, under one name each, and two boxes that serve two of them, or a box
-that says none, keep their own requests:
+to decides where each one goes. Each box says in the list it gives the other the checkpoint its engine serves, the
+revision (`--revision`) of the command its engine was started with: `switch-model.sh` serves the 27B's stock,
+uncensored, fp8 and uncensored-fp8 checkpoints, and Flash's three, under one name each, and two boxes that serve two
+of them, or a box that says none, keep their own requests. A unit `switch-model.sh` rewrote names the checkpoint of
+its engine's next start, which the box says once its engine restarted. A request the entry sends on for a model both
+serve carries the entry's checkpoint, and the other box refuses it if it serves another one now (a switch since its
+list was read): the entry then serves it itself.
 
 - **A conversation stays on its box.** An agent (Claude Code, opencode, Hermes, pi) sends its whole
   conversation again at each turn, and the box that served the turn before holds all of it in its prefix cache
@@ -94,10 +97,11 @@ that says none, keep their own requests:
   lane runs at once in its unit (`--max-running-requests`, `--max-num-seqs`) and says it to the other. A box
   that says nothing of it counts as a lane of 8.
 - **A box that cannot serve a request hands it on**, before a byte of its answer went out:
-  - When the other box cannot be reached (it gets 3 s to take the connection), or answers 503 (its engine
-    away, or its memory floor) or 529 (the floor, in the Anthropic dialect), the entry serves the request
-    itself, the conversation stays with the entry from then on, and that box gets no request of a model
-    both serve for 30 s.
+  - When the other box cannot be reached (it gets 3 s to take the connection), refuses the entry's
+    certificate (it was paired again without the entry), or answers 503 (its engine away, or its memory
+    floor) or 529 (the floor, in the Anthropic dialect), the entry serves the request itself, the
+    conversation stays with the entry from then on, and that box gets no request of a model both serve for
+    30 s.
   - When the other box had the request and closed the connection with no answer (an Abort all there, its
     memory floor, a restart of its proxy, its power), the client gets a 503 and the request runs nowhere
     else: an Abort all on the other box is not undone, and a request that took that box down does not take
@@ -112,10 +116,14 @@ that says none, keep their own requests:
   - A request whose answer began is never sent again, nor one an engine closed the connection on while it
     had it: the same request could take the other engine down too. Clients send a request again by
     themselves after a 5xx (Claude Code, opencode, the SDKs): for 10 minutes, a request an engine closed
-    on, before its answer or during it, or that the other box had and dropped, goes to that box or nowhere,
-    never shared, handed back or taken over. It can take one box down, as on a box alone (decision 1019).
-  - While the entry's engine is away (a crash, a restart), a model its lane served goes to the other box
-    only from the same checkpoint (decision 1018): its clients get a 503 to try again otherwise.
+    on, before its answer or during it, died with (vLLM answers those with a 500), or that the other box had
+    and dropped, goes to that box or nowhere, never shared, handed back or taken over, and nowhere once that
+    box left the pair. It can take one box down, as on a box alone (decision 1019). A stop or a restart of the
+    lane's unit (a Load, an update, `switch-model.sh`), an Abort all and the memory floor end requests by
+    order: those are sent again as any other.
+  - While the entry's engine is away (a crash, a restart), a model its lane serves (as the command of its
+    engine starting says, or as it served last) goes to the other box only from the same checkpoint (decision
+    1018): its clients get a 503 to try again otherwise.
 - A token count (`/v1/messages/count_tokens`) is answered by the box it was sent to: both boxes count the same
   way, and a count fills no cache, so it moves no conversation.
 - A request with the header `X-Alzeo-Here: 1` is served by the box it was sent to. The cockpit's smoke test
@@ -170,7 +178,8 @@ cockpit for now.
   they measure the pair. To measure one box, point them at its engine (`--port 30000`, or `PORT=30000` for
   `needle.sh`).
 - A conversation is known to the box it was sent to: two clients that continue one conversation through two
-  entries each have it placed by its own entry.
+  entries each have it placed by its own entry. So is a request an engine closed on: sent again through the other
+  box's port, it is not kept from the other box.
 - A long prompt sent again after its client gave up on it is told apart by the box that served it (the journal
   line of its client's timeout): when the boxes are far apart and the new try goes to the other box, that box
   does not know it.

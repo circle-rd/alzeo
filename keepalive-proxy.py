@@ -73,6 +73,13 @@ for its pool still gets the shorter ones. What this box refuses before it sends 
 prompt too long for its pool, a long prompt its warming engine cannot measure), and what its engine
 refuses at the first try (connection refused, 502, 503, 504), goes to the other box. A request whose
 answer began, a token count, and a request with X-Alzeo-Here: 1 stay on the box they were sent to.
+Only a box that serves a model from the same checkpoint shares it (decision 1018): each box says the
+one its engine runs, read in the command its engine was started with (x_alzeo_revision; PAIR_CHECKPOINT
+when no unit says it), and a request sent on carries the entry's (X-Alzeo-Pair-Checkpoint), which the
+other box refuses with a 409 when it serves another. A request the other box had whole and closed the
+connection on runs nowhere else, its client told 503 (decision 1017). One an engine closed the
+connection on, or died with, goes to that engine's box or nowhere for PAIR_KILLER_KEEP_S (decision
+1019); a stop ordered to the lane's unit, an Abort all or the memory floor binds nothing.
 
 v6.51: a request body is JSON in UTF-8, or a 415: in UTF-16 or UTF-32, which the vLLM lanes read too
 (FastAPI's json, where the SGLang lanes' orjson refuses it), the guards here found none of the fields
@@ -7236,6 +7243,8 @@ class H(BaseHTTPRequestHandler):
         (the certificate is the pair's: the peer admits it with its own key); its answer relayed as it
         comes. "moved" when the peer answers that it serves another model now (409 model_not_served),
         None once the caller has its answer. With fallback (this box serves the model too, decision 998),
+        "lost" when the peer had it whole and closed the connection with no answer (decision 1017), "gone" when its
+        client left before the peer took the connection,
         "fallback" when the peer does not answer, or refuses it as away (503, 529), and "too long" when its pool is too
         small for the prompt, before a byte went to the caller. reserved: the caller counted it in flight already
         (_pair_spread). count: what the tile counts it as (decision 996), once the other box's answer came, never for one
