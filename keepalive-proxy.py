@@ -616,8 +616,46 @@ def unit_stopping_by_order():
     what the request did: an ordered stop bound every request in flight to its box for 10 minutes (decision 1019, found
     in review, 2026-11-04). A restart is no such order, whoever asked for it (decision 1030, 2026-11-04): the cockpit
     restarts an engine a request may have wedged (autoheal, zombie), and a request bound then waits here for its engine
-    to come back. A crash has no job until its restart is due. False when systemd does not say."""
-    return any(kind == "stop" for _, kind in unit_jobs())
+    to come back. But a restart whose unit starts another checkpoint than the one this box served last is the cockpit's
+    Load of another checkpoint of the same lane, an order too (decision 1041, 2026-11-04). A crash has no job until its
+    restart is due. False when systemd does not say."""
+    jobs = unit_jobs()
+    if any(kind == "stop" for _, kind in jobs):
+        return True
+    served = _LAST_LANE["lane"][1]
+    for unit, kind in jobs:
+        if kind in ("restart", "try-restart") and served:
+            nxt = revision_in(unit_start_texts(unit))
+            if nxt and nxt != served:
+                return True
+    return False
+
+
+def with_scripts(text):
+    """A command and the scripts it names, their comments left out: what a lane's engine runs ([] for no command)."""
+    if not text:
+        return []
+    found = [text]
+    for script in re.findall(r"(/\S+\.sh)\b", text):
+        try:
+            with open(script, encoding="utf-8") as f:
+                found.append("\n".join(ln for ln in f.read().splitlines() if not ln.lstrip().startswith("#")))
+        except OSError:
+            pass
+    return found
+
+
+def unit_start_texts(unit):
+    """What a unit's next start runs: its ExecStart and the scripts it names ([] when systemd does not say, or for a unit
+    that is no lane's: PROXY_HOLD_UNITS names them)."""
+    if unit not in HOLD_UNITS:
+        return []
+    try:
+        out = subprocess.run(["systemctl", "show", unit, "-p", "ExecStart", "--value"],
+                             capture_output=True, text=True, timeout=3).stdout.strip()
+    except Exception:
+        return []
+    return with_scripts(out)
 
 
 def engine_gone_reason():
@@ -907,9 +945,22 @@ def killer_note(fp, box):
             _KILLERS.popitem(last=False)
 
 
+def killers_live():
+    """True while a binding is kept: the ones that ended leave first, from the front, the oldest noted (each note moves
+    its own to the end). Only a note purged them, and after one binding a box alone hashed every body for good (the
+    delta's 3rd review, 2026-11-04)."""
+    if not _KILLERS:
+        return False
+    now = time.monotonic()
+    with _KILLERS_LOCK:
+        while _KILLERS and next(iter(_KILLERS.values()))[1] <= now:
+            _KILLERS.popitem(last=False)
+        return bool(_KILLERS)
+
+
 def killer_box(fp):
-    """The box an engine closed on the request of fingerprint fp moments ago, or None."""
-    if not _KILLERS or not fp:
+    """The box an engine closed on the request of fingerprint fp moments ago ("" for this box), or None."""
+    if not fp or not killers_live():
         return None
     now = time.monotonic()
     with _KILLERS_LOCK:
@@ -4801,27 +4852,21 @@ def unit_texts():
                             cmd = " ".join(f.read().decode("utf-8", "replace").split("\0")).strip()
                     except OSError:
                         cmd = ""
-                if not cmd and state == "active":
-                    # its process between fork and exec (its command empty for an instant), or gone: read again at the
-                    # next request, never kept 10 s (158 reads in 300 right after a start, the delta's review, 2026-11-04)
-                    sure = False
-                    break
-                # an engine that runs: what it was started with; a start under way (ExecStartPre, the wait before a
-                # restart): what its unit starts, read as it was before v1.43.0 (the delta's review, 2026-11-04)
-                found = [cmd or props.get("ExecStart", "")]
-                for script in re.findall(r"(/\S+\.sh)\b", found[0]):
-                    try:
-                        with open(script, encoding="utf-8") as f:
-                            found.append("\n".join(ln for ln in f.read().splitlines()
-                                                   if not ln.lstrip().startswith("#")))
-                    except OSError:
-                        pass
+                found = with_scripts(cmd)
+                if not names_in(found):
+                    # an engine that runs names its model in what it was started with. Its process between fork and
+                    # exec (an empty command: 158 reads in 300 right after a start), systemd-executor before the exec
+                    # (systemd 255), or gone names none: unsure, read again a second on, never kept 10 s (the delta's
+                    # reviews, 2026-11-04). A start under way (ExecStartPre, the wait before a restart) and that instant
+                    # read what the unit starts, as before v1.43.0
+                    sure = sure and state != "active"
+                    found = with_scripts(props.get("ExecStart", ""))
+                found = found or None
                 break
         except Exception:
             found = None
         _UNIT_FACTS["states"] = tuple(states)
-        if sure:
-            _UNIT_FACTS.update(ts=now, texts=found)
+        _UNIT_FACTS.update(ts=now if sure else now - 9, texts=found)
         return found
 
 
@@ -4859,12 +4904,24 @@ def lane_away():
     engine says (a start under way: an update restarts this proxy and an engine of minutes of loading together), else,
     while a text lane is on its way back (a crash), what this proxy saw it serve last, else nothing. A client of the
     stock 27B got the uncensored one from the other box while this box restarted (found in review, 2026-11-04)."""
+    _UNIT_FACTS["ts"] = -1e9                # read now: its engine away, a lane read 10 s ago may be the one leaving
     texts = unit_texts()
     names = names_in(texts) if texts else frozenset()
     if names:
         return names, (revision_in(texts) or PAIR_CHECKPOINT)
+    jobs = unit_jobs()
+    if any(kind == "stop" for _, kind in jobs):
+        # its lane stopped by order (a Load of another lane, the Stop button): the model it served is not this box's any
+        # more, and goes to the other box whatever its checkpoint; it was held through the next lane's whole boot, then
+        # refused (the delta's 3rd review, 2026-11-04)
+        return frozenset(), None
+    for unit, kind in jobs:
+        if kind in ("restart", "try-restart"):
+            nxt = unit_start_texts(unit)
+            if names_in(nxt):
+                return names_in(nxt), (revision_in(nxt) or PAIR_CHECKPOINT)     # what its restart brings back
     if HOLD_UNITS and not any(s in ("active", "activating", "deactivating", "reloading")
-                              for s in _UNIT_FACTS.get("states") or ()) and not text_lane_coming():
+                              for s in _UNIT_FACTS.get("states") or ()) and not any(kind in _BACK_JOBS for _, kind in jobs):
         # no text lane up, starting, stopping or on its way back: this box serves images, video or no lane now, and the
         # model its lane served before is the other box's alone, sent there whatever its checkpoint (found re-reading
         # this rule, 2026-11-04: a box switched to images refused its clients the other box's 27B). A unit that stops
@@ -6936,12 +6993,12 @@ class H(BaseHTTPRequestHandler):
         # with its new model (found in review, 2026-11-02). A pair.json that names no peer is a box alone
         # (found in review, 2026-11-02: `pair.py name` alone made a lane name this box does not serve a 404)
         if (not (conf and conf["peers"]) and not hop) or route not in PAIR_ROUTES or not body:
-            if _KILLERS and not hop and route in PAIR_ROUTES and body:
+            if not hop and route in PAIR_ROUTES and body and killers_live():
                 # the pair dissolved since: a request bound to the box that left goes nowhere for its time, never to
-                # this box's engine (decision 1019; it ran here, found in the delta's review, 2026-11-04)
-                self._killer_fp = body_fingerprint(body, route)
-                bound = killer_box(self._killer_fp)
-                if bound not in (None, "", (conf or {}).get("name") or ""):
+                # this box's engine (decision 1019; it ran here, found in the delta's review, 2026-11-04). Its
+                # fingerprint stays here: a box alone binds nothing
+                bound = killer_box(body_fingerprint(body, route))
+                if bound not in (None, ""):
                     return self._bound_refused(f"box {bound}, whose engine or connection closed on this request moments "
                                                f"ago, is no longer in this pair", conf, None)
             return False
@@ -6959,17 +7016,22 @@ class H(BaseHTTPRequestHandler):
             local = None
         if local is not None:
             # what this box's clients get here, kept for while its engine is away (lane_away)
-            rev = unit_revision()
-            if rev:                     # a unit with no process to read said none: the lane seen last stays
-                _LAST_LANE["lane"] = (frozenset(local), rev)
+            rev, names_now = unit_revision(), frozenset(local)
+            if rev:
+                _LAST_LANE["lane"] = (names_now, rev)
+            elif names_now != _LAST_LANE["lane"][0]:
+                # another lane, which says no checkpoint (a custom model): its names, so its clients' requests are its
+                # own while its engine is away (the delta's 3rd review, 2026-11-04). The same lane saying none for a
+                # moment (no process to read) keeps the checkpoint it had
+                _LAST_LANE["lane"] = (names_now, None)
         if not hop:
             self._killer_fp = body_fingerprint(body, route)
             bound = killer_box(self._killer_fp)
             if bound is not None:
                 peer = next((p for p in conf["peers"] if p["name"] == bound), None)
-                if peer is None and bound not in ("", conf.get("name") or ""):
+                if peer is None and bound != "":
                     # bound to a box that left the pair since: served here, it was the fallback 1019 rules out (found
-                    # in review, 2026-11-04). "" is this box, alone when it noted it (killer_note's box alone)
+                    # in review, 2026-11-04). "" is this box (_killed_here)
                     return self._bound_refused(f"box {bound}, whose engine or connection closed on this request moments "
                                                f"ago, is no longer in this pair", conf, local)
                 if peer is None:
@@ -7227,8 +7289,10 @@ class H(BaseHTTPRequestHandler):
         if not fp or PAIR_KILLER_KEEP_S <= 0 or getattr(self, "_stop_why", None):
             return                          # nothing to note (a hop, a box alone), or stopped by this proxy (Abort all, the floor)
         if unit_stopping_by_order():
-            return                          # stopped by an order to its unit (decision 1030)
-        killer_note(fp, (pair_conf() or {}).get("name") or "")
+            return                          # stopped by an order to its unit (decisions 1030 and 1041)
+        # "" is this box, whatever its pair.json says: its name, read here, made a binding of its own a box that left
+        # the pair once pair.json was gone (the delta's 3rd review, 2026-11-04)
+        killer_note(fp, "")
 
     def _pair_lost(self, pick, name, conf, local):
         """A 503 for a request box pick had whole and closed the connection on with no answer: it is not run here
