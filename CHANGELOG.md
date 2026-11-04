@@ -5,54 +5,66 @@
 **Two boxes that serve one model share its requests.** Until now, the box a request was sent to served every model it
 loads itself, and the other box of the pair got none of its requests. When both boxes load the same lane, they now
 share them, from the same checkpoint only (decision 1018), and the box a request was sent to decides where it goes
-(decisions 996 to 998). A conversation stays on its box: an agent sends its whole conversation again at each turn, and
-the box that served the turn before holds all of it in its prefix cache but the new turn, where the other box would
-compute all of it again (100,000 tokens take tens of seconds on the 27B). So the box keeps fingerprints of the first 4
-KiB, 8 KiB, 16 KiB and so on of what it sent each box in the last 10 minutes, and a request goes to the box it shares
-its longest one with, when that covers 30 % of it, the `cache_threshold` of SGLang's own router, or 32 KiB, for Claude
-Code, which writes its system prompt and its tools after the conversation. A new conversation goes to the box with the
-fewest requests in flight, the entry when they tie. When the box a conversation is on runs more requests than the
-other by more than half of those its lane runs at once (4 on a 128 GB box's 27B, which runs 8, and 8 on a lane that
-runs 16), and more than 1.5 times as many, its next turn goes to the other box: the thresholds of SGLang's router, 64
-and 1.5, brought to each lane (decision 1014). Each box says in the list it gives the other how many generations it
-runs, how many of them the other box sent it, and how many its lane runs at once, read in its unit, and the entry adds
-its requests in flight there: eight new conversations sent at once went 4 to each box, three times in three.
+(decisions 996 to 998). Each box says the checkpoint its engine serves, read in the command it was started with, and a
+request sent on carries the entry's: the other box refuses it if it serves another one now, and the entry serves it
+itself. A conversation stays on its box: an agent sends its whole conversation again at each turn, and the box that
+served the turn before holds all of it in its prefix cache but the new turn, where the other box would compute all of
+it again (100,000 tokens take tens of seconds on the 27B). So the box keeps fingerprints of the first 4 KiB, 8 KiB, 16
+KiB and so on of what it sent each box in the last 10 minutes, and a request goes to the box it shares its longest one
+with, when that covers 30 % of it, the `cache_threshold` of SGLang's own router, or 32 KiB, for Claude Code, which
+writes its system prompt and its tools after the conversation. A new conversation goes to the box with the fewest
+requests in flight, the entry when they tie. When the box a conversation is on runs more requests than the other by
+more than half of those its lane runs at once (4 on a 128 GB box's 27B, which runs 8, and 8 on a lane that runs 16),
+and more than 1.5 times as many, its next turn goes to the other box: the thresholds of SGLang's router, 64 and 1.5,
+brought to each lane (decision 1014). Each box says in the list it gives the other how many generations it runs, how
+many of them the other box sent it, and how many its lane runs at once, read in the command of its engine, and the
+entry adds its requests in flight there: eight new conversations sent at once went 4 to each box, three times in
+three.
 
 **A box that cannot serve a request hands it on.** When the other box cannot be reached (it gets 3 s to take the
-connection), or answers 503 (its engine away, or its memory floor) or 529 (the floor, in the Anthropic dialect),
-before a byte of its answer went out, the entry serves the request itself, and that box gets no request of a model
-both serve for 30 s. When the other box had the request and closed the connection with no answer (an Abort all there,
-its floor, a restart, its power), the client gets a 503 and the request runs nowhere else (decision 1017). A prompt
-too long for the other box's pool (a 64 GB box paired with a 128 GB one) is served by the entry, with no pause. What
-the entry cannot serve goes to the other box at once: a request its memory floor refuses, a prompt too long for its
-pool, a long prompt its warming engine cannot measure yet, or one its engine does not answer at the first try
-(connection refused, or the 502, 503 or 504 of a lane that starts or stops), instead of a wait for the lane. A request
-whose answer began is never sent again, nor one an engine closed the connection on, which could take the other engine
-down too, and for 10 minutes such a request, sent again by its client, goes to that box or nowhere (decision 1019).
-The tile of each cockpit says what it sent the other box, and why, even while that box does not answer. docs/pair.md
-says it all.
+connection), refuses the entry's certificate (it was paired again without the entry), or answers 503 (its engine away,
+or its memory floor) or 529 (the floor, in the Anthropic dialect), before a byte of its answer went out, the entry
+serves the request itself, and that box gets no request of a model both serve for 30 s. When the other box had the
+request and closed the connection with no answer (an Abort all there, its floor, a restart, its power), the client
+gets a 503 and the request runs nowhere else (decision 1017). A prompt too long for the other box's pool (a 64 GB box
+paired with a 128 GB one) is served by the entry, with no pause. What the entry cannot serve goes to the other box at
+once: a request its memory floor refuses, a prompt too long for its pool, a long prompt its warming engine cannot
+measure yet, or one its engine does not answer at the first try (connection refused, or the 502, 503 or 504 of a lane
+that starts or stops), instead of a wait for the lane. A request whose answer began is never sent again, nor one an
+engine closed the connection on or died with (vLLM answers those with a 500), which could take the other engine down
+too, and for 10 minutes such a request, sent again by its client, goes to that box or nowhere (decision 1019). A stop
+or a restart of the lane's unit (a Load, an update, switch-model.sh), an Abort all and the memory floor end requests
+by order, which bind nothing. The tile of each cockpit says what it sent the other box, and why, even while that box
+does not answer. docs/pair.md says it all.
 
 **Reviews and tests.** An independent reviewer read the sharing, then a code review and three verifiers read it again
 (decision 1005), and every finding was checked in the code. What they found and this release fixes: the other box's
 memory floor said its 529 to every Claude Code request for minutes while the entry idled, and the entry's own floor,
 too long prompts and warming engine refused requests the other box could serve. A prompt too long for the other box
-reached the client as a 400, and a 503 whose body was cut as a 502. A box that switched lanes got every request for
-5 s and said 409 to each, and only lists read in the last 15 s shared anything (a burst after a pause stayed on one
-box). A box of v1.42 that says nothing of its load got requests while its own clients filled it. The load of the
-other box counted this box's requests twice. Claude Code's conversations kept their box only past 120 to 250 KiB. A
-conversation the entry served while the other box was away went back to that box and its empty cache, and a box
-paired again kept what the sharing knew of the box before. A request that took one engine down could be sent to the
-other, a box gone without a reset cost every shared request 10 s, and a request no box took over was left out of
-this box's stop and of its load. The tile counted a request that came back as sent there, a prompt too long as a
-box that did not answer, and showed nothing while the other box did not answer, when the counts matter most. The
-threshold of 4 requests ahead, made for the lanes that run 8 at once, moved a conversation off a lane of 16 or 24
-with room to spare, its prefix computed again elsewhere. Two boxes that served two checkpoints of one lane under its
-name (switch-model.sh's stock and uncensored 27B) shared them as one model. The
-paired run with the real clients found one more: a token count was shared as a generation is (the Anthropic SDK's
-went to the other box), a hop and a load for a request that generates nothing. A count is answered by the box it
-was sent to now.
-tests/test_proxy_pair.py has two boxes that serve the 27B from their start, each rule its test, and each test fails
-on v1.42.1 or on the commit before its fix.
+reached the client as a 400, and a 503 whose body was cut as a 502. A box that switched lanes got every request for 5
+s and said 409 to each, and only lists read in the last 15 s shared anything (a burst after a pause stayed on one
+box). A box of v1.42 that says nothing of its load got requests while its own clients filled it. The load of the other
+box counted this box's requests twice. Claude Code's conversations kept their box only past 120 to 250 KiB. A
+conversation the entry served while the other box was away went back to that box and its empty cache, and a box paired
+again kept what the sharing knew of the box before. A request that took one engine down could be sent to the other, a
+box gone without a reset cost every shared request 10 s, and a request no box took over was left out of this box's
+stop and of its load. The tile counted a request that came back as sent there, a prompt too long as a box that did not
+answer, and showed nothing while the other box did not answer, when the counts matter most. The threshold of 4
+requests ahead, made for the lanes that run 8 at once, moved a conversation off a lane of 16 or 24 with room to spare,
+its prefix computed again elsewhere. Two boxes that served two checkpoints of one lane under its name
+(switch-model.sh's stock and uncensored 27B) shared them as one model. The paired run with the real clients found one
+more: a token count was shared as a generation is (the Anthropic SDK's went to the other box), a hop and a load for a
+request that generates nothing. A count is answered by the box it was sent to now. The final review, a code review at
+its highest level and a verifier (decision 1021), found more, fixed here too: the full CI was red (three outcomes
+missing from the cockpit's table). A request bound to the other box got no answer at all once that box served another
+model, and the binding missed a request this proxy rewrites, an engine that died during its answer, a death vLLM
+answers with a 500, and a box that left the pair, while a stop by order bound every request in flight for 10 minutes.
+A box said the checkpoint its unit names for its next start, which switch-model.sh rewrites without a restart, an
+entry restarted with its engine (an update) sent the 27B's clients to the other box whatever its checkpoint, and a box
+that switched checkpoints under the same name got shared requests until its list was read again. A box that no longer
+knows the entry's certificate made a request look lost, and a client that left paused a box that had taken its
+request. tests/test_proxy_pair.py has two boxes that serve the 27B from their start, each rule its test, and each test
+fails on v1.42.1 or on the commit before its fix.
 
 **What an update does.** The proxy (v6.52) and the cockpit restart. No engine, no lane and no unit file changes. A
 box without a pair works as before, and so does a pair that serves two models, but for one case: a request the other
