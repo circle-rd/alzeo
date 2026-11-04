@@ -2300,31 +2300,64 @@ def scheduler_alive(container: str):
     return any(n.startswith("sglang::schedul") for n in names)
 
 
-# Decision 1049 (2026-11-04): the restarts this cockpit makes to recover an engine are said to the proxy, which reads
-# this file (keepalive-proxy.py, unit_recovering)
+# Decisions 1049 and 1055 (2026-11-04): the restarts and stops this cockpit makes to recover an engine are said to the
+# proxy, which reads this file (keepalive-proxy.py, recovery_runs)
 RECOVERY_FILE = CONFIG_DIR / "recovery-restarts.json"
 
 
-def mark_recovery(unit: str, invocation: str, why: str) -> None:
-    """Say to the proxy that this cockpit restarts unit to recover its engine (autoheal, zombie), and which run: its
-    InvocationID. The proxy then binds the request that may have wedged it (decision 1019) even when the restart loads a
-    checkpoint an update or a switch staged ("next start loads"), which it took for the Load of that checkpoint, an
-    order that binds nothing (decision 1041; the 4th review of v1.43.0, 2026-11-04). The run named, a later Load of the
-    same unit is never taken for this recovery. A file that cannot be written says nothing."""
-    if not invocation:
-        return
+def _recovery_marks() -> dict:
     try:
         marks = json.loads(RECOVERY_FILE.read_text())
-        marks = marks if isinstance(marks, dict) else {}
     except (OSError, ValueError):
-        marks = {}
-    marks[unit] = {"invocation": invocation, "at": round(time.time(), 3), "why": why}
+        return {}
+    return marks if isinstance(marks, dict) else {}
+
+
+def _write_recovery_marks(marks: dict) -> None:
     tmp = RECOVERY_FILE.with_name(RECOVERY_FILE.name + ".tmp")
     try:
         tmp.write_text(json.dumps(marks))
         os.replace(tmp, RECOVERY_FILE)
     except OSError:
         pass
+
+
+def mark_recovery(unit: str, invocation: str, why: str) -> None:
+    """Say to the proxy, before the action goes, that this cockpit restarts or stops unit to recover its engine (the
+    autoheal, the zombie restart, an operator acting on an engine shown wedged or zombie), which run (its InvocationID)
+    and when. The proxy then binds the request that may have wedged it (decision 1019) even when the restart loads a
+    checkpoint an update or a switch staged ("next start loads"), which it took for the Load of that checkpoint, an
+    order that binds nothing (decision 1041; the 4th review of v1.43.0, 2026-11-04). The run named, a later Load of the
+    same unit is never taken for this recovery, and the proxy takes no mark older than 10 minutes. A file that cannot be
+    written says nothing."""
+    if not invocation:
+        return
+    marks = _recovery_marks()
+    marks[unit] = {"invocation": invocation, "at": round(time.time(), 3), "why": why}
+    _write_recovery_marks(marks)
+
+
+def forget_recovery(unit: str, invocation: str) -> None:
+    """The mark of a recovery that did not happen (its action refused or failed to start): left, it made a later Load of
+    the same run a recovery, which binds what it ends (the 5th review of v1.43.0, 2026-11-04)."""
+    marks = _recovery_marks()
+    if (marks.get(unit) or {}).get("invocation") == invocation:
+        del marks[unit]
+        _write_recovery_marks(marks)
+
+
+def unit_invocation(unit: str) -> str:
+    """The unit's run now, its InvocationID, or "" when systemd does not say."""
+    raw = run(["systemctl", "show", unit, "-p", "InvocationID"])
+    return dict(ln.split("=", 1) for ln in raw.splitlines() if "=" in ln).get("InvocationID", "")
+
+
+def shown_stuck(unit: str) -> bool:
+    """True when this cockpit shows the engine of unit wedged (health answers, nothing generates) or zombie (no
+    scheduler): the page tells the operator to stop it and start it again."""
+    with LIFE_LOCK:
+        state = (LIFE.get("states") or {}).get(unit)
+    return state == "wedged" or ZOMBIE_SINCE.get(unit) is not None
 
 
 @guard
@@ -2574,8 +2607,12 @@ def collect_lifecycle():
                     add_event("autoheal", f"{unit} wedged (health ok, {CANARY['fails']} "
                               f"probes failed, {num_reqs} req): restarting it"
                               + (" (dry run: not really)" if DRY_RUN else ""))
-                    mark_recovery(unit, d.get("InvocationID", ""), "autoheal")     # decision 1049
+                    inv = d.get("InvocationID", "")
+                    if not DRY_RUN:
+                        mark_recovery(unit, inv, "autoheal")    # decision 1049, before the restart goes
                     code, out = start_action("unit", {"verb": "restart", "unit": unit}, origin="autoheal")
+                    if code != 202:
+                        forget_recovery(unit, inv)              # no restart (5th review)
                     audit({"kind": "autoheal", "unit": unit, "code": code, "out": out})
             else:
                 WEDGED_SINCE.pop(unit, None)
@@ -2599,8 +2636,12 @@ def collect_lifecycle():
                     LAST_ZOMBIE_RESTART[unit] = time.time()
                     add_event("zombie", f"{unit}: restarting it (no scheduler for {ZOMBIE_AFTER_S:.0f} s)"
                               + (" (dry run: not really)" if DRY_RUN else ""))
-                    mark_recovery(unit, d.get("InvocationID", ""), "zombie")       # decision 1049
+                    inv = d.get("InvocationID", "")
+                    if not DRY_RUN:
+                        mark_recovery(unit, inv, "zombie")      # decision 1049, before the restart goes
                     code, out = start_action("unit", {"verb": "restart", "unit": unit}, origin="zombie")
+                    if code != 202:
+                        forget_recovery(unit, inv)              # no restart (5th review)
                     audit({"kind": "zombie_restart", "unit": unit, "code": code, "out": out})
             else:
                 ZOMBIE_SINCE.pop(unit, None)
@@ -5155,6 +5196,24 @@ JOB_FUNCS = {"flush_cache": job_flush_cache, "abort_all": job_abort_all,
 
 
 def start_action(name: str, params: dict, origin: str = "ui") -> tuple[int, dict]:
+    """_start_action, and decision 1055 (2026-11-04): the operator's stop or restart of an engine this cockpit shows
+    wedged or zombie recovers it, as the autoheal's restart does (1049). The page tells the operator to stop such an
+    engine and start it again, and a stop was an order to the proxy, which bound nothing: the request that wedged it went
+    to the other box of a pair, where it could wedge that engine too (the 5th review of v1.43.0). Marked before the
+    action goes, the mark removed when it does not start."""
+    unit, inv = (params.get("unit") if isinstance(params, dict) else None), ""
+    if (name == "unit" and origin not in ("autoheal", "zombie") and not DRY_RUN and isinstance(unit, str)
+            and unit in SERVING_UNITS
+            and params.get("verb") in ("stop", "restart") and shown_stuck(unit)):
+        inv = unit_invocation(unit)
+        mark_recovery(unit, inv, "operator")
+    code, out = _start_action(name, params, origin)
+    if inv and code != 202:
+        forget_recovery(unit, inv)
+    return code, out
+
+
+def _start_action(name: str, params: dict, origin: str = "ui") -> tuple[int, dict]:
     spec = ACTIONS.get(name)
     if not spec:
         return 404, {"error": "unknown action"}
