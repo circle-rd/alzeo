@@ -503,6 +503,7 @@ class FloorStop(unittest.TestCase):
         self.assertIn(b'"object"', head)
         status, out, _ = self._stop()
         self.assertEqual((status, out["stopped"]), (200, 0), out)
+        self.assertEqual(out.get("finishing"), 1, "the answer left to go out was not said")   # the 7th review
         rest = self._read(s)
         s.close()
         got = head + rest

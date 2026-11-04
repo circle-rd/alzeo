@@ -639,6 +639,7 @@ def unit_stopping_by_order():
 # whatever checkpoint it loads.
 RECOVERY_FILE = os.path.expanduser(os.environ.get("QWEN38_RECOVERY_FILE") or "~/.config/qwen38/recovery-restarts.json")
 RECOVERY_MARK_S = 600.0                 # a mark older than this is not the recovery under way
+RECOVERY_START_S = 120.0                # its unit's state changes this soon after the mark, or it is another restart's
 
 
 def recovery_runs():
@@ -658,11 +659,17 @@ def recovery_runs():
         if unit not in HOLD_UNITS or not isinstance(at, (int, float)) or not 0 <= now - at < RECOVERY_MARK_S:
             continue
         try:
-            run = subprocess.run(["systemctl", "show", unit, "-p", "InvocationID", "--value"],
-                                 capture_output=True, text=True, timeout=3).stdout.strip()
+            out = subprocess.run(["systemctl", "show", unit, "-p", "InvocationID", "-p", "StateChangeTimestamp",
+                                  "--timestamp=unix"], capture_output=True, text=True, timeout=3).stdout
+            props = dict(ln.split("=", 1) for ln in out.splitlines() if "=" in ln)
+            changed = float(props.get("StateChangeTimestamp", "").lstrip("@"))
         except Exception:
             continue
-        if run and mark.get("invocation") == run:
+        # the restart it was written for: the unit's state changed after the mark, within RECOVERY_START_S. A mark the
+        # cockpit left behind (stopped between the mark and the restart, a removal that failed) counted for the next
+        # restart of that run, and the Load of another checkpoint then bound what it ended (the 7th review of v1.43.0)
+        if props.get("InvocationID") and mark.get("invocation") == props["InvocationID"] \
+                and at - 2 <= changed <= at + RECOVERY_START_S:
             found[unit] = True
     return found
 
@@ -984,6 +991,16 @@ def killer_note(fp, box):
             _KILLERS.popitem(last=False)
 
 
+def killer_forget(fp, box):
+    """The binding of fingerprint fp to box undone: an order said after the death that made it (decisions 1054 and 1061),
+    an order a clean end showed after a death here (_relay_inner)."""
+    if not fp:
+        return
+    with _KILLERS_LOCK:
+        if (_KILLERS.get(fp) or (None,))[0] == box:
+            del _KILLERS[fp]
+
+
 def peer_may_serve(conf, name):
     """True when a box of the pair may serve name: its list names it now; its read failed and its last good list named
     it, for PAIR_KNOWN_WAIT_S; or it was never read, for the PAIR_FIRST_READ_S after pair.json was read. Only the
@@ -993,11 +1010,7 @@ def peer_may_serve(conf, name):
     lane's answer after 30 s (decision 986; the 4th review of v1.43.0, 2026-11-04)."""
     for p in conf.get("peers") or ():
         row = _PAIR_MODELS.get(p["name"])
-        if row is None:
-            if time.monotonic() - _PAIR["loaded"] < PAIR_FIRST_READ_S:
-                return True                 # never read since pair.json was: it may
-            continue
-        if name in (row.get("models") or ()) or peer_row_may_serve(row, name):
+        if name in ((row or {}).get("models") or ()) or peer_row_may_serve(row, name):
             return True
     return False
 
@@ -1007,10 +1020,12 @@ def peer_row_may_serve(row, name):
     named it, for PAIR_KNOWN_WAIT_S, or it never read well, for the PAIR_FIRST_READ_S after pair.json was read. A row
     read well serves what it lists (a 409 "moved" leaves no error). The one rule of peer_may_serve and
     _pair_served_nowhere: two copies of it drifted, and one kept its last list 15 minutes (the 5th and 6th reviews of
-    v1.43.0, 2026-11-04)."""
+    v1.43.0, 2026-11-04). A row never read since pair.json was (None) may too, for PAIR_FIRST_READ_S (the 7th review)."""
+    now = time.monotonic()
+    if row is None:
+        return now - _PAIR["loaded"] < PAIR_FIRST_READ_S
     if not row.get("error"):
         return False
-    now = time.monotonic()
     if row.get("known") is None:
         return now - _PAIR["loaded"] < PAIR_FIRST_READ_S
     return name in row["known"] and now - (row.get("known_ts") or 0) < PAIR_KNOWN_WAIT_S
@@ -1024,6 +1039,23 @@ def refusal_serves(data, name):
         return any(isinstance(v, list) and name in v for v in served.values())
     except Exception:
         return False
+
+
+def ndjson_death(lines):
+    """True when a whole line of an NDJSON stream is an error that names an engine's death (vLLM's EngineCore, or this
+    proxy's HOP_CLOSED) at its top level. Matched anywhere in the bytes, an Ollama tool call's arguments, a raw object,
+    could carry the words (the 7th review of v1.43.0, 2026-11-04)."""
+    for line in lines.split(b"\n"):
+        if b'"error"' not in line or (b"EngineCore" not in line and HOP_CLOSED.encode() not in line):
+            continue
+        try:
+            err = json.loads(line).get("error")
+        except Exception:
+            continue
+        msg = err.get("message") if isinstance(err, dict) else err
+        if isinstance(msg, str) and ("EngineCore encountered an issue." in msg or HOP_CLOSED in msg):
+            return True
+    return False
 
 
 def whole_lines(part, chunk):
@@ -3511,8 +3543,10 @@ PAIR_SHARE_CONNECT_S = PAIR_SHARE_CONNECT_S if math.isfinite(PAIR_SHARE_CONNECT_
 # silence is a box that went (a power cut sends no FIN), and the client's stream is cut instead of waiting
 # MAX_SILENCE_S with nothing (found in review, 2026-11-02)
 PAIR_STREAM_SILENCE_S = float(os.environ.get("PAIR_STREAM_SILENCE_S") or 0) or max(4 * KEEPALIVE_S, 60.0)
-# Decision 1054 (2026-11-04): how long a request whose client left at a death the other box relayed waits for an order the
-# other box says after it, before it is bound (1019)
+# The other box serves another model now (409), or the same one from another checkpoint (decision 1018)
+PAIR_MOVED = ("moved", "moved checkpoint")
+# Decisions 1054 and 1061 (2026-11-04): how long the other box is read, once a request's client left at a death it
+# relayed, for an order it says after it, which undoes the binding the request got at once (1019)
 PAIR_ORDER_GRACE_S = float(os.environ.get("PAIR_ORDER_GRACE_S") or 5)
 PAIR_ORDER_GRACE_S = PAIR_ORDER_GRACE_S if math.isfinite(PAIR_ORDER_GRACE_S) and PAIR_ORDER_GRACE_S >= 0 else 5.0
 PAIR_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,39}")
@@ -4822,13 +4856,14 @@ def stop_generations(why, floor_gib=None, hold_s=None, floor=True):
             gib = 0.0 if MEM_FLOOR_GIB <= 0 else (MEM_FLOOR_GIB if floor_gib is None else floor_gib)
             _FLOOR.update(at=now, until=now + hold if hold > 0 else None, why=why[:200], floor_gib=gib,
                           episode=True)
-    # Each stopped generation is marked before the engine hears of it, so none relays the end its
-    # engine gives an aborted generation; then SGLang's abort_all goes at once, and only then the
-    # aborts by rid of the requests still waiting for their first byte. They came first before, one
-    # after the other, each up to ABORT_TIMEOUT_S on an engine the memory floor finds slow: abort_all
-    # could leave up to the cockpit's 8 s fallback later than v1.40.2 sent it (verification, 2026-10-26).
-    for h in targets:
-        h._mark_stopped(why, floor)
+        # Each stopped generation is marked before the engine hears of it, so none relays the end its
+        # engine gives an aborted generation; then SGLang's abort_all goes at once, and only then the
+        # aborts by rid of the requests still waiting for their first byte. They came first before, one
+        # after the other, each up to ABORT_TIMEOUT_S on an engine the memory floor finds slow: abort_all
+        # could leave up to the cockpit's 8 s fallback later than v1.40.2 sent it (verification, 2026-10-26).
+        # Marked under _GEN_LOCK, as an answer relayed whole is taken out of reach (_take_whole_answer)
+        for h in targets:
+            h._mark_stopped(why, floor)
     # A vLLM request still waiting for its first byte closes now: closing is its abort, with no round
     # trip, and it waited for abort_all's 404 before, up to ABORT_TIMEOUT_S of prefill more on an engine
     # under the very pressure the floor fights (code review, 2026-10-26).
@@ -6156,6 +6191,18 @@ class H(BaseHTTPRequestHandler):
         self._abort_upstream(self._stop_label())
         self._shut_upstream()
 
+    def _take_whole_answer(self, resp):
+        """A finished answer that is not a stream (not SSE, not NDJSON) is no stop target from the moment the engine gives
+        it (stop_generations): set under _GEN_LOCK, where the stop marks its targets, so a stop either marked it before
+        or never will. Set at its relay, the keeper's join left a window where a floor stop cut a finished answer and
+        started its episode, and a stop on vLLM shut its upstream mid-body (the 7th review of v1.43.0, 2026-11-04)."""
+        ctype = (resp.headers.get("Content-Type") or "") if resp is not None else ""
+        if resp is None or "text/event-stream" in ctype or "application/x-ndjson" in ctype:
+            return
+        with _GEN_LOCK:
+            if not getattr(self, "_stop_why", None):
+                self._relaying_whole = True
+
     def _say_ended_by_order(self):
         """Decision 1031: this request, which the other box of a pair sent on, ends here by order; that box is told
         before the cut, and binds nothing. A 503 with PAIR_ENDED when no byte of an answer went out, the stream's own
@@ -6167,7 +6214,9 @@ class H(BaseHTTPRequestHandler):
             if getattr(self, "_held_sse", False) or getattr(self, "_out_sse", False):
                 self._chunk(HOP_ENDED_ANTHROPIC if self.path.startswith("/v1/messages") else HOP_ENDED_OPENAI)
             elif getattr(self, "_out_ndjson", False):
-                self._chunk(HOP_ENDED_NDJSON)
+                # a line of its own: after a line over 64 KiB relayed unended, glued to it, it went unread there and the
+                # client got a broken line (the 7th review of v1.43.0, 2026-11-04)
+                self._chunk((b"\n" if getattr(self, "_nd_open", False) else b"") + HOP_ENDED_NDJSON)
             elif not getattr(self, "_out_begun", False):
                 # in the client's dialect, with Retry-After, as every 503 of the pair (the delta's 3rd review)
                 me = (pair_conf() or {}).get("name") or "the other box"
@@ -6267,10 +6316,15 @@ class H(BaseHTTPRequestHandler):
         floor = args.get("kind", "floor") != "operator"
         why = str(args.get("why") or ("memory floor" if floor else "Abort all, from the cockpit"))
         stopped, all_sent = stop_generations(why, number("floor_gib"), number("hold_s"), floor)
+        with _GEN_LOCK:
+            # answers relayed whole, left to go out: nothing generating, said so, where a stop that stopped nothing
+            # read as a failure to the cockpit (the 7th review of v1.43.0, 2026-11-04)
+            finishing = sum(1 for h in _GENERATIONS if getattr(h, "_relaying_whole", False))
         log(f"{'memory floor' if floor else 'cockpit'}: {why}: {stopped} generation(s) stopped here"
-            + (", and SGLang's abort_all sent" if all_sent else ""))
+            + (", and SGLang's abort_all sent" if all_sent else "")
+            + (f", {finishing} finished answer(s) left to go out whole" if finishing else ""))
         self._plain(200, {"Content-Type": "application/json"},
-                    json.dumps({"stopped": stopped, "abort_all": all_sent}).encode())
+                    json.dumps({"stopped": stopped, "abort_all": all_sent, "finishing": finishing}).encode())
         self._done("ok stop")
 
     def _relay(self, resp):
@@ -6583,8 +6637,6 @@ class H(BaseHTTPRequestHandler):
             cut = None
             nd = getattr(self, "_out_ndjson", False)      # the Ollama routes' NDJSON stream
             part = b""                      # its line not whole yet
-            with _GEN_LOCK:
-                self._relaying_whole = not nd   # a non-streamed answer, whole at the engine: no stop target now
             try:
                 while True:
                     # read1, as role 1 reads SSE (v6.6): read(65536) of a chunked body waited for 64 KiB or its end,
@@ -6608,6 +6660,7 @@ class H(BaseHTTPRequestHandler):
                             if run > worst: worst = run
                     try:
                         self._chunk(c)
+                        self._nd_open = nd and not c.endswith(b"\n")   # a line that never ends went out unended
                     except Exception:
                         # the client left while its answer was being relayed. The engine
                         # sends a non-streamed answer once all of it exists, so nothing is
@@ -6626,13 +6679,12 @@ class H(BaseHTTPRequestHandler):
                 if not detached:
                     try: resp.close()
                     except Exception: pass
-            if getattr(self, "_stop_why", None) and (nd or cut is not None):
+            if nd and getattr(self, "_stop_why", None):
                 # v6.47 for the Ollama routes' NDJSON: cut, never ended. SGLang ends an aborted Ollama stream with a last
                 # line, done_reason "stop", and its client took the part it got for the whole answer (the 4th review of
                 # v1.43.0). A non-streamed answer the engine had finished goes whole, as before: cut, its client asked it
-                # again of a box short of memory, and the other box of a pair bound it (the 5th review, 2026-11-04). One
-                # the stop did cut (vLLM's upstream shut, or SGLang's when abort_all failed) is a stop, never the engine's
-                # death: it was bound 10 minutes on a hop (the 6th review)
+                # again of a box short of memory, and the other box of a pair bound it (the 5th review, 2026-11-04):
+                # it is no stop target (_take_whole_answer)
                 self._cut_stopped(); return
             if cut is not None:
                 # The engine ended mid-body (it died, or dropped the socket). The answer is
@@ -6817,11 +6869,15 @@ class H(BaseHTTPRequestHandler):
             try: self._chunk(val)
             except Exception:
                 drop_upstream(); self._done("CLIENT GONE on write"); return
-        if died and self._pair_hop() and unit_stopping_by_order():
+        if died and not getattr(self, "_said_ended", False) and unit_stopping_by_order():
             # read again at the stream's clean end: vLLM ends a dead stream cleanly ([DONE]), and a stop job not seen yet
-            # at the death went unsaid, the other box binding the request 10 minutes (the 6th review of v1.43.0). Said
-            # once (_said_ended), before the end, where the other box reads it
-            self._say_ended_by_order()
+            # at the death went unsaid, the other box binding the request 10 minutes (the 6th review of v1.43.0): a hop's
+            # box is told before the end; this box's own client's request, bound at the death by the same early read
+            # (_killed_here), is unbound (the 7th review). An order said already costs no second read
+            if self._pair_hop():
+                self._say_ended_by_order()
+            else:
+                killer_forget(getattr(self, "_killer_fp", None), "")
         self._finish()
         try: resp.close()          # the pump thread already ended at EOF; without this
         except Exception: pass    # the socket waits for the refcount (or cyclic GC)
@@ -7266,11 +7322,12 @@ class H(BaseHTTPRequestHandler):
                     return self._own_key_refused(name)
                 log(f"{self._peer} pair: {bound}'s engine or connection closed on this request moments ago: "
                     f"{bound} or nowhere (decision 1019)")
-                if self._forward_peer(body, peer, name, conf, local, fallback=False,
-                                      checkpoint=mine if ours else None) == "moved":
+                moved = self._forward_peer(body, peer, name, conf, local, fallback=False,
+                                           checkpoint=mine if ours else None)
+                if moved in PAIR_MOVED:
                     # that box serves another model now: the client got no answer at all, its 409 written nowhere
                     # (found in review, 2026-11-04)
-                    self._pair_refused(bound, name, "moved", "this request goes nowhere for a while")
+                    self._pair_refused(bound, name, moved, "this request goes nowhere for a while")
                     self._bound_refused(f"box {bound}, whose engine or connection closed on this request moments ago, "
                                         f"serves another model or checkpoint now", conf, local)
                 return True
@@ -7344,7 +7401,7 @@ class H(BaseHTTPRequestHandler):
                 return True
             # counted on the tile as served there while this box's engine was away, a model both serve (996)
             if self._forward_peer(body, peer, name, conf, local, checkpoint=mine if ours else None,
-                                  count="rescued" if ours else None) != "moved":
+                                  count="rescued" if ours else None) not in PAIR_MOVED:
                 return True
             since = time.monotonic()        # the peer serves another model since its list was read
         if local is None:
@@ -7460,13 +7517,16 @@ class H(BaseHTTPRequestHandler):
                 f"both serve for {PAIR_SPREAD_COOL_S:g} s")
         elif res == "too long":
             log(f"{self._peer} pair: the prompt is too long for {pick}'s pool: {then}")
-        elif res == "moved":
-            keep = getattr(self, "_moved_keeps", False)     # another checkpoint of it: that box serves it still
+        elif res in PAIR_MOVED:
             with _PAIR_LOCK:
                 row = _PAIR_MODELS.get(pick)
-                if row:
-                    models = row["models"] if keep else tuple(m for m in row["models"] if m != name)
-                    _PAIR_MODELS[pick] = dict(row, models=models, ts=0.0)
+                if row and res == "moved checkpoint":
+                    # another checkpoint of it, which that box serves still: its name kept (peer_may_serve), its
+                    # revision dropped, which the 409 proves stale; kept, _pair_spread sent the next requests there for a
+                    # 409 each (the 7th review of v1.43.0, 2026-11-04)
+                    _PAIR_MODELS[pick] = dict(row, revision=None, ts=0.0)
+                elif row:
+                    _PAIR_MODELS[pick] = dict(row, models=tuple(m for m in row["models"] if m != name), ts=0.0)
 
     def _bound_refused(self, why, conf, local):
         """Decision 1019: a request an engine closed on moments ago that goes nowhere now: a 503 to send it again later."""
@@ -7559,7 +7619,7 @@ class H(BaseHTTPRequestHandler):
         served = pair_served_map(conf, local)
         said = "; ".join(f"{b}: {v if isinstance(v, str) else (', '.join(v) or 'nothing')}" for b, v in served.items())
         def waited_for(p):
-            return peer_row_may_serve(_PAIR_MODELS.get(p["name"]) or {}, name)
+            return peer_row_may_serve(_PAIR_MODELS.get(p["name"]), name)
         unread = [p["name"] for p in conf["peers"] if waited_for(p)]
         if unread:
             # a peer whose list cannot be read may be the box that serves it (unreachable, or its engine
@@ -7640,20 +7700,32 @@ class H(BaseHTTPRequestHandler):
         log(f"{self._peer} -> pair {peer['name']} for {name}")
         done, left = threading.Event(), threading.Event()
         self._pair_drain = False            # set once the other box relayed its engine's death (decision 1054)
+        self._pair_ordered = False          # set once it said it ended the request by order (decision 1031)
 
         def watch():
             # the caller of an answer that is not streamed yet hears nothing: when it leaves,
             # the connection to the peer is ended, and the peer's proxy drops the request there;
             # one that leaves before that connection exists has it ended as soon as it does
             # (found in review, 2026-11-02: the request was sent anyway and ran for nobody)
+            seen_gone = None
             while not done.wait(1.0):
                 if left.is_set() or self._client_left():
                     left.set()
                     if self._pair_drain:
-                        # a death relayed to it: the relay reads on for an order the other box says after it, and ends
-                        # the connection itself (decision 1054). Shut here within a second, the order was never read,
-                        # and the request bound 10 minutes in 5 runs of 5 (the 6th review of v1.43.0, 2026-11-04)
-                        continue
+                        # a death relayed to it, its client gone: bound now, its retry comes within a second (1019),
+                        # and the relay reads on up to PAIR_ORDER_GRACE_S for an order the other box says after the
+                        # death, which undoes the binding (decisions 1054 and 1061). Shut at once, the order was never
+                        # read (the 6th review); left open with no bound and unbound, a box gone silent kept it 60 s
+                        # while its retry ran on this box's engine (the 7th review of v1.43.0, 2026-11-04)
+                        if seen_gone is None:
+                            seen_gone = time.monotonic()
+                            if not self._pair_ordered:
+                                killer_note(self._killer_fp, peer["name"])
+                                if self._pair_ordered:
+                                    # said between the read and the note: the relay's undoing came first
+                                    killer_forget(self._killer_fp, peer["name"])
+                        if time.monotonic() - seen_gone < PAIR_ORDER_GRACE_S:
+                            continue
                     sock = getattr(getattr(req, "upstream", None), "kept_sock", None)
                     if sock is not None:
                         # the TCP side under TLS: SSLSocket.shutdown takes TLS off the socket under the reading
@@ -7711,12 +7783,11 @@ class H(BaseHTTPRequestHandler):
                 if e.code == 409 and b'"model_not_served"' in data:
                     # another model, or the same one from another checkpoint (1018), which it still serves: its row
                     # keeps the name then; dropped, peer_may_serve said no box served it (the 6th review of v1.43.0)
-                    self._moved_keeps = refusal_serves(data, name)
-                    if self._moved_keeps:
+                    if refusal_serves(data, name):
                         log(f"{self._peer} pair: {peer['name']} serves {name} from another checkpoint now; the lists "
                             f"are read again")
-                    else:
-                        log(f"{self._peer} pair: {peer['name']} serves another model now; the lists are read again")
+                        return "moved checkpoint"
+                    log(f"{self._peer} pair: {peer['name']} serves another model now; the lists are read again")
                     return "moved"
                 refused = _pair_refused_here(e.code, data) if fallback else None
                 if refused:
@@ -7807,21 +7878,31 @@ class H(BaseHTTPRequestHandler):
                 died = False                # its engine closed on it or died during it: no "ok pair" (review, 2026-11-04)
                 ordered = False             # it said it ends the request by order: nothing is bound (decision 1031)
                 part = b""                  # NDJSON: a line not whole yet, relayed once it is
+                recent = b""                # the last bytes read: an order split across two reads is read whole
+
+                def undone():
+                    killer_forget(self._killer_fp, peer["name"])
+                    log(f"{self._peer} pair: its client gone at a death {peer['name']} relayed, which {peer['name']} "
+                        f"said it ended by order: its binding is undone (decision 1054)")
+
+                def said_order():
+                    nonlocal ordered
+                    if not ordered:
+                        ordered = self._pair_ordered = True
+                        if died and left.is_set():
+                            undone()        # the watch bound it when its client left (decision 1061)
 
                 def gone():
                     nonlocal ordered
                     if died and not ordered:
-                        # its client gone at the death it relayed (the SDKs raise on that event): what the other box
-                        # still sends is read a moment, never relayed, for an order it says after the death (decision
-                        # 1054, the 5th review of v1.43.0, 2026-11-04); the watch leaves that connection open since
-                        ordered = self._order_after(resp, sock)
-                    if died and ordered:
-                        log(f"{self._peer} pair: its client gone at a death {peer['name']} relayed, which {peer['name']} "
-                            f"said it ended by order: nothing is bound (decision 1054)")
-                    if died and not ordered:
-                        # a death it relayed, its client gone before the stream's end: bound all the same (1019), where
-                        # the binding waited for that end (the 4th review of v1.43.0, 2026-11-04)
+                        # its client gone at the death it relayed (the SDKs raise on that event): bound at once, its retry
+                        # comes within a second (1019), then what the other box still sends is read, never relayed, up to
+                        # PAIR_ORDER_GRACE_S, and an order it says after the death undoes the binding (decisions 1054 and
+                        # 1061). Waiting to bind let the retry run on this box's engine (the 7th review of v1.43.0)
                         killer_note(self._killer_fp, peer["name"])
+                        if self._order_after(resp, sock, recent):
+                            ordered = self._pair_ordered = True
+                            undone()
                     self._done("CLIENT GONE during pair")
                 while True:
                     try:
@@ -7852,16 +7933,21 @@ class H(BaseHTTPRequestHandler):
                         if HOP_ENDED_NDJSON in b:
                             pieces = b.split(b"\n")    # its last piece: b"", or a line that never ends
                             kept = [ln for ln in pieces[:-1] if ln + b"\n" != HOP_ENDED_NDJSON]
-                            ordered = ordered or len(kept) < len(pieces) - 1
+                            if len(kept) < len(pieces) - 1:
+                                said_order()
                             b = b"".join(ln + b"\n" for ln in kept) + pieces[-1]
                         if not b:
                             continue
                     seen = tail + b
-                    if b"x_alzeo_ended" in seen and ended_by_order_in(seen):
-                        ordered = True
-                    if HOP_CLOSED_B in seen or (b"EngineCore" in seen and ENGINE_DIED_RE.search(seen)):
+                    recent = (recent + b)[-8192:]
+                    if b"x_alzeo_ended" in recent and ended_by_order_in(recent):
+                        said_order()
+                    # a death: in SSE, its error event; in NDJSON, a whole line whose top level is that error, never the
+                    # words inside an Ollama tool call's arguments, a raw object (the 7th review of v1.43.0)
+                    if (HOP_CLOSED_B in seen or (b"EngineCore" in seen and ENGINE_DIED_RE.search(seen))) if sse \
+                            else ndjson_death(b):
                         died = True         # its engine closed on it after its hold opened the stream, or vLLM's died
-                        self._pair_drain = True     # its client's leaving no longer ends the connection (1054)
+                        self._pair_drain = True     # its client's leaving binds it at once (1061)
                     if sse:                         # role 8, line by line: a read may end in the middle of one
                         lines = tail + b
                         cut = lines.rfind(b"\n")
@@ -7893,10 +7979,11 @@ class H(BaseHTTPRequestHandler):
         finally:
             done.set()
 
-    def _order_after(self, resp, sock):
+    def _order_after(self, resp, sock, recent=b""):
         """True when the other box says within PAIR_ORDER_GRACE_S that it ended this request by order (decisions 1031 and
-        1054): what it sends is read up to that or its end, never relayed (its client left)."""
-        deadline, tail = time.monotonic() + PAIR_ORDER_GRACE_S, b""
+        1054): what it sends is read up to that or its end, never relayed (its client left). recent: the bytes read just
+        before, where an order split across two reads began (the 7th review of v1.43.0)."""
+        deadline, tail = time.monotonic() + PAIR_ORDER_GRACE_S, recent[-4096:]
         try:
             while True:
                 left_s = deadline - time.monotonic()
@@ -8100,6 +8187,7 @@ class H(BaseHTTPRequestHandler):
             keeper.start()
         try:
             resp, herr, cerr = self._open(body)
+            self._take_whole_answer(resp or herr)
         finally:
             done.set()                      # headers, or an error: the generation is over
             if keeper is not None:
