@@ -176,10 +176,12 @@ def fake_engine(name, model):
         bodies: list = []           # every POST's body, parsed
         gets: list = []             # the path of every GET
         delay = 0.0
+        ordered_now = False         # "vllm_dead_late_order": its lane's stop job, seen only once it is set
         mode = "ok"                 # "down": /v1/models answers 503 (a boot) ; "cut": a stream dies mid-way ;
                                     # "busy": every POST answers 503 ; "die": every POST is read, then the
                                     # connection closed without an answer (an engine that died on it) ;
-                                    # "vllm_dead_more": a stream whose EngineCore died, more events after it
+                                    # "vllm_dead_more": a stream whose EngineCore died, more events after it ;
+                                    # "vllm_dead_late_order": its death, then ordered_now set, then a clean end
 
         def log_message(self, *a):
             pass
@@ -268,6 +270,15 @@ def fake_engine(name, model):
                 time.sleep(0.05)
                 if Handler.mode == "vllm_dead_stream":  # its EngineCore died during the stream: its error event
                     part = b"data: " + VLLM_DEAD_EVENT + b"\n\n"
+                    self.wfile.write(b"%x\r\n%s\r\n0\r\n\r\n" % (len(part), part)); self.wfile.flush()
+                    return
+                if Handler.mode == "vllm_dead_late_order":   # its death; its stop job seen after it; a clean end
+                    part = b"data: " + VLLM_DEAD_EVENT + b"\n\n"
+                    self.wfile.write(b"%x\r\n%s\r\n" % (len(part), part)); self.wfile.flush()
+                    time.sleep(0.4)
+                    Handler.ordered_now = True
+                    time.sleep(0.3)
+                    part = b"data: [DONE]\n\n"
                     self.wfile.write(b"%x\r\n%s\r\n0\r\n\r\n" % (len(part), part)); self.wfile.flush()
                     return
                 if Handler.mode == "vllm_dead_more":    # the same event, and more after it before the end
@@ -603,6 +614,7 @@ class PairFixture:
         self.E1.served[:], self.E2.served[:] = list(self.MODELS[0]), list(self.MODELS[1])
         self.E1.delay = self.E2.delay = 0.0
         self.E1.mode = self.E2.mode = "ok"
+        self.E1.ordered_now = self.E2.ordered_now = False
         if getattr(self, "mod", None) is not None:
             getattr(self.mod, "forget_unit_reads", lambda: None)()          # lane_away keeps systemd's answer a second
         # where each journal stood: a line asserted is one this test wrote, never one of an earlier test (review,
@@ -3081,9 +3093,6 @@ class TwoBoxesServeOneModel(PairFixture, unittest.TestCase):
             self.skipTest("the binding is read in this test's process")
         m = self.mod
         self.addCleanup(m._KILLERS.clear)
-        watch = m.H._client_left
-        m.H._client_left = lambda h: False                                      # its writes see it gone, not the watch
-        self.addCleanup(setattr, m.H, "_client_left", watch)
         held = self.busy(self.E1, self.port1, KEY_1, "local-only", 2, 6.0)    # this box busy: a new one goes there
         self.E2.mode = "vllm_dead_more"
         raw = json.dumps(dict(self.turns("conv-dead-left", 1)[0], stream=True)).encode()
@@ -3156,13 +3165,19 @@ class TwoBoxesServeOneModel(PairFixture, unittest.TestCase):
         # decision 1054: the other box relays its engine's death, its client leaves at once (the SDKs raise on that
         # event), and the other box says only then that it ended the request by order (its read of systemd was late):
         # bound 10 minutes at the client's leaving, where the order said otherwise (the 5th review of v1.43.0)
+        self._death_then_order(between=10, silence=1.0)
+
+    def test_a_death_relayed_then_an_order_said_after_a_silence_binds_nothing(self):
+        # the same with nothing between the death and the order: no write failed, the watch saw the client gone first,
+        # shut the connection within a second, and the request was bound 10 minutes in 5 runs of 5 (the 6th review of
+        # v1.43.0, 2026-11-04; the test before replaced the watch, which hid it)
+        self._death_then_order(between=0, silence=1.5)
+
+    def _death_then_order(self, between, silence):
         if not self.INPROC:
             self.skipTest("the binding is read in this test's process")
         m = self.mod
         self.addCleanup(m._KILLERS.clear)
-        watch = m.H._client_left
-        m.H._client_left = lambda h: False                                      # its writes see it gone, not the watch
-        self.addCleanup(setattr, m.H, "_client_left", watch)
         Base = fake_peer(["qwen3.8-27b", "marker-1054"], PEER_ANSWER)
         event = (b'data: {"id":"c","object":"chat.completion.chunk","model":"qwen3.8-27b","choices":[{"index":0,'
                  b'"delta":{"content":"from the peer "}}]}\n\n')
@@ -3182,10 +3197,10 @@ class TwoBoxesServeOneModel(PairFixture, unittest.TestCase):
                 try:
                     chunk(event)
                     chunk(b"data: " + VLLM_DEAD_EVENT + b"\n\n")
-                    for _ in range(10):                                         # the entry writes them to no client
+                    for _ in range(between):                                    # the entry writes them to no client
                         time.sleep(0.05)
                         chunk(event)
-                    time.sleep(1.0)
+                    time.sleep(silence)
                     chunk(HOP_ENDED_OPENAI)                                     # the order, said after the death
                 except OSError:
                     return
@@ -3209,11 +3224,28 @@ class TwoBoxesServeOneModel(PairFixture, unittest.TestCase):
         self.assertIn(b"EngineCore", got)
         resp.close()                                                            # it raises on that event, and leaves
         c.close()
-        self.assert_said("spark1", "said after the death that it ended the request by order")
+        self.assert_said("spark1", "said it ended by order: nothing is bound (decision 1054)")
         self.assertIsNone(m.killer_box(m.body_fingerprint(raw, "/v1/chat/completions")),
                           "an order said after the death was bound 10 minutes")
         for th in held:
             th.join(30)
+
+    def test_a_stop_job_seen_after_a_vllm_death_is_said_before_the_streams_end(self):
+        # vLLM ends a dead stream cleanly ([DONE]); its lane's stop job, not seen yet at the death, went unsaid, and the
+        # other box bound the request 10 minutes (the 6th review of v1.43.0, 2026-11-04)
+        if not self.INPROC:
+            self.skipTest("the unit's job is said in this test's process")
+        m = self.mod
+        saved = m.unit_stopping_by_order
+        m.unit_stopping_by_order = lambda: self.E1.ordered_now                  # the stop job, seen after the death
+        self.addCleanup(setattr, m, "unit_stopping_by_order", saved)
+        self.E1.mode = "vllm_dead_late_order"
+        st, out, _ = self.tls_call(self.pport1, "/v1/chat/completions",
+                                   dict(self.chat("qwen3.8-27b"), user="hop-late-order", stream=True))
+        self.assertEqual(st, 200, out[:300])
+        self.assertIn(b"EngineCore", out)
+        self.assertIn(b'"x_alzeo_ended":"order"', out, out[-400:])
+        self.assertLess(out.index(b"EngineCore"), out.index(b'"x_alzeo_ended":"order"'))
 
     def test_a_box_that_reads_no_key_holds_its_own_lane_from_the_same_checkpoint_too(self):
         # its engine away, the other box on the same checkpoint: refused at once ("cannot read its own key"), where the
@@ -3931,6 +3963,12 @@ class TwoBoxesServeOneModelInProcess(TwoBoxesServeOneModel):
 
     def test_a_death_relayed_then_an_order_said_after_it_binds_nothing(self):
         super().test_a_death_relayed_then_an_order_said_after_it_binds_nothing()
+
+    def test_a_death_relayed_then_an_order_said_after_a_silence_binds_nothing(self):
+        super().test_a_death_relayed_then_an_order_said_after_a_silence_binds_nothing()
+
+    def test_a_stop_job_seen_after_a_vllm_death_is_said_before_the_streams_end(self):
+        super().test_a_stop_job_seen_after_a_vllm_death_is_said_before_the_streams_end()
 
     def test_a_recovery_restart_to_a_staged_checkpoint_binds_what_its_engine_closed_on(self):
         super().test_a_recovery_restart_to_a_staged_checkpoint_binds_what_its_engine_closed_on()
@@ -4811,19 +4849,40 @@ class ThePairsPieces(unittest.TestCase):
         self._marked(time.time())
         self.assertFalse(m.unit_stopping_by_order(), f"the cockpit's recovery read as an order ({asked})")
 
-    def test_an_operators_stop_of_a_stuck_engine_is_no_order(self):
-        # decision 1055: the cockpit marks the operator's stop of an engine it shows wedged or zombie; a stop was always
-        # an order, and the request that wedged it went unbound to the other box (the 5th review of v1.43.0)
+    def test_a_stop_is_an_order_whatever_the_marks(self):
+        # decision 1059: the operator's stop was marked as a recovery (1055), and the Load journey's own stop of a stuck
+        # engine with it, its requests bound 10 minutes and refused (the 6th review of v1.43.0, 2026-11-04): withdrawn
         m = self.mod
         jobs = {"out": "9 qwen38-sglang.service stop running\n"}
         self._systemd_answers(jobs, {"out": "ActiveState=deactivating\nMainPID=0\n"}, {"out": ""}, {"out": "run-1\n"})
         m._LAST_LANE["lane"] = (frozenset({"qwen3.8-27b"}), "cd" * 20)
-        self.assertTrue(m.unit_stopping_by_order(), "an unmarked stop is an order (1031)")
-        self.assertEqual(m.lane_away(), (frozenset(), None))
         self._marked(time.time())
-        self._forget()
-        self.assertFalse(m.unit_stopping_by_order(), "the operator's recovery read as an order")
-        self.assertEqual(m.lane_away(), (frozenset({"qwen3.8-27b"}), "cd" * 20), "its lane on its way back")
+        self.assertTrue(m.unit_stopping_by_order(), "a marked stop read as a recovery")
+        self.assertEqual(m.lane_away(), (frozenset(), None))
+
+    def test_a_refusal_for_another_checkpoint_keeps_the_name(self):
+        # the other box's 409 for another checkpoint of the model dropped the name from its row like a 409 for another
+        # model, and peer_may_serve then said no box served it (the 6th review of v1.43.0, 2026-11-04)
+        m = self.mod
+        same = json.dumps({"error": {"type": "model_not_served", "message": "x",
+                                     "served": {"spark2": ["qwen3.8-27b"]}}}).encode()
+        other = json.dumps({"type": "error", "error": {"type": "model_not_served", "message": "x",
+                                                       "served": {"spark2": ["qwen3.8-flash-next-fp4"]}}}).encode()
+        self.assertTrue(m.refusal_serves(same, "qwen3.8-27b"))
+        self.assertFalse(m.refusal_serves(other, "qwen3.8-27b"))
+        self.assertFalse(m.refusal_serves(b"not json", "qwen3.8-27b"))
+        h = object.__new__(m.H)
+        h._peer = "test"
+        with m._PAIR_LOCK:
+            saved = dict(m._PAIR_MODELS)
+        self.addCleanup(lambda: (m._PAIR_MODELS.clear(), m._PAIR_MODELS.update(saved)))
+        for keeps, models in ((True, ("qwen3.8-27b", "marker")), (False, ("marker",))):
+            with self.subTest(keeps=keeps):
+                m._PAIR_MODELS["spark2"] = {"models": ("qwen3.8-27b", "marker"), "ts": 5.0}
+                h._moved_keeps = keeps
+                h._pair_refused("spark2", "qwen3.8-27b", "moved", "read again")
+                self.assertEqual(m._PAIR_MODELS["spark2"]["models"], models)
+                self.assertEqual(m._PAIR_MODELS["spark2"]["ts"], 0.0)
 
     def test_an_engine_away_reads_systemd_once_a_second_whatever_the_requests(self):
         # lane_away read systemd afresh for each request while this box's engine was away: two or three systemctl a

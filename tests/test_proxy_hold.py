@@ -301,6 +301,19 @@ class AStreamedRequestWaitsForItsEngine(unittest.TestCase):
         self.assertIn(b'"content": "four"', reply.raw)
         self.assertNotIn(b"keepalive", reply.raw)
 
+    def test_an_ollama_stream_from_a_slow_engine_is_given_no_sse(self):
+        # the keeper opened a text/event-stream when the engine was slow to answer, an Ollama client's too: untested, a
+        # mutant without its choice stayed green (the 6th review of v1.43.0, 2026-11-04)
+        box = self.box()
+        box.start_engine(delay=2.5)                                             # up and slow: the keeper's case
+        reply = box.send(path="/api/chat")
+        time.sleep(1.8)                                                         # past KEEPALIVE_S, 1 s here
+        self.assertIsNone(reply.status, f"a stream was opened for an Ollama client: {reply.raw[:200]!r}")
+        self.assertTrue(reply.done.wait(15))
+        self.assertIsNone(reply.err)
+        self.assertIn("application/x-ndjson", reply.ctype)
+        self.assertIn(b'"content": "four"', reply.raw)
+
     def test_the_anthropic_dialect_waits_on_pings(self):
         box = self.box()
         reply = box.send(path="/v1/messages")
@@ -694,6 +707,9 @@ class AStreamedRequestWaitsForItsEngineInProcess(AStreamedRequestWaitsForItsEngi
 
     def test_an_ollama_stream_waits_in_silence_and_gets_its_ndjson(self):
         super().test_an_ollama_stream_waits_in_silence_and_gets_its_ndjson()
+
+    def test_an_ollama_stream_from_a_slow_engine_is_given_no_sse(self):
+        super().test_an_ollama_stream_from_a_slow_engine_is_given_no_sse()
 
 
 class ANonStreamedRequestWaitsInSilenceInProcess(ANonStreamedRequestWaitsInSilence):

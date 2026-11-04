@@ -38,7 +38,8 @@ Ten roles, nothing else:
 6. keep a request through an engine restart: one that arrives while the engine does not
    answer and its unit (PROXY_HOLD_UNITS) is on its way back waits for it, at most
    PROXY_HOLD_MAX_S, instead of failing at once. A streamed one hears from the proxy at
-   once (200, then the keepalives of role 1); see "Holding a request" below;
+   once (200, then the keepalives of role 1), but on the Ollama routes, whose NDJSON carries
+   no keepalive: those wait in silence, as a non-streamed one does; see "Holding a request";
 7. stop every generation when the cockpit's memory floor asks (POST /proxy/stop, from this machine
    with the engine's key): each client's connection is cut, not ended, so that it never takes a cut
    answer for a whole one, and after a stop that cut one, new generations wait while the box is short
@@ -617,13 +618,12 @@ def unit_stopping_by_order():
     in review, 2026-11-04). A restart is no such order, whoever asked for it (decision 1030, 2026-11-04): the cockpit
     restarts an engine a request may have wedged (autoheal, zombie), and a request bound then waits here for its engine
     to come back. But a restart whose unit starts another checkpoint than the one this box served last is the cockpit's
-    Load of another checkpoint of the same lane, an order too (decision 1041, 2026-11-04). Neither a stop nor a restart
-    is an order when the cockpit makes it to recover the engine (recovery_runs): its autoheal and zombie restarts
-    (decision 1049), its operator's stop or restart of an engine it shows wedged or zombie (decision 1055). A crash has
-    no job until its restart is due. False when systemd does not say."""
+    Load of another checkpoint of the same lane, an order too (decision 1041, 2026-11-04), unless the cockpit makes it to
+    recover the engine (recovery_runs): its autoheal and zombie restarts (decision 1049). A crash has no job until its
+    restart is due. False when systemd does not say."""
     marked = recovery_runs()            # before the jobs: a run read after them may be the restart's next one
     jobs = unit_jobs()
-    if any(kind == "stop" and not marked.get(unit) for unit, kind in jobs):
+    if any(kind == "stop" for _, kind in jobs):
         return True
     served = _LAST_LANE["lane"][1]
     for unit, kind in jobs:
@@ -634,16 +634,16 @@ def unit_stopping_by_order():
     return False
 
 
-# Decisions 1049 and 1055 (2026-11-04): the cockpit says which restarts and stops it makes to recover an engine, each
-# with the run it acts on (the unit's InvocationID) and when (cockpit.py, mark_recovery): such a restart or stop is never
-# an order, whatever checkpoint it loads.
+# Decision 1049 (2026-11-04): the cockpit says which restarts it makes to recover an engine, each with the run it restarts
+# (the unit's InvocationID) and when, from the job that runs it (cockpit.py, run_job): such a restart is never an order,
+# whatever checkpoint it loads.
 RECOVERY_FILE = os.path.expanduser(os.environ.get("QWEN38_RECOVERY_FILE") or "~/.config/qwen38/recovery-restarts.json")
 RECOVERY_MARK_S = 600.0                 # a mark older than this is not the recovery under way
 
 
 def recovery_runs():
-    """{unit: True} for each unit named in PROXY_HOLD_UNITS whose run the cockpit restarts or stops now to recover its
-    engine: its mark names the unit's run and is younger than RECOVERY_MARK_S. A mark the cockpit left behind (its
+    """{unit: True} for each unit named in PROXY_HOLD_UNITS whose run the cockpit restarts now to recover its engine:
+    its mark names the unit's run and is younger than RECOVERY_MARK_S. A mark the cockpit left behind (its
     restart refused) made a later Load of that run a recovery, and a run read after the jobs could be the restart's next
     one, the recovery then an order (the 5th review of v1.43.0, 2026-11-04). {} when nothing says so; no systemctl
     without a fresh mark."""
@@ -991,25 +991,50 @@ def peer_may_serve(conf, name):
     model it serves now (the delta's 3rd review, 2026-11-04). Those are _pair_served_nowhere's bounds: without them, a
     box off for an hour had a request bound here refused for 10 minutes, where the same request unbound got this box's
     lane's answer after 30 s (decision 986; the 4th review of v1.43.0, 2026-11-04)."""
-    now = time.monotonic()
     for p in conf.get("peers") or ():
         row = _PAIR_MODELS.get(p["name"])
         if row is None:
-            if now - _PAIR["loaded"] < PAIR_FIRST_READ_S:
+            if time.monotonic() - _PAIR["loaded"] < PAIR_FIRST_READ_S:
                 return True                 # never read since pair.json was: it may
             continue
-        if name in (row.get("models") or ()):
+        if name in (row.get("models") or ()) or peer_row_may_serve(row, name):
             return True
-        if not row.get("error"):
-            # read, and it serves another model now, a 409 "moved" included, which leaves no error: waited_for's rule,
-            # where this copy kept its last list 15 minutes (the 5th review of v1.43.0, 2026-11-04)
-            continue
-        if row.get("known") is None:
-            if now - _PAIR["loaded"] < PAIR_FIRST_READ_S:
-                return True                 # never read well yet: it may
-        elif name in row["known"] and now - (row.get("known_ts") or 0) < PAIR_KNOWN_WAIT_S:
-            return True                     # its read failed, and its last good list named it
     return False
+
+
+def peer_row_may_serve(row, name):
+    """A box of the pair whose list does not name `name` now may still serve it: its read failed and its last good list
+    named it, for PAIR_KNOWN_WAIT_S, or it never read well, for the PAIR_FIRST_READ_S after pair.json was read. A row
+    read well serves what it lists (a 409 "moved" leaves no error). The one rule of peer_may_serve and
+    _pair_served_nowhere: two copies of it drifted, and one kept its last list 15 minutes (the 5th and 6th reviews of
+    v1.43.0, 2026-11-04)."""
+    if not row.get("error"):
+        return False
+    now = time.monotonic()
+    if row.get("known") is None:
+        return now - _PAIR["loaded"] < PAIR_FIRST_READ_S
+    return name in row["known"] and now - (row.get("known_ts") or 0) < PAIR_KNOWN_WAIT_S
+
+
+def refusal_serves(data, name):
+    """True when a refusal of the pair (409 model_not_served, either dialect) says its box serves name still: from
+    another checkpoint (decision 1018). Its "served" lists what each box serves."""
+    try:
+        served = (json.loads(data).get("error") or {}).get("served") or {}
+        return any(isinstance(v, list) and name in v for v in served.values())
+    except Exception:
+        return False
+
+
+def whole_lines(part, chunk):
+    """NDJSON relayed line by line: (the whole lines of part + chunk, the rest of a line not whole yet). A line that never
+    ends goes as it comes, past 64 KiB. One reading for the box that relays and the entry (the 6th review of v1.43.0)."""
+    lines = part + chunk
+    end = lines.rfind(b"\n") + 1
+    whole, part = lines[:end], lines[end:]
+    if len(part) > 65536:
+        whole, part = whole + part, b""
+    return whole, part
 
 
 def killers_live():
@@ -4531,6 +4556,12 @@ def answered_whole(body):
 OLLAMA_ROUTES = frozenset({"/api/chat", "/api/generate"})
 
 
+def held_as_stream(path, body):
+    """True for a streamed request a hold or a keeper may give a stream of its own (role 1's keepalives): never one of
+    the Ollama routes. The one test of the hold and the keeper (the 6th review of v1.43.0)."""
+    return bool(body) and not answered_whole(body) and path.split("?", 1)[0] not in OLLAMA_ROUTES
+
+
 class _KeptSocketHTTPConnection(http.client.HTTPConnection):
     """An HTTPConnection that keeps the socket it opened: an answer that says Connection: close
     takes the socket from the connection (sock = None) and keeps it open until the answer is
@@ -4782,7 +4813,9 @@ def stop_generations(why, floor_gib=None, hold_s=None, floor=True):
     cut one starts the floor's episode with the floor and the pause the cockpit carries (it fired at
     those), PROXY_MEM_FLOOR_GIB=0 keeping the refusal for memory off and PROXY_FLOOR_HOLD_S=0 the pause."""
     with _GEN_LOCK:
-        targets = list(_GENERATIONS)
+        # an answer relayed whole is generated already: no stop reaches it. Stopped, vLLM's was cut and taken for its
+        # engine's death, and a floor stop that cut nothing held new generations back (the 6th review of v1.43.0)
+        targets = [h for h in _GENERATIONS if not getattr(h, "_relaying_whole", False)]
         if floor and targets:
             now = time.monotonic()
             hold = 0.0 if FLOOR_HOLD_S <= 0 else (FLOOR_HOLD_S if hold_s is None else hold_s)
@@ -5014,13 +5047,11 @@ def _lane_away_read():
     names = names_in(texts) if texts else frozenset()
     if names:
         return names, (revision_in(texts) or PAIR_CHECKPOINT)
-    marked = recovery_runs()            # before the jobs, as unit_stopping_by_order reads them
     jobs = unit_jobs()
-    if any(kind == "stop" and not marked.get(unit) for unit, kind in jobs):
+    if any(kind == "stop" for _, kind in jobs):
         # its lane stopped by order (a Load of another lane, the Stop button): the model it served is not this box's any
         # more, and goes to the other box whatever its checkpoint; it was held through the next lane's whole boot, then
-        # refused (the delta's 3rd review, 2026-11-04). A stop the cockpit makes to recover a wedged engine is no
-        # order (decision 1055): its lane is on its way back, and keeps its checkpoint
+        # refused (the delta's 3rd review, 2026-11-04)
         return frozenset(), None
     for unit, kind in jobs:
         if kind in ("restart", "try-restart"):
@@ -6552,6 +6583,8 @@ class H(BaseHTTPRequestHandler):
             cut = None
             nd = getattr(self, "_out_ndjson", False)      # the Ollama routes' NDJSON stream
             part = b""                      # its line not whole yet
+            with _GEN_LOCK:
+                self._relaying_whole = not nd   # a non-streamed answer, whole at the engine: no stop target now
             try:
                 while True:
                     # read1, as role 1 reads SSE (v6.6): read(65536) of a chunked body waited for 64 KiB or its end,
@@ -6564,11 +6597,7 @@ class H(BaseHTTPRequestHandler):
                             break           # stopped (v6.47): what the engine sends now is the end it gives an abort
                         # whole lines only: a stop or a cut left half a line out, which the other box's order line then
                         # joined, unread there (the 5th review of v1.43.0, 2026-11-04)
-                        lines = part + c
-                        end = lines.rfind(b"\n") + 1
-                        c, part = lines[:end], lines[end:]
-                        if len(part) > 65536:
-                            c, part = c + part, b""     # a line that never ends goes as it comes
+                        c, part = whole_lines(part, c)
                         if not c:
                             continue
                     self._keep_answer(c)
@@ -6597,11 +6626,13 @@ class H(BaseHTTPRequestHandler):
                 if not detached:
                     try: resp.close()
                     except Exception: pass
-            if nd and getattr(self, "_stop_why", None):
+            if getattr(self, "_stop_why", None) and (nd or cut is not None):
                 # v6.47 for the Ollama routes' NDJSON: cut, never ended. SGLang ends an aborted Ollama stream with a last
                 # line, done_reason "stop", and its client took the part it got for the whole answer (the 4th review of
                 # v1.43.0). A non-streamed answer the engine had finished goes whole, as before: cut, its client asked it
-                # again of a box short of memory, and the other box of a pair bound it (the 5th review, 2026-11-04)
+                # again of a box short of memory, and the other box of a pair bound it (the 5th review, 2026-11-04). One
+                # the stop did cut (vLLM's upstream shut, or SGLang's when abort_all failed) is a stop, never the engine's
+                # death: it was bound 10 minutes on a hop (the 6th review)
                 self._cut_stopped(); return
             if cut is not None:
                 # The engine ended mid-body (it died, or dropped the socket). The answer is
@@ -6786,6 +6817,11 @@ class H(BaseHTTPRequestHandler):
             try: self._chunk(val)
             except Exception:
                 drop_upstream(); self._done("CLIENT GONE on write"); return
+        if died and self._pair_hop() and unit_stopping_by_order():
+            # read again at the stream's clean end: vLLM ends a dead stream cleanly ([DONE]), and a stop job not seen yet
+            # at the death went unsaid, the other box binding the request 10 minutes (the 6th review of v1.43.0). Said
+            # once (_said_ended), before the end, where the other box reads it
+            self._say_ended_by_order()
         self._finish()
         try: resp.close()          # the pump thread already ended at EOF; without this
         except Exception: pass    # the socket waits for the refcount (or cyclic GC)
@@ -6817,6 +6853,7 @@ class H(BaseHTTPRequestHandler):
         log(f"{self._peer} -> {self.command} {self.path.split('?')[0]} body={n0}b")
         # v6.47: a stop is this request's own, on a connection that serves several too
         self._stop_why = None; self._stop_floor = True; self._relay_q = None
+        self._relaying_whole = False        # set once a non-streamed answer is relayed whole (stop_generations)
         if self._pair_port_refused():
             return
         if self.path.split("?")[0] == STOP_PATH:
@@ -6963,7 +7000,7 @@ class H(BaseHTTPRequestHandler):
         # or held while the pool was unmeasured, it could not learn it (found in review,
         # 2026-09-24).
         count_only = self.path.split("?", 1)[0] in COUNT_ONLY_PATHS
-        streamed = bool(body) and not answered_whole(body) and self.path.split("?", 1)[0] not in OLLAMA_ROUTES
+        streamed = held_as_stream(self.path, body)
         self._hold_until = None
         self._held_sse = False
         while True:
@@ -7424,10 +7461,12 @@ class H(BaseHTTPRequestHandler):
         elif res == "too long":
             log(f"{self._peer} pair: the prompt is too long for {pick}'s pool: {then}")
         elif res == "moved":
+            keep = getattr(self, "_moved_keeps", False)     # another checkpoint of it: that box serves it still
             with _PAIR_LOCK:
                 row = _PAIR_MODELS.get(pick)
                 if row:
-                    _PAIR_MODELS[pick] = dict(row, models=tuple(m for m in row["models"] if m != name), ts=0.0)
+                    models = row["models"] if keep else tuple(m for m in row["models"] if m != name)
+                    _PAIR_MODELS[pick] = dict(row, models=models, ts=0.0)
 
     def _bound_refused(self, why, conf, local):
         """Decision 1019: a request an engine closed on moments ago that goes nowhere now: a 503 to send it again later."""
@@ -7520,12 +7559,7 @@ class H(BaseHTTPRequestHandler):
         served = pair_served_map(conf, local)
         said = "; ".join(f"{b}: {v if isinstance(v, str) else (', '.join(v) or 'nothing')}" for b, v in served.items())
         def waited_for(p):
-            row = _PAIR_MODELS.get(p["name"]) or {}
-            if not row.get("error"):
-                return False
-            if row.get("known") is None:
-                return time.monotonic() - _PAIR["loaded"] < PAIR_FIRST_READ_S
-            return name in row["known"] and time.monotonic() - (row.get("known_ts") or 0) < PAIR_KNOWN_WAIT_S
+            return peer_row_may_serve(_PAIR_MODELS.get(p["name"]) or {}, name)
         unread = [p["name"] for p in conf["peers"] if waited_for(p)]
         if unread:
             # a peer whose list cannot be read may be the box that serves it (unreachable, or its engine
@@ -7605,6 +7639,7 @@ class H(BaseHTTPRequestHandler):
         req = urllib.request.Request(peer["proxy"] + self.path, data=body, headers=h, method=self.command)
         log(f"{self._peer} -> pair {peer['name']} for {name}")
         done, left = threading.Event(), threading.Event()
+        self._pair_drain = False            # set once the other box relayed its engine's death (decision 1054)
 
         def watch():
             # the caller of an answer that is not streamed yet hears nothing: when it leaves,
@@ -7614,6 +7649,11 @@ class H(BaseHTTPRequestHandler):
             while not done.wait(1.0):
                 if left.is_set() or self._client_left():
                     left.set()
+                    if self._pair_drain:
+                        # a death relayed to it: the relay reads on for an order the other box says after it, and ends
+                        # the connection itself (decision 1054). Shut here within a second, the order was never read,
+                        # and the request bound 10 minutes in 5 runs of 5 (the 6th review of v1.43.0, 2026-11-04)
+                        continue
                     sock = getattr(getattr(req, "upstream", None), "kept_sock", None)
                     if sock is not None:
                         # the TCP side under TLS: SSLSocket.shutdown takes TLS off the socket under the reading
@@ -7669,7 +7709,14 @@ class H(BaseHTTPRequestHandler):
                                     or (e.code == 500 and ENGINE_DIED_RE.search(data))):
                     killer_note(self._killer_fp, peer["name"])                          # decision 1019
                 if e.code == 409 and b'"model_not_served"' in data:
-                    log(f"{self._peer} pair: {peer['name']} serves another model now; the lists are read again")
+                    # another model, or the same one from another checkpoint (1018), which it still serves: its row
+                    # keeps the name then; dropped, peer_may_serve said no box served it (the 6th review of v1.43.0)
+                    self._moved_keeps = refusal_serves(data, name)
+                    if self._moved_keeps:
+                        log(f"{self._peer} pair: {peer['name']} serves {name} from another checkpoint now; the lists "
+                            f"are read again")
+                    else:
+                        log(f"{self._peer} pair: {peer['name']} serves another model now; the lists are read again")
                     return "moved"
                 refused = _pair_refused_here(e.code, data) if fallback else None
                 if refused:
@@ -7763,11 +7810,14 @@ class H(BaseHTTPRequestHandler):
 
                 def gone():
                     nonlocal ordered
-                    if died and not ordered and not left.is_set():
+                    if died and not ordered:
                         # its client gone at the death it relayed (the SDKs raise on that event): what the other box
                         # still sends is read a moment, never relayed, for an order it says after the death (decision
-                        # 1054, the 5th review of v1.43.0, 2026-11-04). The connection closed already, it binds
+                        # 1054, the 5th review of v1.43.0, 2026-11-04); the watch leaves that connection open since
                         ordered = self._order_after(resp, sock)
+                    if died and ordered:
+                        log(f"{self._peer} pair: its client gone at a death {peer['name']} relayed, which {peer['name']} "
+                            f"said it ended by order: nothing is bound (decision 1054)")
                     if died and not ordered:
                         # a death it relayed, its client gone before the stream's end: bound all the same (1019), where
                         # the binding waited for that end (the 4th review of v1.43.0, 2026-11-04)
@@ -7798,15 +7848,12 @@ class H(BaseHTTPRequestHandler):
                         # the Ollama routes' NDJSON, line by line: the other box's end by order is a line of its own,
                         # which no Ollama client reads (ollama-python's ChatResponse needs its message), so it stays
                         # here; relayed, the client's parser failed on it (the 4th review of v1.43.0, 2026-11-04)
-                        lines = part + b
-                        cut = lines.rfind(b"\n") + 1
-                        b, part = lines[:cut], lines[cut:]
+                        b, part = whole_lines(part, b)
                         if HOP_ENDED_NDJSON in b:
-                            kept = [ln for ln in b.split(b"\n")[:-1] if ln + b"\n" != HOP_ENDED_NDJSON]
-                            ordered = ordered or len(kept) < b.count(b"\n")
-                            b = b"".join(ln + b"\n" for ln in kept)
-                        if len(part) > 65536:
-                            b, part = b + part, b""     # a line that never ends goes as it comes
+                            pieces = b.split(b"\n")    # its last piece: b"", or a line that never ends
+                            kept = [ln for ln in pieces[:-1] if ln + b"\n" != HOP_ENDED_NDJSON]
+                            ordered = ordered or len(kept) < len(pieces) - 1
+                            b = b"".join(ln + b"\n" for ln in kept) + pieces[-1]
                         if not b:
                             continue
                     seen = tail + b
@@ -7814,6 +7861,7 @@ class H(BaseHTTPRequestHandler):
                         ordered = True
                     if HOP_CLOSED_B in seen or (b"EngineCore" in seen and ENGINE_DIED_RE.search(seen)):
                         died = True         # its engine closed on it after its hold opened the stream, or vLLM's died
+                        self._pair_drain = True     # its client's leaving no longer ends the connection (1054)
                     if sse:                         # role 8, line by line: a read may end in the middle of one
                         lines = tail + b
                         cut = lines.rfind(b"\n")
@@ -7861,8 +7909,6 @@ class H(BaseHTTPRequestHandler):
                     return False
                 tail = (tail + b)[-(len(b) + 4096):]
                 if b"x_alzeo_ended" in tail and ended_by_order_in(tail):
-                    log(f"{self._peer} pair: its client gone, the other box said after the death that it ended the "
-                        f"request by order: nothing is bound (decision 1054)")
                     return True
         except (OSError, ValueError, http.client.HTTPException):
             return False
@@ -8046,7 +8092,7 @@ class H(BaseHTTPRequestHandler):
             return None
         done = threading.Event()
         self._wlock = threading.Lock()      # the keeper writes into the stream until _open returns
-        whole = bool(body) and (answered_whole(body) or self.path.split("?", 1)[0] in OLLAMA_ROUTES)
+        whole = bool(body) and not held_as_stream(self.path, body)
         keeper = None
         if body:
             keeper = threading.Thread(target=self._watch_client if whole else self._keep_waiting,

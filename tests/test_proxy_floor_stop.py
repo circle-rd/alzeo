@@ -211,9 +211,17 @@ class FakeEngine(http.server.BaseHTTPRequestHandler):
             self._chunk(b"data: " + json.dumps(obj).encode() + b"\n\n")
         if not stream:
             sent = list(self._words(ev))
-            self._json(200, {"id": rid, "object": "chat.completion", "model": "m", "choices": [{
+            raw = json.dumps({"id": rid, "object": "chat.completion", "model": "m", "choices": [{
                 "index": 0, "message": {"role": "assistant", "content": " ".join(sent)},
-                "finish_reason": "abort" if ev.is_set() else "stop"}]})
+                "finish_reason": "abort" if ev.is_set() else "stop"}]}).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(raw)))
+            self.end_headers()
+            half = len(raw) // 2 if self.slow_body else len(raw)
+            self.wfile.write(raw[:half]); self.wfile.flush()
+            time.sleep(self.slow_body)
+            self.wfile.write(raw[half:]); self.wfile.flush()
             return
         self._head()
         chunk({"role": "assistant", "content": ""})
@@ -479,12 +487,28 @@ class FloorStop(unittest.TestCase):
         head = self._read(s, until=b'"model"')
         self.assertIn(b'"model"', head)
         status, out, _ = self._stop()
-        self.assertEqual((status, out["stopped"]), (200, 1), out)
+        self.assertEqual((status, out["stopped"]), (200, 0), out)              # an answer relayed whole: no target
         rest = self._read(s)
         s.close()
         got = head + rest
         self.assertTrue(got.endswith(b"0\r\n\r\n"), got[-80:])
         self.assertIs(json.loads(self._dechunk(got))["done"], True)
+
+    def test_a_finished_answer_is_no_stop_target_on_vllm_and_holds_nothing_back(self):
+        # stopped, vLLM's answer being relayed had its upstream shut: cut, taken for its engine's death (bound 10 minutes
+        # on a hop), and a floor stop that cut nothing held new generations back (the 6th review of v1.43.0, 2026-11-04)
+        FakeEngine.owner, FakeEngine.slow_body = "vllm", 1.0
+        s = self._post("/v1/chat/completions", {"model": "m", "messages": [{"role": "user", "content": "hi"}]})
+        head = self._read(s, until=b'"object"')
+        self.assertIn(b'"object"', head)
+        status, out, _ = self._stop()
+        self.assertEqual((status, out["stopped"]), (200, 0), out)
+        rest = self._read(s)
+        s.close()
+        got = head + rest
+        self.assertTrue(got.endswith(b"0\r\n\r\n"), got[-80:])
+        self.assertEqual(json.loads(self._dechunk(got))["object"], "chat.completion")
+        self.assertFalse(self.mod._FLOOR["episode"], "a stop that cut nothing held new generations back")
 
     def test_streams_that_finish_end_as_before(self):
         for path in ("/v1/messages", "/v1/chat/completions"):
