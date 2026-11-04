@@ -134,6 +134,8 @@ class FakeEngine(http.server.BaseHTTPRequestHandler):
                 return
             if path == "/v1/messages":
                 self._anthropic(rid, ev, stream)
+            elif path in ("/api/chat", "/api/generate"):
+                self._ollama(rid, ev, stream)
             else:
                 self._openai(rid, ev, stream)
         except (BrokenPipeError, ConnectionResetError):
@@ -220,6 +222,29 @@ class FakeEngine(http.server.BaseHTTPRequestHandler):
         aborted = ev.is_set() or self.self_abort_after is not None
         chunk({}, "abort" if aborted else "stop")      # SGLang's last chunk for an abort without a status
         self._chunk(b"data: [DONE]\n\n")
+        self._end()
+        with self.lock:
+            FakeEngine.finished.append(rid)
+
+    def _ollama(self, rid, ev, stream):
+        """SGLang's Ollama routes (python/sglang/srt/entrypoints/ollama/serving.py, v0.5.22): NDJSON, and a last line
+        done_reason "stop" whatever ended the generation, an abort included."""
+        if not stream:
+            sent = list(self._words(ev))
+            self._json(200, {"model": "m", "message": {"role": "assistant", "content": " ".join(sent)}, "done": True,
+                             "done_reason": "stop"})
+            return
+        self.send_response(200)
+        self.send_header("Content-Type", "application/x-ndjson")
+        self.send_header("Transfer-Encoding", "chunked")
+        self.send_header("Connection", "close")
+        self.end_headers()
+        for w in self._words(ev):
+            self._chunk(json.dumps({"model": "m", "message": {"role": "assistant", "content": w + " "},
+                                    "done": False}).encode() + b"\n")
+            time.sleep(GAP)
+        self._chunk(json.dumps({"model": "m", "message": {"role": "assistant", "content": ""}, "done": True,
+                                "done_reason": "stop"}).encode() + b"\n")
         self._end()
         with self.lock:
             FakeEngine.finished.append(rid)
@@ -377,6 +402,32 @@ class FloorStop(unittest.TestCase):
         self.assertNotIn(b'"abort"', got)
         self.assertNotIn(b"[DONE]", got)
         self.assertFalse(got.endswith(b"0\r\n\r\n"), got[-80:])
+
+    def test_an_ollama_stream_arrives_as_it_comes(self):
+        # the relay read every answer that is not SSE by 64 KiB, and an Ollama client got its NDJSON stream whole at its
+        # end (the 4th review of v1.43.0, 2026-11-04)
+        s = self._post("/api/chat", {"model": "m", "stream": True, "messages": [{"role": "user", "content": "hi"}]})
+        t0 = time.monotonic()
+        head = self._read(s, until=b"w02")
+        took = time.monotonic() - t0
+        rest = self._read(s)
+        s.close()
+        self.assertIn(b"w02", head)
+        self.assertLess(took, WORDS * GAP / 2, f"its 2nd line came after {took:.2f} s of a {WORDS * GAP:.1f} s stream")
+        self.assertIn(b'"done": true', head + rest)
+
+    def test_a_stopped_ollama_stream_is_cut_never_ended(self):
+        # v6.47 cut the SSE streams a stop ended. SGLang ends an aborted Ollama stream with a last line, done_reason
+        # "stop", and the relay of what is not SSE gave it to its client as the end of a whole answer (the 4th review of
+        # v1.43.0, 2026-11-04)
+        got, status, out = self._stream_then_stop("/api/chat", {"model": "m",
+                                                                "messages": [{"role": "user", "content": "hi"}]})
+        self.assertEqual(status, 200, out)
+        self.assertEqual(out["stopped"], 1)
+        self.assertTrue(out["abort_all"])
+        self.assertNotIn(b'"done": true', got)
+        self.assertFalse(got.endswith(b"0\r\n\r\n"), got[-80:])
+        self.assertNotIn(b"w%02d" % WORDS, got)
 
     def test_streams_that_finish_end_as_before(self):
         for path in ("/v1/messages", "/v1/chat/completions"):

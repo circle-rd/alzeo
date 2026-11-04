@@ -6453,8 +6453,13 @@ class H(BaseHTTPRequestHandler):
             cut = None
             try:
                 while True:
-                    c = resp.read(65536)
+                    # read1, as role 1 reads SSE (v6.6): read(65536) of a chunked body waited for 64 KiB or its end,
+                    # and the Ollama routes' NDJSON streams reached their clients in bursts (the 4th review of v1.43.0,
+                    # 2026-11-04)
+                    c = resp.read1(65536)
                     if not c: break
+                    if getattr(self, "_stop_why", None):
+                        break               # stopped (v6.47): what the engine sends now is the end it gives an abort
                     self._keep_answer(c)
                     if CORRUPTION_RUN:
                         run = 0
@@ -6481,6 +6486,11 @@ class H(BaseHTTPRequestHandler):
                 if not detached:
                     try: resp.close()
                     except Exception: pass
+            if getattr(self, "_stop_why", None):
+                # v6.47 for every answer that is not SSE: cut, never ended. SGLang ends an aborted Ollama stream with a
+                # last line, done_reason "stop", and its client took the part it got for the whole answer (the 4th review
+                # of v1.43.0, 2026-11-04)
+                self._cut_stopped(); return
             if cut is not None:
                 # The engine ended mid-body (it died, or dropped the socket). The answer is
                 # re-framed as chunked, so a terminating chunk here handed the client half a
