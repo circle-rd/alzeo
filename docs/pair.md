@@ -130,10 +130,13 @@ list was read): the entry then serves it itself.
     their retries wait for that engine (decision 1030). So does the cockpit's restart of a wedged or stuck
     engine, whatever checkpoint an update or switch-model.sh staged for its next start: the cockpit says which
     run it restarts to recover it, in ~/.config/qwen38/recovery-restarts.json (decision 1049): the job that runs
-    the restart writes it just before its systemctl and removes it when that fails, and the proxy reads none
-    older than 10 minutes. A request whose client left at a death the other box relayed is bound unless that
-    box says within 5 s that it ended the request by order (decision 1054), which it says at the stream's end
-    too when its lane's stop showed only then.
+    the restart writes it just before its systemctl and removes it when that fails, unless systemd took the
+    restart all the same. The proxy takes a mark for the restart it was written for only, the unit's state
+    changing within 2 minutes of it, and none older than 10 minutes (decision 1062). A request whose client
+    left at a death the other box relayed is bound at once, and unbound if that box says within 5 s that it
+    ended the request by order (decisions 1054 and 1061), which it says at the stream's end too when its lane's
+    stop showed only then. A request of the entry's own client, bound at a death of its engine, is unbound the
+    same way when its lane's stop shows at the stream's end.
   - While the entry's engine is away (a crash, a restart), a model its lane serves (as the command of its
     engine says, what its unit starts, or as it served last) goes to the other box only from the same
     checkpoint (decision 1018): otherwise the entry holds it while its own engine comes back, as for a model no

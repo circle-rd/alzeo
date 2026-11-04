@@ -97,8 +97,21 @@ around its systemctl. On vLLM a stop cut a non-streamed answer being relayed, ta
 floor stop that cut nothing held new generations back: an answer relayed whole is no stop target. A refusal for
 another checkpoint of the model read as one for another model. And the operator's stop of a stuck engine, marked as a
 recovery in the fifth review's fixes, marked the Load's own steps with it: withdrawn, to be done with a Restart button
-in v1.44.0 (decision 1059). tests/test_proxy_pair.py has two boxes that serve the 27B from their start, each rule its
-test, and each test fails on v1.42.1 or on the commit before its fix.
+in v1.44.0 (decision 1059). A seventh review found more, fixed here too (decision 1062). That wait had no bound once
+the death was relayed: with the other box silent, the request was bound only once that connection had been silent 60
+s, and its retry ran unbound on the entry's engine meanwhile. It is bound within a second of its client leaving now,
+and an order the other box says within 5 s undoes it (decision 1061). A request of the box's own client, bound at a
+vLLM death by a read of systemd that saw no stop yet, stayed bound once the stop showed at the stream's end. A refusal
+for another checkpoint kept the checkpoint it proves stale, and the next requests went there for a 409 each. A stop
+could still cut a finished answer in the moment between the engine's answer and its relay, and one that found only
+such answers said that no generation ran, with no word of them: the cockpit says how many are left to go out whole. A
+recovery's mark was removed when systemctl failed after systemd had taken the restart, never written when systemd was
+slow to say the engine's run, and one the cockpit left behind counted for a later restart of the same run: a mark
+counts for the restart it was written for only now, the unit's state changing within 2 minutes of it. An order split
+across two reads went unread, the words of an engine's death inside an Ollama tool call's arguments read as one, and
+the order's line on the Ollama routes could follow a line over 64 KiB with no line end. tests/test_proxy_pair.py has
+two boxes that serve the 27B from their start, each rule its test, and each test fails on v1.42.1 or on the commit
+before its fix.
 
 **Ollama clients get their stream as it comes.** The proxy relayed every answer that is not SSE in blocks of 64 KiB,
 so a client of the Ollama routes (`/api/chat`, `/api/generate`) got its NDJSON stream in bursts, most answers whole at
