@@ -583,6 +583,21 @@ def engine_answers():
         return False
 
 
+def unit_job_running():
+    """True while systemd runs a job on a unit named in PROXY_HOLD_UNITS (a stop, a restart, a start: the cockpit's
+    Load, an update, switch-model.sh). The engine closing a request then is that order, not what the request did: an
+    ordered stop closed every request in flight and bound each one to its box for 10 minutes (decision 1019, found in
+    review, 2026-11-04). A crash has no job until its restart is due. False when systemd does not say."""
+    if not HOLD_UNITS:
+        return False
+    try:
+        jobs = subprocess.run(["systemctl", "list-jobs", "--no-legend", "--no-pager", *HOLD_UNITS],
+                              capture_output=True, text=True, timeout=3).stdout
+    except Exception:
+        return False
+    return any(len(f) >= 3 and f[1] in HOLD_UNITS for f in (ln.split() for ln in jobs.splitlines()))
+
+
 def engine_gone_reason():
     """What an unanswering engine means on this box, and what brings it back."""
     if image_lane_serving():
@@ -859,9 +874,12 @@ def killer_note(fp, box):
     effort, the served name), whose fingerprint the client's retry never matched (found in review, 2026-11-04)."""
     if not fp or PAIR_KILLER_KEEP_S <= 0:
         return
+    now = time.monotonic()
     with _KILLERS_LOCK:
+        for old in [k for k, (_, until) in _KILLERS.items() if until <= now]:
+            del _KILLERS[old]               # ended: a memory never emptied made every request hash its body
         _KILLERS.pop(fp, None)
-        _KILLERS[fp] = (box, time.monotonic() + PAIR_KILLER_KEEP_S)
+        _KILLERS[fp] = (box, now + PAIR_KILLER_KEEP_S)
         while len(_KILLERS) > PAIR_KILLER_MAX:
             _KILLERS.popitem(last=False)
 
@@ -3167,7 +3185,7 @@ class RidUnreadable(Exception):
 # What a box writes when its engine closed the connection on a request the other box sent it (its 502, or the error
 # event of a stream its hold opened): the other box knows by it that this request may be what took an engine down.
 HOP_CLOSED = "this box's engine closed the connection while it had the request"
-HOP_CLOSED_B = HOP_CLOSED.encode()
+HOP_CLOSED_B = b'"message": "keepalive-proxy: ' + HOP_CLOSED.encode() + b'"'   # as its error event writes it
 
 
 def engine_refused(e):
@@ -3303,7 +3321,7 @@ PAIR_HOP = "X-Alzeo-Pair-Hop"
 PAIR_HERE = "X-Alzeo-Here"
 PAIR_TTL_S = float(os.environ.get("PAIR_TTL_S", "5") or 5)
 PAIR_CONNECT_S = float(os.environ.get("PAIR_CONNECT_S", "10") or 10)
-PAIR_CONNECT_S = PAIR_CONNECT_S if PAIR_CONNECT_S > 0 else 10.0    # 0 made the connect non-blocking: every forward failed
+PAIR_CONNECT_S = PAIR_CONNECT_S if math.isfinite(PAIR_CONNECT_S) and PAIR_CONNECT_S > 0 else 10.0    # 0: no forward
 # A request this box could serve itself (a model both serve) waits less for the other box's connection: a box gone without
 # a reset (its power, its cable) held each such request PAIR_CONNECT_S before this box served it (found in review,
 # 2026-11-03). A connection and its TLS take well under a second on a LAN or a tailnet.
@@ -6609,7 +6627,7 @@ class H(BaseHTTPRequestHandler):
                 return
             if kind == "warming" and self._pair_take_over(asked, "this box's engine is warming up"):
                 return                      # its pool not measured yet: the other box's is (v6.52)
-            if self._pair_hop() and kind == "unreachable" and detail is None:
+            if self._pair_hop() and kind == "unreachable" and detail is None and not unit_job_running():
                 # a request the other box sent on, whose engine here closed the connection while it had it: a 502, not
                 # the 503 the other box takes back to its own engine, which the same request could take down too.
                 # Through _pair_refuse: a stream the hold opened gets it as an error event, where a status line written
@@ -6801,12 +6819,24 @@ class H(BaseHTTPRequestHandler):
                 peer = next((p for p in conf["peers"] if p["name"] == bound), None)
                 if peer is None:
                     # this box's engine closed on it moments ago (or a box that left the pair): here or nowhere
+                    if local is not None and name not in local:
+                        # this box serves another model now: never that model for this one (docs/pair.md), and never
+                        # the other box (found in review, 2026-11-04)
+                        self._pair_refuse(503, "engine_unavailable", "an engine closed on this request moments ago, "
+                                          "and this box serves another model now: this request is served nowhere "
+                                          "for a while; send it again later", pair_served_map(conf, local))
+                        self._done("503 pair request bound elsewhere")
+                        return True
                     _say_once_a_minute("killer here", f"{self._peer} pair: a request an engine closed on moments ago "
                                                       f"stays on this box, no other box gets it (decision 1019)")
                     return False
                 mine = unit_revision()
                 theirs = (_PAIR_MODELS.get(bound) or {}).get("revision")
-                if local is not None and name in local and (mine is None or theirs != mine):
+                if theirs is None:
+                    # its list not read, or read while it restarted: that box is tried, and its list read again; a
+                    # list read that failed said "another checkpoint" to each retry for 10 minutes (review, 2026-11-04)
+                    _peer_models_soon(peer)
+                if local is not None and name in local and mine and theirs and theirs != mine:
                     # a model both serve, that box from another checkpoint now (or saying none): it is not sent there
                     # (decision 1018), nor served here (1019): nowhere, until it is forgotten
                     log(f"{self._peer} pair: {bound}'s engine or connection closed on this request moments ago, and "
@@ -7011,6 +7041,8 @@ class H(BaseHTTPRequestHandler):
         """This box's engine closed the connection on this request, before its answer or during it (decision 1019):
         a request that took it down, sent again, goes nowhere else for PAIR_KILLER_KEEP_S. Its death during the
         answer bound nothing, and the client's retry went to the other engine (found in review, 2026-11-04)."""
+        if getattr(self, "_stop_why", None) or unit_job_running():
+            return                          # stopped by this proxy (Abort all, the floor) or by an order to its unit
         killer_note(getattr(self, "_killer_fp", None), (pair_conf() or {}).get("name") or "")
 
     def _pair_lost(self, pick, name, conf, local):
@@ -7262,7 +7294,8 @@ class H(BaseHTTPRequestHandler):
                     # role 8 on what this box relays too: its own client's request, served there, is this box's to
                     # watch, and its cockpit showed no banner for a call the other box logged (found in review of
                     # v1.43.0, 2026-11-03)
-                    self._keep_answer(data)
+                    for at in range(0, len(data), 65536):
+                        self._keep_answer(data[at:at + 65536])
                     self._plain(resp.status, headers, data)
                     self._bytes = len(data)
                     self._done("ok pair")

@@ -2404,6 +2404,64 @@ class TwoBoxesServeOneModel(PairFixture, unittest.TestCase):
         self.assertEqual(st, 200, out[:300])
         self.assertIn(b"from spark2", out)
 
+    def test_an_ordered_stop_binds_no_request(self):
+        # decision 1019 binds a request that may have killed an engine: a stop ordered to the lane's unit (a Load, an
+        # update) closed every request in flight and bound each one for 10 minutes, and its hop got the 502 no box takes
+        # back (review, 2026-11-04)
+        if not self.INPROC:
+            self.skipTest("the unit's job is said in this test's process")
+        m = self.mod
+        saved = m.unit_job_running
+        m.unit_job_running = lambda: True                                       # a stop or restart is under way
+        self.addCleanup(setattr, m, "unit_job_running", saved)
+        self.addCleanup(m._KILLERS.clear)
+        r = self.turns("conv-ordered", 1)[0]
+        self.E1.mode = "die"
+        st, out, _ = self.call("/v1/chat/completions", r)
+        self.assertNotEqual(st, 200, out[:300])
+        hop = dict(self.chat("qwen3.8-27b"), user="hop-ordered")
+        st, out = self.tls_call(self.pport1, "/v1/chat/completions", hop)[:2]
+        self.assertEqual(st, 503, out[:300])                                    # not the 502 of an engine that died
+        self.E1.mode = "ok"
+        held = self.busy(self.E1, self.port1, KEY_1, "local-only", 5, 4.0)     # far apart: it goes there, unbound
+        st, out, _ = self.call("/v1/chat/completions", r)
+        self.assertEqual(st, 200, out[:300])
+        self.assertIn(b"from spark2", out, "a request an ordered stop closed was bound to this box")
+        for th in held:
+            th.join(30)
+
+    def test_a_request_bound_to_a_box_whose_list_is_unknown_is_tried_there(self):
+        # its list read failed (it restarted): the bound branch said "another checkpoint" to each retry for 10 minutes
+        # (review, 2026-11-04)
+        if not self.INPROC:
+            self.skipTest("the kept list is set in this test's process")
+        m = self.mod
+        self.addCleanup(m._KILLERS.clear)
+        r = self.turns("conv-bound-unknown", 1)[0]
+        m.killer_note(m.body_fingerprint(json.dumps(r).encode(), "/v1/chat/completions"), "spark2")
+        with m._PAIR_LOCK:
+            m._PAIR_MODELS["spark2"]["revision"] = None                        # read while it restarted
+        st, out, _ = self.call("/v1/chat/completions", r)
+        self.assertEqual(st, 200, out[:300])
+        self.assertIn(b"from spark2", out, "a box whose list is unknown was said to serve another checkpoint")
+
+    def test_a_request_bound_here_goes_nowhere_once_this_box_serves_another_model(self):
+        # bound to this box, which then switched lanes: its new lane answered a request for the other model, which
+        # docs/pair.md says never happens (review, 2026-11-04)
+        if not self.INPROC:
+            self.skipTest("this box's model is said in this test's process")
+        m = self.mod
+        self.addCleanup(m._KILLERS.clear)
+        r = self.turns("conv-bound-here-other", 1)[0]
+        m.killer_note(m.body_fingerprint(json.dumps(r).encode(), "/v1/chat/completions"), "spark1")
+        real = m.served_models
+        m.served_models = lambda *a, **k: ["qwen3.8-flash-next-fp4"]           # this box serves another model now
+        self.addCleanup(setattr, m, "served_models", real)
+        st, out, _ = self.call("/v1/chat/completions", r)
+        self.assertEqual(st, 503, out[:300])
+        self.assertIn(b"serves another model now", out)
+        self.assertNotIn("conv-bound-here-other-0", self.E1.users + self.E2.users)
+
     def test_a_burst_of_new_conversations_is_shared(self):
         self.E1.delay = self.E2.delay = 1.0
         out = []
@@ -2801,6 +2859,15 @@ class TwoBoxesServeOneModelInProcess(TwoBoxesServeOneModel):
 
     def test_this_engine_away_a_model_its_lane_served_goes_to_no_other_checkpoint(self):
         super().test_this_engine_away_a_model_its_lane_served_goes_to_no_other_checkpoint()
+
+    def test_an_ordered_stop_binds_no_request(self):
+        super().test_an_ordered_stop_binds_no_request()
+
+    def test_a_request_bound_to_a_box_whose_list_is_unknown_is_tried_there(self):
+        super().test_a_request_bound_to_a_box_whose_list_is_unknown_is_tried_there()
+
+    def test_a_request_bound_here_goes_nowhere_once_this_box_serves_another_model(self):
+        super().test_a_request_bound_here_goes_nowhere_once_this_box_serves_another_model()
 
 
 class ThePairsPieces(unittest.TestCase):
@@ -3453,7 +3520,8 @@ class ThePairsPieces(unittest.TestCase):
         for name, said, want in (("PAIR_SHARE_CONNECT_S", "0", 3.0), ("PAIR_SHARE_CONNECT_S", "-1", 3.0),
                                  ("PAIR_SHARE_CONNECT_S", "nan", 3.0), ("PAIR_SHARE_CONNECT_S", "inf", 3.0),
                                  ("PAIR_SPREAD_COOL_S", "nan", 30.0), ("PAIR_SPREAD_COOL_S", "inf", 30.0),
-                                 ("PAIR_SPREAD_COOL_S", "-5", 30.0), ("PAIR_SPREAD_COOL_S", "0", 0.0)):
+                                 ("PAIR_SPREAD_COOL_S", "-5", 30.0), ("PAIR_SPREAD_COOL_S", "0", 0.0),
+                                 ("PAIR_CONNECT_S", "inf", 10.0), ("PAIR_CONNECT_S", "nan", 10.0)):
             saved = dict(os.environ)
             os.environ.update({"HOME": str(self.tmp), "QWEN38_PAIR_FILE": str(self.pair_file), "PAIR_PORT": "0",
                                "PROXY_BIND": "127.0.0.1", name: said})
@@ -3470,6 +3538,22 @@ class ThePairsPieces(unittest.TestCase):
                 os.environ.clear()
                 os.environ.update(saved)
             self.assertEqual(getattr(mod, name), want, f"{name}={said}")
+
+    def test_the_marker_of_an_engine_closing_on_a_hop_is_its_error_event_only(self):
+        m = self.mod
+        for event in (m.sse_error_openai(m.HOP_CLOSED, "upstream_closed"), m.sse_error(m.HOP_CLOSED)):
+            self.assertIn(m.HOP_CLOSED_B, event)
+        quoted = json.dumps({"choices": [{"delta": {"content": '"message": "keepalive-proxy: ' + m.HOP_CLOSED + '"'}}]})
+        self.assertNotIn(m.HOP_CLOSED_B, ("data: " + quoted).encode(), "model output quoting it bound a request")
+        self.assertNotIn(m.HOP_CLOSED_B, m.HOP_CLOSED.encode(), "the bare sentence, in any answer")
+
+    def test_the_bindings_that_ended_leave_as_others_come(self):
+        m = self.mod
+        self.addCleanup(m._KILLERS.clear)
+        m._KILLERS["old-ended"] = ("b", time.monotonic() - 1)
+        m.killer_note("new-one", "b")
+        self.assertNotIn("old-ended", m._KILLERS)
+        self.assertIn("new-one", m._KILLERS)
 
     def test_the_checkpoint_of_a_lane_is_read_from_its_engines_command(self):
         m = self.mod
