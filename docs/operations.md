@@ -53,7 +53,7 @@ arrives at your next `./install.sh` re-run and engine start.
 
 ## Extras (opt-in)
 
-Four field-tested pieces from the reference box, deliberately not part of the default
+Five field-tested pieces from the reference box, deliberately not part of the default
 install because they touch things beyond the serving stack:
 
 **`extras/opencode/auto-continue.js`**: an opencode plugin that automatically resumes a
@@ -111,6 +111,22 @@ trade-off in [extras/chromium-sandbox/README.md](../extras/chromium-sandbox/READ
 ```bash
 extras/chromium-sandbox/setup.sh              # sudo; applies now, persists on reboot
 extras/chromium-sandbox/setup.sh --uninstall  # back to Ubuntu's stock restriction
+```
+
+**`extras/cve-2026-98432/`**: mitigates CVE-2026-98432, a race in the kernel's IPv4 TCP
+handshake reachable over the network with no login, which Ubuntu rates Critical (CVSS 9.8). On
+2026-11-04 Ubuntu's tracker listed `linux-nvidia-6.17` as "Ignored (end of life)", so no fix will
+come for it, and `linux-nvidia-7.0` as "Vulnerable". It installs an nftables table of its own that
+drops IPv4 TCP packets carrying IP options, the trigger, loaded before the network by its own unit
+and never through `nftables.service` (whose stock config would flush Docker's rules), and turns MPTCP
+off. Nothing restarts; on the reference box Docker's rules were unchanged, the API and the cockpit
+answered, and a connect carrying an IP option was dropped. Remove it once a fixed kernel runs.
+Details in [extras/cve-2026-98432/README.md](../extras/cve-2026-98432/README.md).
+
+```bash
+extras/cve-2026-98432/setup.sh --dry-run    # what it would install; changes nothing
+extras/cve-2026-98432/setup.sh              # sudo; applies now, persists on reboot, then checks
+extras/cve-2026-98432/setup.sh --uninstall  # once a fixed kernel runs
 ```
 
 ## Upgrading from an earlier version

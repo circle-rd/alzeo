@@ -75,6 +75,13 @@ a request of a lane name no box serves was refused once bound here, and one boun
 that reads no key or once the pair was dissolved. tests/test_proxy_pair.py has two boxes that serve the 27B from their
 start, each rule its test, and each test fails on v1.42.1 or on the commit before its fix.
 
+**A kernel CVE, and an extra for it.** CVE-2026-98432, a race in the kernel's IPv4 TCP handshake reachable over the
+network with no login, is rated Critical (CVSS 9.8) by Ubuntu, whose tracker listed linux-nvidia-6.17 as "Ignored (end
+of life)" and linux-nvidia-7.0 as "Vulnerable" on 2026-11-04. extras/cve-2026-98432 mitigates it until a fixed kernel
+ships: an nftables table of its own that drops IPv4 TCP packets carrying IP options, and MPTCP off, opt-in and
+reversible, never run by the installer (docs/operations.md). Installed on the reference box: Docker's rules unchanged,
+the API and the cockpit answering, a connect carrying an IP option dropped.
+
 **What an update does.** The proxy (v6.52) and the cockpit restart. No engine, no lane and no unit file changes. A
 box without a pair works as before, and so does a pair that serves two models, but for one case: a request the other
 box sent, whose engine closed the connection while it had it, gets a 502 at once, where it could wait for that engine
