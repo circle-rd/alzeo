@@ -617,40 +617,54 @@ def unit_stopping_by_order():
     in review, 2026-11-04). A restart is no such order, whoever asked for it (decision 1030, 2026-11-04): the cockpit
     restarts an engine a request may have wedged (autoheal, zombie), and a request bound then waits here for its engine
     to come back. But a restart whose unit starts another checkpoint than the one this box served last is the cockpit's
-    Load of another checkpoint of the same lane, an order too (decision 1041, 2026-11-04), unless the cockpit makes it
-    to recover its engine (decision 1049, unit_recovering). A crash has no job until its restart is due. False when
-    systemd does not say."""
+    Load of another checkpoint of the same lane, an order too (decision 1041, 2026-11-04). Neither a stop nor a restart
+    is an order when the cockpit makes it to recover the engine (recovery_runs): its autoheal and zombie restarts
+    (decision 1049), its operator's stop or restart of an engine it shows wedged or zombie (decision 1055). A crash has
+    no job until its restart is due. False when systemd does not say."""
+    marked = recovery_runs()            # before the jobs: a run read after them may be the restart's next one
     jobs = unit_jobs()
-    if any(kind == "stop" for _, kind in jobs):
+    if any(kind == "stop" and not marked.get(unit) for unit, kind in jobs):
         return True
     served = _LAST_LANE["lane"][1]
     for unit, kind in jobs:
-        if kind in ("restart", "try-restart") and served:
+        if kind in ("restart", "try-restart") and served and not marked.get(unit):
             nxt = revision_in(unit_start_texts(unit))
-            if nxt and nxt != served and not unit_recovering(unit):
+            if nxt and nxt != served:
                 return True
     return False
 
 
-# Decision 1049 (2026-11-04): the cockpit says which restarts it makes to recover an engine (autoheal, zombie), each with
-# the run it restarts, the unit's InvocationID (cockpit.py, mark_recovery): such a restart is never an order, whatever
-# checkpoint it loads.
+# Decisions 1049 and 1055 (2026-11-04): the cockpit says which restarts and stops it makes to recover an engine, each
+# with the run it acts on (the unit's InvocationID) and when (cockpit.py, mark_recovery): such a restart or stop is never
+# an order, whatever checkpoint it loads.
 RECOVERY_FILE = os.path.expanduser(os.environ.get("QWEN38_RECOVERY_FILE") or "~/.config/qwen38/recovery-restarts.json")
+RECOVERY_MARK_S = 600.0                 # a mark older than this is not the recovery under way
 
 
-def unit_recovering(unit):
-    """True while the cockpit restarts unit to recover its engine (decision 1049): its mark names the run systemd stops
-    now. An update or switch-model.sh that staged another checkpoint (the cockpit's "next start loads") made the
-    autoheal's restart of a wedged engine read as the Load of that checkpoint (1041), and the request that wedged it
-    went unbound to the other box (the 4th review of v1.43.0, 2026-11-04). False when nothing says so."""
+def recovery_runs():
+    """{unit: True} for each unit named in PROXY_HOLD_UNITS whose run the cockpit restarts or stops now to recover its
+    engine: its mark names the unit's run and is younger than RECOVERY_MARK_S. A mark the cockpit left behind (its
+    restart refused) made a later Load of that run a recovery, and a run read after the jobs could be the restart's next
+    one, the recovery then an order (the 5th review of v1.43.0, 2026-11-04). {} when nothing says so; no systemctl
+    without a fresh mark."""
     try:
         with open(RECOVERY_FILE, encoding="utf-8") as f:
-            mark = json.load(f).get(unit) or {}
-        run = subprocess.run(["systemctl", "show", unit, "-p", "InvocationID", "--value"],
-                             capture_output=True, text=True, timeout=3).stdout.strip()
+            marks = json.load(f)
     except Exception:
-        return False
-    return bool(run) and isinstance(mark, dict) and mark.get("invocation") == run
+        return {}
+    now, found = time.time(), {}
+    for unit, mark in (marks.items() if isinstance(marks, dict) else ()):
+        at = mark.get("at") if isinstance(mark, dict) else None
+        if unit not in HOLD_UNITS or not isinstance(at, (int, float)) or not 0 <= now - at < RECOVERY_MARK_S:
+            continue
+        try:
+            run = subprocess.run(["systemctl", "show", unit, "-p", "InvocationID", "--value"],
+                                 capture_output=True, text=True, timeout=3).stdout.strip()
+        except Exception:
+            continue
+        if run and mark.get("invocation") == run:
+            found[unit] = True
+    return found
 
 
 def with_scripts(text):
@@ -979,14 +993,20 @@ def peer_may_serve(conf, name):
     lane's answer after 30 s (decision 986; the 4th review of v1.43.0, 2026-11-04)."""
     now = time.monotonic()
     for p in conf.get("peers") or ():
-        row = _PAIR_MODELS.get(p["name"]) or {}
+        row = _PAIR_MODELS.get(p["name"])
+        if row is None:
+            if now - _PAIR["loaded"] < PAIR_FIRST_READ_S:
+                return True                 # never read since pair.json was: it may
+            continue
         if name in (row.get("models") or ()):
             return True
-        if row.get("models"):
-            continue                        # read, and it serves another model
+        if not row.get("error"):
+            # read, and it serves another model now, a 409 "moved" included, which leaves no error: waited_for's rule,
+            # where this copy kept its last list 15 minutes (the 5th review of v1.43.0, 2026-11-04)
+            continue
         if row.get("known") is None:
             if now - _PAIR["loaded"] < PAIR_FIRST_READ_S:
-                return True                 # never read yet: it may
+                return True                 # never read well yet: it may
         elif name in row["known"] and now - (row.get("known_ts") or 0) < PAIR_KNOWN_WAIT_S:
             return True                     # its read failed, and its last good list named it
     return False
@@ -3466,6 +3486,10 @@ PAIR_SHARE_CONNECT_S = PAIR_SHARE_CONNECT_S if math.isfinite(PAIR_SHARE_CONNECT_
 # silence is a box that went (a power cut sends no FIN), and the client's stream is cut instead of waiting
 # MAX_SILENCE_S with nothing (found in review, 2026-11-02)
 PAIR_STREAM_SILENCE_S = float(os.environ.get("PAIR_STREAM_SILENCE_S") or 0) or max(4 * KEEPALIVE_S, 60.0)
+# Decision 1054 (2026-11-04): how long a request whose client left at a death the other box relayed waits for an order the
+# other box says after it, before it is bound (1019)
+PAIR_ORDER_GRACE_S = float(os.environ.get("PAIR_ORDER_GRACE_S") or 5)
+PAIR_ORDER_GRACE_S = PAIR_ORDER_GRACE_S if math.isfinite(PAIR_ORDER_GRACE_S) and PAIR_ORDER_GRACE_S >= 0 else 5.0
 PAIR_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,39}")
 _PAIR = {"stamp": None, "conf": None, "error": None, "seen": 0.0, "loaded": 0.0}
 # decision 986 and what a review of it found (2026-11-03): a lane name no box lists waits (503) only for a box
@@ -4990,11 +5014,13 @@ def _lane_away_read():
     names = names_in(texts) if texts else frozenset()
     if names:
         return names, (revision_in(texts) or PAIR_CHECKPOINT)
+    marked = recovery_runs()            # before the jobs, as unit_stopping_by_order reads them
     jobs = unit_jobs()
-    if any(kind == "stop" for _, kind in jobs):
+    if any(kind == "stop" and not marked.get(unit) for unit, kind in jobs):
         # its lane stopped by order (a Load of another lane, the Stop button): the model it served is not this box's any
         # more, and goes to the other box whatever its checkpoint; it was held through the next lane's whole boot, then
-        # refused (the delta's 3rd review, 2026-11-04)
+        # refused (the delta's 3rd review, 2026-11-04). A stop the cockpit makes to recover a wedged engine is no
+        # order (decision 1055): its lane is on its way back, and keeps its checkpoint
         return frozenset(), None
     for unit, kind in jobs:
         if kind in ("restart", "try-restart"):
@@ -7724,7 +7750,10 @@ class H(BaseHTTPRequestHandler):
                 except OSError:
                     self._done("CLIENT GONE during pair"); return None
                 sock = getattr(getattr(req, "upstream", None), "kept_sock", None)
-                if sock is not None:
+                if sock is not None and "text/event-stream" in ctype:
+                    # an SSE stream's silence is bounded: the other box's keeper writes into it during its prefill.
+                    # NDJSON carries no keepalive, its prefill silent as a non-streamed answer's: bounded, the long
+                    # prompt of an Ollama stream was cut and bound 10 minutes (the 5th review of v1.43.0, 2026-11-04)
                     try: sock.settimeout(PAIR_STREAM_SILENCE_S)
                     except OSError: pass
                 sse, tail, anthropic = "text/event-stream" in ctype, b"", self.path.startswith("/v1/messages")
@@ -7733,6 +7762,12 @@ class H(BaseHTTPRequestHandler):
                 part = b""                  # NDJSON: a line not whole yet, relayed once it is
 
                 def gone():
+                    nonlocal ordered
+                    if died and not ordered and not left.is_set():
+                        # its client gone at the death it relayed (the SDKs raise on that event): what the other box
+                        # still sends is read a moment, never relayed, for an order it says after the death (decision
+                        # 1054, the 5th review of v1.43.0, 2026-11-04). The connection closed already, it binds
+                        ordered = self._order_after(resp, sock)
                     if died and not ordered:
                         # a death it relayed, its client gone before the stream's end: bound all the same (1019), where
                         # the binding waited for that end (the 4th review of v1.43.0, 2026-11-04)
@@ -7809,6 +7844,28 @@ class H(BaseHTTPRequestHandler):
                 except Exception: pass
         finally:
             done.set()
+
+    def _order_after(self, resp, sock):
+        """True when the other box says within PAIR_ORDER_GRACE_S that it ended this request by order (decisions 1031 and
+        1054): what it sends is read up to that or its end, never relayed (its client left)."""
+        deadline, tail = time.monotonic() + PAIR_ORDER_GRACE_S, b""
+        try:
+            while True:
+                left_s = deadline - time.monotonic()
+                if left_s <= 0:
+                    return False
+                if sock is not None:
+                    sock.settimeout(left_s)
+                b = resp.read1(65536)
+                if not b:
+                    return False
+                tail = (tail + b)[-(len(b) + 4096):]
+                if b"x_alzeo_ended" in tail and ended_by_order_in(tail):
+                    log(f"{self._peer} pair: its client gone, the other box said after the death that it ended the "
+                        f"request by order: nothing is bound (decision 1054)")
+                    return True
+        except (OSError, ValueError, http.client.HTTPException):
+            return False
 
     def _sampling_refused(self, body):
         """True when the sampling guard answered this body: a 400 for a field the engine dies on,
