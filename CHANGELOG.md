@@ -1,6 +1,6 @@
 # Changelog
 
-## v1.43.0 (2026-11-03): two boxes that serve one model share its requests, a conversation staying on the box that holds it
+## v1.43.0 (2026-11-05): two boxes that serve one model share its requests, a conversation staying on the box that holds it
 
 **Two boxes that serve one model share its requests.** Until now, the box a request was sent to served every model it
 loads itself, and the other box of the pair got none of its requests. When both boxes load the same lane, they now
