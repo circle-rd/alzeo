@@ -40,6 +40,13 @@ import localports  # noqa: E402
 REPO = pathlib.Path(__file__).resolve().parents[1]
 KEY_1, KEY_2 = "k-entry-111", "k-peer-222"
 TEST_REV = "1a2b3c4d5e" * 4            # the checkpoint every test box says it serves (PAIR_CHECKPOINT, decision 1018)
+# What vllm 0.29.0 (the pinned image) answers when its EngineCore died: rendered from its own code on the reference box
+# (create_error_response of an EngineDeadError, by starlette's JSONResponse; a stream's event by json.dumps)
+VLLM_DEAD_500 = (b'{"error":{"message":"EngineCore encountered an issue. See stack trace (above) for the root cause.",'
+                 b'"type":"InternalServerError","param":null,"code":500}}')
+VLLM_DEAD_EVENT = json.dumps({"error": {"message": "EngineCore encountered an issue. See stack trace (above) for the "
+                                                   "root cause.", "type": "InternalServerError", "param": None,
+                                        "code": 500}}).encode()
 PAIR_TTL = 2                        # PAIR_TTL_S of the entry: its lists of the peer are read again after it
 OPENSSL_CERT = ["-x509", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:P-256", "-nodes", "-days", "36500",
                 "-addext", "keyUsage=critical,digitalSignature,keyCertSign"]
@@ -201,6 +208,10 @@ def fake_engine(name, model):
             if self.path == "/tokenize":            # the size guard's count: two characters a token
                 if Handler.mode == "count_fails":       # an engine stopping: its count says 503
                     return self.reply({"error": {"message": "stopping", "type": "server_error"}}, 503)
+                if Handler.mode == "count_dies":        # an engine that dies on the count: closed, no answer
+                    self.close_connection = True
+                    self.connection.shutdown(socket.SHUT_RDWR)
+                    return
                 return self.reply({"tokens": [], "count": len(json.dumps(body)) // 2, "max_model_len": 9990})
             Handler.users.append(body.get("user"))
             Handler.bodies.append(body)
@@ -210,6 +221,14 @@ def fake_engine(name, model):
                 time.sleep(body.get("x_die_after", 0))  # an engine that dies on it, at once or after a while
                 self.close_connection = True
                 self.connection.shutdown(socket.SHUT_RDWR)
+                return
+            if Handler.mode == "vllm_dead":             # vLLM 0.29.0's EngineCore died: its 500, byte for byte
+                out = VLLM_DEAD_500
+                self.send_response(500)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(out)))
+                self.end_headers()
+                self.wfile.write(out)
                 return
             time.sleep(body.get("x_delay", Handler.delay))
             if self.path.startswith("/v1/messages"):
@@ -241,6 +260,10 @@ def fake_engine(name, model):
                 part = f"data: {ev}\n\n".encode()
                 self.wfile.write(b"%x\r\n%s\r\n" % (len(part), part)); self.wfile.flush()
                 time.sleep(0.05)
+                if Handler.mode == "vllm_dead_stream":  # its EngineCore died during the stream: its error event
+                    part = b"data: " + VLLM_DEAD_EVENT + b"\n\n"
+                    self.wfile.write(b"%x\r\n%s\r\n0\r\n\r\n" % (len(part), part)); self.wfile.flush()
+                    return
                 if Handler.mode == "cut" and i == 1:
                     self.connection.shutdown(socket.SHUT_RDWR)      # the engine dies mid-stream
                     self.close_connection = True
@@ -2161,6 +2184,7 @@ class TwoBoxesServeOneModel(PairFixture, unittest.TestCase):
         self.assertNotIn(b"HTTP/1.1 502", out)
         self.assertFalse(self.until_in_journal("spark1", "UPSTREAM CUT pair", within=1.0),
                          "the relay of the other box's stream broke")
+        self.assert_said("spark1", "502 pair upstream")                       # not "ok pair" (review, 2026-11-04)
         # sent again: its engine closed on it, so that box or nowhere (decision 1019), its engine away now (503)
         self.E2.mode = "busy"
         st, out, _ = self.call("/v1/chat/completions", body)       # the same body: its engine says 503 first
@@ -2233,6 +2257,59 @@ class TwoBoxesServeOneModel(PairFixture, unittest.TestCase):
                 for th in held:
                     th.join(30)
                 self.E1.users.clear()
+
+    def test_a_box_that_refuses_this_boxs_certificate_never_had_the_request(self):
+        # decision 1017: under TLS 1.3 the other box refuses this box's certificate (re-paired, its entry of this box
+        # replaced) at the first read, the request sent: it was said lost, bound there and that box paused, where its
+        # proxy never read it (review, 2026-11-04). Its list was read before, so the entry still lists the model there
+        Peer = fake_peer(["qwen3.8-27b", "marker-tls"], PEER_ANSWER)
+        state = {"ctx": server_ctx("spark2", ("spark1",))}
+
+        class Switching(Engine):
+            def get_request(self):
+                sock, addr = self.socket.accept()
+                return state["ctx"].wrap_socket(sock, server_side=True), addr
+        port = localports.held(self)
+        srv = localports.serve(port, Switching, Peer)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        self.addCleanup(srv.server_close)
+        self.addCleanup(srv.shutdown)
+        entry = self.spare_proxy("spark1-tls", KEY_1, peers=(("spark2", port),))
+        self.until_listed("marker-tls", port=entry)
+        state["ctx"] = server_ctx("spark2", ("spark9",))                     # this box's certificate refused from now
+        held = self.busy(self.E1, entry, KEY_1, "local-only", 1, 3.0)          # one here, none there: it goes there
+        st, out, _ = self.call("/v1/chat/completions", self.chat("qwen3.8-27b"), port=entry)
+        self.assertEqual(st, 200, out[:300])
+        self.assertIn(b"from spark1", out, "a request the other box's TLS refused was said lost")
+        self.assertEqual(Peer.seen, [])
+        self.assert_said("spark1-tls", "refused this box's certificate")
+        for th in held:
+            th.join(30)
+
+    def test_a_client_that_leaves_while_a_box_that_took_its_request_reads_it_pauses_nothing(self):
+        # the client left while its body was on its way to a box that took the connection: this request's own watch
+        # cut it, and that healthy box was paused 30 s as one that does not answer (review, 2026-11-04)
+        Base = fake_peer(["qwen3.8-27b", "marker-slow-read"], PEER_ANSWER)
+
+        class Slow(Base):
+            def do_POST(self):
+                time.sleep(8)                                                   # it reads nothing of the body yet
+        entry = self.spare_proxy("spark1-slow-read", KEY_1, peers=(("spark2", tls_peer(self, Slow)),))
+        self.until_listed("marker-slow-read", port=entry)
+        held = self.busy(self.E1, entry, KEY_1, "local-only", 1, 6.0)          # one here, none there: it goes there
+        body = json.dumps(dict(self.chat("qwen3.8-27b"), messages=[{"role": "user", "content": "x" * (64 << 20)}]))
+        s = socket.create_connection(("127.0.0.1", entry), timeout=60)
+        try:
+            s.sendall(f"POST /v1/chat/completions HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\n"
+                      f"Authorization: Bearer {KEY_1}\r\nContent-Length: {len(body)}\r\n\r\n".encode() + body.encode())
+            time.sleep(2.5)                                                     # its body on its way, unread there
+        finally:
+            s.close()                                                           # the client leaves
+        self.assert_said("spark1-slow-read", "CLIENT GONE during pair")
+        self.assertFalse(self.until_in_journal("spark1-slow-read", "its client left", within=2.0),
+                         "a box that took the connection was paused as one that does not answer")
+        for th in held:
+            th.join(30)
 
     def test_a_shared_request_carries_this_boxs_checkpoint_and_never_the_clients(self):
         # decision 1018: the checkpoint the other box must serve a shared request from comes with it, set by the entry
@@ -2430,6 +2507,78 @@ class TwoBoxesServeOneModel(PairFixture, unittest.TestCase):
         st, out, _ = self.call("/v1/chat/completions", self.chat("qwen3.8-27b"))
         self.assertEqual(st, 200, out[:300])
         self.assertIn(b"from spark2", out)
+
+    def test_a_request_a_dead_vllm_engine_answered_stays_here_when_sent_again(self):
+        # decision 1019: vLLM answers the requests in flight when its EngineCore died with a 500, relayed and bound to
+        # nothing: the SDKs' retry went to the other box, which the same request could take down (review, 2026-11-04)
+        r = self.turns("conv-vllm-dead", 1)[0]
+        self.E1.mode = "vllm_dead"
+        st, out, _ = self.call("/v1/chat/completions", r)
+        self.assertEqual(st, 500, out[:300])
+        self.E1.mode = "ok"
+        held = self.busy(self.E1, self.port1, KEY_1, "local-only", 5, 4.0)     # far apart: it would go there
+        st, out, _ = self.call("/v1/chat/completions", r)
+        self.assertEqual(st, 200, out[:300])
+        self.assertIn(b"from spark1", out, "sent again, a request vLLM's engine died on here went to the other box")
+        self.assertNotIn("conv-vllm-dead-0", self.E2.users)
+        for th in held:
+            th.join(30)
+
+    def test_a_request_a_dead_vllm_engine_ended_in_its_stream_stays_here_when_sent_again(self):
+        r = dict(self.turns("conv-vllm-dead-stream", 1)[0], stream=True)
+        self.E1.mode = "vllm_dead_stream"
+        st, out, _ = self.call("/v1/chat/completions", r)
+        self.assertEqual(st, 200, out[:300])
+        self.assertIn(b"EngineCore encountered an issue", out)
+        self.E1.mode = "ok"
+        held = self.busy(self.E1, self.port1, KEY_1, "local-only", 5, 4.0)     # far apart: it would go there
+        st, out, _ = self.call("/v1/chat/completions", r)
+        self.assertEqual(st, 200, out[:300])
+        self.assertIn(b"spark1-", out, "sent again, a request vLLM's engine died on during its stream went elsewhere")
+        self.assertNotIn("conv-vllm-dead-stream-0", self.E2.users)
+        for th in held:
+            th.join(30)
+
+    def test_a_request_the_other_boxs_dead_vllm_engine_answered_goes_there_or_nowhere(self):
+        r = self.turns("conv-vllm-dead-there", 1)[0]
+        held = self.busy(self.E1, self.port1, KEY_1, "local-only", 1, 6.0)     # one here, none there: it goes there
+        self.E2.mode = "vllm_dead"
+        st, out, _ = self.call("/v1/chat/completions", r)
+        self.assertEqual(st, 500, out[:300])
+        self.E2.mode = "busy"                                               # its engine away now: it says 503
+        st, out, _ = self.call("/v1/chat/completions", r)
+        self.assertEqual(st, 503, out[:300])
+        self.assertNotIn("conv-vllm-dead-there-0", self.E1.users, "sent again, it went to this box's engine")
+        for th in held:
+            th.join(30)
+
+    def test_an_engine_that_closes_the_connection_on_the_count_closed_it_on_the_request(self):
+        # decision 1019: the size guard's count is this request's prompt; an engine that closed the connection on it
+        # was said a failed count, which a hop answers 503 and the other box serves (review, 2026-11-04)
+        if not self.INPROC:
+            self.skipTest("this box's pool is set in this test's process")
+        self.mod._POOL.update(tokens=10000, window=9990, ts=time.time())
+        self.addCleanup(self.mod._POOL.update, tokens=None, window=None, ts=0.0)
+        self.E1.mode = "count_dies"
+        body = dict(self.chat("qwen3.8-27b"), messages=[{"role": "user", "content": "count " * 12000}],
+                    user="hop-count-dies")
+        st, out = self.tls_call(self.pport1, "/v1/chat/completions", body)[:2]
+        self.assertEqual(st, 502, out[:300])
+        self.assertIn(b"upstream_closed", out)
+
+    def test_a_request_bound_to_a_box_that_left_the_pair_goes_nowhere(self):
+        # decision 1019: bound to a box no longer in pair.json, it was served here, the fallback 1019 rules out
+        # (review, 2026-11-04)
+        if not self.INPROC:
+            self.skipTest("the binding is set in this test's process")
+        m = self.mod
+        self.addCleanup(m._KILLERS.clear)
+        r = self.turns("conv-bound-left", 1)[0]
+        m.killer_note(m.body_fingerprint(json.dumps(r).encode(), "/v1/chat/completions"), "spark7")
+        st, out, _ = self.call("/v1/chat/completions", r)
+        self.assertEqual(st, 503, out[:300])
+        self.assertIn(b"no longer in this pair", out)
+        self.assertNotIn("conv-bound-left-0", self.E1.users + self.E2.users)
 
     def test_this_engine_starting_its_lane_goes_to_no_other_checkpoint(self):
         # decision 1018: an update restarts this proxy and the engine together, and the 27B loads for minutes. This
@@ -2942,6 +3091,21 @@ class TwoBoxesServeOneModelInProcess(TwoBoxesServeOneModel):
 
     def test_this_engine_starting_its_lane_goes_to_no_other_checkpoint(self):
         super().test_this_engine_starting_its_lane_goes_to_no_other_checkpoint()
+
+    def test_a_request_a_dead_vllm_engine_answered_stays_here_when_sent_again(self):
+        super().test_a_request_a_dead_vllm_engine_answered_stays_here_when_sent_again()
+
+    def test_a_request_a_dead_vllm_engine_ended_in_its_stream_stays_here_when_sent_again(self):
+        super().test_a_request_a_dead_vllm_engine_ended_in_its_stream_stays_here_when_sent_again()
+
+    def test_a_request_the_other_boxs_dead_vllm_engine_answered_goes_there_or_nowhere(self):
+        super().test_a_request_the_other_boxs_dead_vllm_engine_answered_goes_there_or_nowhere()
+
+    def test_an_engine_that_closes_the_connection_on_the_count_closed_it_on_the_request(self):
+        super().test_an_engine_that_closes_the_connection_on_the_count_closed_it_on_the_request()
+
+    def test_a_request_bound_to_a_box_that_left_the_pair_goes_nowhere(self):
+        super().test_a_request_bound_to_a_box_that_left_the_pair_goes_nowhere()
 
     def test_a_request_sent_on_for_another_checkpoint_than_this_boxs_is_refused(self):
         super().test_a_request_sent_on_for_another_checkpoint_than_this_boxs_is_refused()

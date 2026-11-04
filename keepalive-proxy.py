@@ -3187,6 +3187,17 @@ class RidUnreadable(Exception):
 # event of a stream its hold opened): the other box knows by it that this request may be what took an engine down.
 HOP_CLOSED = "this box's engine closed the connection while it had the request"
 HOP_CLOSED_B = b'"message": "keepalive-proxy: ' + HOP_CLOSED.encode() + b'"'   # as its error event writes it
+# vLLM's answer to the requests in flight when its EngineCore died (EngineDeadError, vllm 0.29.0 as pinned: an HTTP 500
+# '{"error":{"message":"EngineCore encountered an issue. ..."', or an error event of a stream begun, json.dumps' spaces),
+# after which its server stops: an engine that went down with the request, as one that closed the connection (decision
+# 1019). Matched as JSON only: model output that quotes the sentence has its quotes escaped (review, 2026-11-04).
+ENGINE_DIED_RE = re.compile(rb'"message":\s?"EngineCore encountered an issue\.')
+# A fatal alert of the handshake at the first read of a request sent on: under TLS 1.3 the other box checks this box's
+# certificate after this box's side of the handshake ended and the request went out, and refuses it there (re-paired,
+# its entry of this box replaced). Its proxy never read the request: it was said lost, bound there and that box paused
+# (found in review, 2026-11-04; measured on the reference box: TLSV1_ALERT_UNKNOWN_CA, 40 times in 40, under 9 KB).
+_TLS_REFUSED = re.compile(r"_ALERT_(UNKNOWN_CA|BAD_CERTIFICATE|CERTIFICATE_\w+|UNSUPPORTED_CERTIFICATE|ACCESS_DENIED|"
+                          r"DECRYPT_ERROR|HANDSHAKE_FAILURE)")
 
 
 def engine_refused(e):
@@ -5493,6 +5504,8 @@ class H(BaseHTTPRequestHandler):
         raw = herr.read()
         try: herr.close()
         except Exception: pass
+        if herr.code == 500 and ENGINE_DIED_RE.search(raw):
+            self._killed_here()             # vLLM's engine died with this request (decision 1019)
         if herr.code in (502, 503, 504):
             self._unavailable(f"it answered HTTP {herr.code}, as it does while starting or shutting down", quiet)
             self._done(f"503 engine unreachable (upstream {herr.code})", quiet=quiet); return
@@ -6437,6 +6450,8 @@ class H(BaseHTTPRequestHandler):
             now = time.time() - self._t0
             if self._first is None: self._first = now
             self._last = now; self._bytes += len(val)
+            if b"EngineCore" in val and ENGINE_DIED_RE.search(val):
+                self._killed_here()         # vLLM's engine died during this answer (decision 1019)
             self._note_rid(val)
             if not anthropic and engine_aborted(val):
                 # v6.47: the engine ended this generation as aborted (finish_reason "abort", which
@@ -6852,8 +6867,16 @@ class H(BaseHTTPRequestHandler):
             bound = killer_box(self._killer_fp)
             if bound is not None:
                 peer = next((p for p in conf["peers"] if p["name"] == bound), None)
+                if peer is None and bound != (conf.get("name") or ""):
+                    # bound to a box that left the pair since: served here, it was the fallback 1019 rules out (found
+                    # in review, 2026-11-04)
+                    self._pair_refuse(503, "engine_unavailable", f"box {bound}, whose engine or connection closed on "
+                                      f"this request moments ago, is no longer in this pair: this request is served "
+                                      f"nowhere else for a while; send it again later", pair_served_map(conf, local))
+                    self._done("503 pair request bound elsewhere")
+                    return True
                 if peer is None:
-                    # this box's engine closed on it moments ago (or a box that left the pair): here or nowhere
+                    # this box's engine closed on it moments ago: here or nowhere
                     if local is not None and name not in local:
                         # this box serves another model now: never that model for this one (docs/pair.md), and never
                         # the other box (found in review, 2026-11-04)
@@ -7292,7 +7315,7 @@ class H(BaseHTTPRequestHandler):
                     self._pair_refuse(502, "upstream_too_large", f"the answer of box {peer['name']} is over "
                                       f"{PAIR_ANSWER_MAX} bytes", pair_served_map(conf, local))
                     self._done("502 pair answer too large"); return None
-                if e.code == 502 and b'"upstream_closed"' in data:
+                if (e.code == 502 and b'"upstream_closed"' in data) or (e.code == 500 and ENGINE_DIED_RE.search(data)):
                     killer_note(self._killer_fp, peer["name"])                          # decision 1019
                 if e.code == 409 and b'"model_not_served"' in data:
                     log(f"{self._peer} pair: {peer['name']} serves another model now; the lists are read again")
@@ -7309,19 +7332,24 @@ class H(BaseHTTPRequestHandler):
                     self._done("CLIENT GONE during pair")
                     # its client left while that box did not answer: still a box that does not answer, paused and its
                     # conversations forgotten as after any refusal, where each retry waited for it again (found in
-                    # review of v1.43.0, 2026-11-03)
-                    return "gone" if fallback and isinstance(e, urllib.error.URLError) else None
+                    # review of v1.43.0, 2026-11-03). Not a box that took the connection: this request's own watch cut
+                    # it when its client left, its body still on its way, and a healthy box was paused 30 s (found in
+                    # review, 2026-11-04)
+                    took = getattr(getattr(req, "upstream", None), "kept_sock", None) is not None
+                    return "gone" if fallback and isinstance(e, urllib.error.URLError) and not took else None
                 why = _pair_why(e)
                 # urllib wraps in a URLError what h.request raised (the connection, its TLS, the send): the other box
                 # never had the request whole. What getresponse raised comes bare: it had it, and closed the
                 # connection with no answer (an Abort all there, its memory floor, a restart of its proxy, its power).
                 # That one runs nowhere else: an abort there is not undone here, and a request that took that box down
                 # does not take this one down too (decision 1017, review of v1.43.0, 2026-11-03)
-                had = not isinstance(e, urllib.error.URLError)
+                refused = isinstance(e, ssl.SSLError) and bool(_TLS_REFUSED.search(str(getattr(e, "reason", "") or "")))
+                had = not isinstance(e, urllib.error.URLError) and not refused
                 if had:
                     killer_note(self._killer_fp, peer["name"])                          # decision 1019
                 log(f"{self._peer} pair: {peer['name']} "
                     + (f"had the request and closed the connection with no answer ({why})" if had
+                       else f"refused this box's certificate: is this box still in its pair.json? ({why})" if refused
                        else f"does not answer ({why})"))
                 if fallback:
                     return "lost" if had else "fallback"
@@ -7371,6 +7399,7 @@ class H(BaseHTTPRequestHandler):
                     try: sock.settimeout(PAIR_STREAM_SILENCE_S)
                     except OSError: pass
                 sse, tail, anthropic = "text/event-stream" in ctype, b"", self.path.startswith("/v1/messages")
+                died = False                # its engine closed on it or died during it: no "ok pair" (review, 2026-11-04)
                 while True:
                     try:
                         b = resp.read1(65536)
@@ -7390,8 +7419,11 @@ class H(BaseHTTPRequestHandler):
                         self._done("UPSTREAM CUT pair"); return None
                     if not b:
                         break
-                    if HOP_CLOSED_B in tail + b:    # its engine closed on it after its hold opened the stream (1019)
+                    seen = tail + b
+                    if HOP_CLOSED_B in seen or (b"EngineCore" in seen and ENGINE_DIED_RE.search(seen)):
+                        # its engine closed on it after its hold opened the stream, or vLLM's died during it (1019)
                         killer_note(self._killer_fp, peer["name"])
+                        died = True
                     if sse:                         # role 8, line by line: a read may end in the middle of one
                         lines = tail + b
                         cut = lines.rfind(b"\n")
@@ -7406,7 +7438,7 @@ class H(BaseHTTPRequestHandler):
                     except OSError:
                         self._done("CLIENT GONE during pair"); return None
                 self._finish()
-                self._done("ok pair")
+                self._done("502 pair upstream" if died else "ok pair")
                 return None
             finally:
                 try: resp.close()
@@ -7523,9 +7555,14 @@ class H(BaseHTTPRequestHandler):
                 except EngineUnreachable as e:
                     invalidate_pool()   # this engine is restarting; its pool is not ours
                     _gen_discard(self)  # held, it is not in flight, as on the other returns that hold
-                    # "count": the size guard's own count failed, the generation never went: not an engine that closed
-                    # the connection while it had it, which a hop answers 502 and no box takes over (found in review
-                    # of v1.43.0, 2026-11-03: a count's 5xx or timeout gave the other box a 502)
+                    # "count": the size guard's own count failed (a 5xx, a timeout), the generation never went: not an
+                    # engine that closed the connection while it had it, which a hop answers 502 and no box takes over
+                    # (found in review of v1.43.0, 2026-11-03: a count's 5xx or timeout gave the other box a 502). An
+                    # engine that closed the connection on the count closed it on this request (decision 1019, found
+                    # in review, 2026-11-04)
+                    cause = getattr(e.__cause__, "reason", e.__cause__)
+                    if isinstance(cause, (ConnectionResetError, ConnectionAbortedError, BrokenPipeError)):
+                        return ("unreachable", str(e), None)
                     return ("unreachable", str(e), "refused" if engine_refused(e) else "count")
                 except TooLongToCount as e:
                     count, uncounted = None, e.args[0]
