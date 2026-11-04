@@ -617,8 +617,9 @@ def unit_stopping_by_order():
     in review, 2026-11-04). A restart is no such order, whoever asked for it (decision 1030, 2026-11-04): the cockpit
     restarts an engine a request may have wedged (autoheal, zombie), and a request bound then waits here for its engine
     to come back. But a restart whose unit starts another checkpoint than the one this box served last is the cockpit's
-    Load of another checkpoint of the same lane, an order too (decision 1041, 2026-11-04). A crash has no job until its
-    restart is due. False when systemd does not say."""
+    Load of another checkpoint of the same lane, an order too (decision 1041, 2026-11-04), unless the cockpit makes it
+    to recover its engine (decision 1049, unit_recovering). A crash has no job until its restart is due. False when
+    systemd does not say."""
     jobs = unit_jobs()
     if any(kind == "stop" for _, kind in jobs):
         return True
@@ -626,19 +627,42 @@ def unit_stopping_by_order():
     for unit, kind in jobs:
         if kind in ("restart", "try-restart") and served:
             nxt = revision_in(unit_start_texts(unit))
-            if nxt and nxt != served:
+            if nxt and nxt != served and not unit_recovering(unit):
                 return True
     return False
 
 
+# Decision 1049 (2026-11-04): the cockpit says which restarts it makes to recover an engine (autoheal, zombie), each with
+# the run it restarts, the unit's InvocationID (cockpit.py, mark_recovery): such a restart is never an order, whatever
+# checkpoint it loads.
+RECOVERY_FILE = os.path.expanduser(os.environ.get("QWEN38_RECOVERY_FILE") or "~/.config/qwen38/recovery-restarts.json")
+
+
+def unit_recovering(unit):
+    """True while the cockpit restarts unit to recover its engine (decision 1049): its mark names the run systemd stops
+    now. An update or switch-model.sh that staged another checkpoint (the cockpit's "next start loads") made the
+    autoheal's restart of a wedged engine read as the Load of that checkpoint (1041), and the request that wedged it
+    went unbound to the other box (the 4th review of v1.43.0, 2026-11-04). False when nothing says so."""
+    try:
+        with open(RECOVERY_FILE, encoding="utf-8") as f:
+            mark = json.load(f).get(unit) or {}
+        run = subprocess.run(["systemctl", "show", unit, "-p", "InvocationID", "--value"],
+                             capture_output=True, text=True, timeout=3).stdout.strip()
+    except Exception:
+        return False
+    return bool(run) and isinstance(mark, dict) and mark.get("invocation") == run
+
+
 def with_scripts(text):
-    """A command and the scripts it names, their comments left out: what a lane's engine runs ([] for no command)."""
+    """A command and the scripts it names, their comments left out: what a lane's engine runs ([] for no command). A
+    script is read whatever its bytes: one edited by hand in Latin-1 raised out of every reader of the unit, and the
+    request then asking died with no answer (the 4th review of v1.43.0, 2026-11-04)."""
     if not text:
         return []
     found = [text]
     for script in re.findall(r"(/\S+\.sh)\b", text):
         try:
-            with open(script, encoding="utf-8") as f:
+            with open(script, encoding="utf-8", errors="replace") as f:
                 found.append("\n".join(ln for ln in f.read().splitlines() if not ln.lstrip().startswith("#")))
         except OSError:
             pass
@@ -930,9 +954,10 @@ _LAST_LANE = {"lane": (frozenset(), None)}
 
 
 def killer_note(fp, box):
-    """The engine of box (this box: its name, or "" for a box alone) closed the connection on the request of fingerprint
-    fp: its body as routing saw it (_pair_routed), never a body this proxy rewrote since (a tool schema, a reasoning
-    effort, the served name), whose fingerprint the client's retry never matched (found in review, 2026-11-04)."""
+    """The engine of box ("" for this box, whatever its pair.json says: _killed_here) closed the connection on the
+    request of fingerprint fp: its body as routing saw it (_pair_routed), never a body this proxy rewrote since (a tool
+    schema, a reasoning effort, the served name), whose fingerprint the client's retry never matched (found in review,
+    2026-11-04)."""
     if not fp or PAIR_KILLER_KEEP_S <= 0:
         return
     now = time.monotonic()
@@ -946,16 +971,24 @@ def killer_note(fp, box):
 
 
 def peer_may_serve(conf, name):
-    """True when a box of the pair may serve name: its list names it now, named it at its last good read (a read that
-    failed keeps those in "known"), or was never read since pair.json was. Only the current list counted, and a box
-    whose read failed, or a pair.json read again, let this box answer with the other model it serves now (the delta's
-    3rd review, 2026-11-04)."""
+    """True when a box of the pair may serve name: its list names it now; its read failed and its last good list named
+    it, for PAIR_KNOWN_WAIT_S; or it was never read, for the PAIR_FIRST_READ_S after pair.json was read. Only the
+    current list counted, and a box whose read failed, or a pair.json read again, let this box answer with the other
+    model it serves now (the delta's 3rd review, 2026-11-04). Those are _pair_served_nowhere's bounds: without them, a
+    box off for an hour had a request bound here refused for 10 minutes, where the same request unbound got this box's
+    lane's answer after 30 s (decision 986; the 4th review of v1.43.0, 2026-11-04)."""
+    now = time.monotonic()
     for p in conf.get("peers") or ():
-        row = _PAIR_MODELS.get(p["name"])
-        if row is None or row.get("known") is None and not row.get("models"):
-            return True                     # never read: it may
-        if name in (row.get("models") or ()) or name in (row.get("known") or ()):
+        row = _PAIR_MODELS.get(p["name"]) or {}
+        if name in (row.get("models") or ()):
             return True
+        if row.get("models"):
+            continue                        # read, and it serves another model
+        if row.get("known") is None:
+            if now - _PAIR["loaded"] < PAIR_FIRST_READ_S:
+                return True                 # never read yet: it may
+        elif name in row["known"] and now - (row.get("known_ts") or 0) < PAIR_KNOWN_WAIT_S:
+            return True                     # its read failed, and its last good list named it
     return False
 
 
@@ -3243,6 +3276,7 @@ def forget_engine_rules():
     _rid_override_honoured = None
     _UNIT_OVERRIDE.update(ts=-1e9, set=None)
     _UNIT_FACTS.update(ts=-1e9, texts=None)     # another lane: its slots and its checkpoint read again (v6.52)
+    _LANE_AWAY.update(ts=-1e9)
 
 
 def note_engine(names, owner):
@@ -4805,15 +4839,7 @@ def unit_sets_rid_override():
             props = dict(ln.split("=", 1) for ln in block.splitlines() if "=" in ln)
             if props.get("ActiveState") != "active":
                 continue
-            texts = [props.get("ExecStart", "")]
-            for script in re.findall(r"(/\S+\.sh)\b", texts[0]):
-                try:
-                    with open(script, encoding="utf-8") as f:
-                        texts.append("\n".join(ln for ln in f.read().splitlines()
-                                               if not ln.lstrip().startswith("#")))
-                except OSError:
-                    pass
-            found = any(_OVERRIDE_ON.search(x) for x in texts)
+            found = any(_OVERRIDE_ON.search(x) for x in with_scripts(props.get("ExecStart", "")))
             break
     except Exception:
         found = None
@@ -4833,37 +4859,42 @@ PAIR_CHECKPOINT = PAIR_CHECKPOINT if re.fullmatch(r"[0-9a-f]{40}", PAIR_CHECKPOI
 
 def unit_texts():
     """The command the engine of the active unit named in PROXY_HOLD_UNITS runs now: the arguments its main process was
-    started with (/proc/<MainPID>/cmdline) and the scripts they name, their comments left out; or None when systemd
-    does not say (no unit named, none active, no main process to read). Every text lane's unit execs docker run, whose
-    arguments name its model, its checkpoint and its slots, a start under way included. The unit's own ExecStart says
-    what its NEXT start runs: switch-model.sh rewrites it and reloads systemd without a restart, and this box said the
-    stock checkpoint while its engine served the uncensored one until its next start (found in review, 2026-11-04; the
-    cockpit asks the engine, cockpit.py, for the same reason). Read again 10 s on at most, by one request at a time
-    (a burst at the cache's end ran one systemctl each, and a late one wrote its older answer), and forgotten with the
-    engine's rules when another engine serves (forget_engine_rules; found in review of v1.43.0, 2026-11-03). The rid
-    override keeps its own reader (unit_sets_rid_override)."""
+    started with (/proc/<MainPID>/cmdline) and the scripts they name, their comments left out; while it starts (a unit
+    activating, a main process that names no model yet), what the unit starts; or None when systemd does not say (no
+    unit named, none active, a read that failed, a main process gone or a zombie). Every text lane's unit execs docker
+    run, whose arguments name its model, its checkpoint and its slots, a start under way included. The unit's own
+    ExecStart says what its NEXT start runs: switch-model.sh rewrites it and reloads systemd without a restart, and this
+    box said the stock checkpoint while its engine served the uncensored one until its next start (found in review,
+    2026-11-04; the cockpit asks the engine, cockpit.py, for the same reason). Read again 10 s on at most, by one
+    request at a time (a burst at the cache's end ran one systemctl each, and a late one wrote its older answer), and
+    forgotten with the engine's rules when another engine serves (forget_engine_rules; found in review of v1.43.0,
+    2026-11-03); an unsure read is read again a second on. The rid override keeps its own reader
+    (unit_sets_rid_override)."""
     if not HOLD_UNITS:
         return None
     with _UNIT_FACTS_LOCK:
         now = time.monotonic()
         if now - _UNIT_FACTS["ts"] <= 10:
             return _UNIT_FACTS["texts"]
-        found, sure, states = None, True, []
+        found, sure, states = None, True, None
         try:
             out = subprocess.run(["systemctl", "show", *HOLD_UNITS, "-p", "ActiveState", "-p", "MainPID",
                                   "-p", "ExecStart"], capture_output=True, text=True, timeout=3)
             blocks = [dict(ln.split("=", 1) for ln in block.splitlines() if "=" in ln)
                       for block in (out.stdout.split("\n\n") if out.returncode == 0 else ())]
-            states = [b.get("ActiveState", "") for b in blocks]
+            if out.returncode == 0:
+                states = [b.get("ActiveState", "") for b in blocks]
             for props in blocks:
                 state = props.get("ActiveState")
                 if state not in ("active", "activating"):
                     continue
-                pid, cmd = props.get("MainPID", ""), ""
+                pid, cmd, alive = props.get("MainPID", ""), "", False
                 if pid.isdigit() and int(pid) > 0:
                     try:
                         with open(f"/proc/{int(pid)}/cmdline", "rb") as f:
                             cmd = " ".join(f.read().decode("utf-8", "replace").split("\0")).strip()
+                        with open(f"/proc/{int(pid)}/stat", "rb") as f:
+                            alive = f.read().rpartition(b")")[2].split()[:1] not in ([], [b"Z"], [b"X"])
                     except OSError:
                         cmd = ""
                 found = with_scripts(cmd)
@@ -4871,15 +4902,20 @@ def unit_texts():
                     # an engine that runs names its model in what it was started with. Its process between fork and
                     # exec (an empty command: 158 reads in 300 right after a start), systemd-executor before the exec
                     # (systemd 255), or gone names none: unsure, read again a second on, never kept 10 s (the delta's
-                    # reviews, 2026-11-04). A start under way (ExecStartPre, the wait before a restart) and that instant
-                    # read what the unit starts, as before v1.43.0
+                    # reviews, 2026-11-04). A start under way (ExecStartPre, the wait before a restart) and a process
+                    # that runs and names no model yet read what the unit starts, as before v1.43.0. A main process
+                    # gone or a zombie (a crash, before systemd reaps it) is no start: its unit's ExecStart is the NEXT
+                    # start, which an update or switch-model.sh may have changed, and this box said that checkpoint for
+                    # the one it served (the 4th review of v1.43.0, 2026-11-04)
                     sure = sure and state != "active"
-                    found = with_scripts(props.get("ExecStart", ""))
+                    found = with_scripts(props.get("ExecStart", "")) if alive or state != "active" else []
                 found = found or None
                 break
         except Exception:
             found = None
-        _UNIT_FACTS["states"] = tuple(states)
+        if states is None:
+            sure = False                # a read that failed says nothing, and is read again a second on
+        _UNIT_FACTS["states"] = tuple(states) if states is not None else None
         _UNIT_FACTS.update(ts=now if sure else now - 9, texts=found)
         return found
 
@@ -4913,12 +4949,37 @@ def names_in(texts):
     return frozenset(m.group(1) for x in texts for m in _SERVED_FLAG.finditer(x))
 
 
+_LANE_AWAY = {"ts": -1e9, "lane": None}
+_LANE_AWAY_LOCK = threading.Lock()
+
+
+def forget_unit_reads():
+    """Every answer of systemd kept here is asked again at the next read (a test that changes it)."""
+    with _UNIT_FACTS_LOCK:
+        _UNIT_FACTS["ts"] = -1e9
+    _HOLD_SEEN["ts"] = -1e9
+    with _LANE_AWAY_LOCK:
+        _LANE_AWAY["ts"] = -1e9
+
+
 def lane_away():
     """(names, checkpoint) of the lane this box serves while its engine does not answer: what the command of its
     engine says (a start under way: an update restarts this proxy and an engine of minutes of loading together), else,
     while a text lane is on its way back (a crash), what this proxy saw it serve last, else nothing. A client of the
-    stock 27B got the uncensored one from the other box while this box restarted (found in review, 2026-11-04)."""
-    _UNIT_FACTS["ts"] = -1e9                # read now: its engine away, a lane read 10 s ago may be the one leaving
+    stock 27B got the uncensored one from the other box while this box restarted (found in review, 2026-11-04). Read at
+    most once a second, by one request at a time: each request read systemd afresh while this box's engine was away,
+    two or three systemctl each, for hours on a box serving images (the 4th review of v1.43.0, 2026-11-04)."""
+    with _LANE_AWAY_LOCK:
+        if time.monotonic() - _LANE_AWAY["ts"] > 1 or _LANE_AWAY["lane"] is None:
+            _LANE_AWAY.update(lane=_lane_away_read(), ts=time.monotonic())
+        lane = _LANE_AWAY["lane"]
+    return _LAST_LANE["lane"] if lane == "last" else lane       # the lane seen last as it is now
+
+
+def _lane_away_read():
+    """lane_away's reading of systemd: (names, checkpoint), or "last" for the lane seen last."""
+    with _UNIT_FACTS_LOCK:
+        _UNIT_FACTS["ts"] = -1e9            # read now: its engine away, a lane read 10 s ago may be the one leaving
     texts = unit_texts()
     names = names_in(texts) if texts else frozenset()
     if names:
@@ -4934,14 +4995,17 @@ def lane_away():
             nxt = unit_start_texts(unit)
             if names_in(nxt):
                 return names_in(nxt), (revision_in(nxt) or PAIR_CHECKPOINT)     # what its restart brings back
-    if HOLD_UNITS and not any(s in ("active", "activating", "deactivating", "reloading")
-                              for s in _UNIT_FACTS.get("states") or ()) and not any(kind in _BACK_JOBS for _, kind in jobs):
+    states = _UNIT_FACTS.get("states")
+    if HOLD_UNITS and states is not None and not any(s in ("active", "activating", "deactivating", "reloading")
+                                                     for s in states) and not any(kind in _BACK_JOBS for _, kind in jobs):
         # no text lane up, starting, stopping or on its way back: this box serves images, video or no lane now, and the
         # model its lane served before is the other box's alone, sent there whatever its checkpoint (found re-reading
         # this rule, 2026-11-04: a box switched to images refused its clients the other box's 27B). A unit that stops
-        # with no job yet (a crash, before its restart is due) keeps the lane seen last (the delta's review)
+        # with no job yet (a crash, before its restart is due) keeps the lane seen last (the delta's review), and so does
+        # a read of systemd that failed: it said no text lane, and the model went to the other box whatever its
+        # checkpoint (the 4th review of v1.43.0, 2026-11-04)
         return frozenset(), None
-    return _LAST_LANE["lane"]
+    return "last"
 
 
 def unit_revision():
@@ -5662,6 +5726,10 @@ class H(BaseHTTPRequestHandler):
                 headers[k] = urllib.parse.urlunsplit(("", "", u.path or "/", u.query, ""))
         if died_by_order:
             headers[PAIR_ENDED] = "order"
+            if getattr(self, "_held_sse", False):
+                # a stream the keeper opened carries no header: its own event says so first, and the other box bound
+                # the request for 10 minutes (the 4th review of v1.43.0, 2026-11-04)
+                self._say_ended_by_order()
         try: self._answer(herr.code, headers, raw)
         except Exception: pass
         self._done(f"{herr.code} upstream")
@@ -6042,7 +6110,6 @@ class H(BaseHTTPRequestHandler):
                 me = (pair_conf() or {}).get("name") or "the other box"
                 self._pair_refuse(503, "engine_unavailable", f"box {me} ended this request by order (its Abort all, its "
                                   f"memory floor or a stop of its lane): send it again", {}, extra={PAIR_ENDED: "order"})
-                self._out_begun = True
         except OSError:
             pass
 
@@ -6864,7 +6931,15 @@ class H(BaseHTTPRequestHandler):
                 return
             if kind == "warming" and self._pair_take_over(asked, "this box's engine is warming up"):
                 return                      # its pool not measured yet: the other box's is (v6.52)
-            if self._pair_hop() and kind == "unreachable" and detail is None and not unit_stopping_by_order():
+            if self._pair_hop() and kind == "unreachable" and detail is None and unit_stopping_by_order():
+                # its lane stopped by order with the request in it, before a byte of its answer: the other box is told
+                # (decision 1031). A plain 503 had it serve the request itself, pause this box 30 s and count a failover
+                # (the 4th review of v1.43.0, 2026-11-04)
+                log(f"{self._peer} the engine closed the connection as its lane stopped by order ({why[:120]}): the "
+                    f"other box is told, and binds nothing")
+                self._say_ended_by_order()
+                self._done("503 pair stopped here"); return
+            if self._pair_hop() and kind == "unreachable" and detail is None:
                 # a request the other box sent on, whose engine here closed the connection while it had it: a 502, not
                 # the 503 the other box takes back to its own engine, which the same request could take down too.
                 # Through _pair_refuse: a stream the hold opened gets it as an error event, where a status line written
@@ -7169,8 +7244,9 @@ class H(BaseHTTPRequestHandler):
                 return False
             if not CLIENT_KEYS and not _door_key():
                 # after the other checkpoint, which sends nothing on: refused before, a box reading no key turned away
-                # what it holds for its own engine (the delta's 3rd review, 2026-11-04)
-                return self._own_key_refused(name)
+                # what it holds for its own engine (the delta's 3rd review, 2026-11-04), and a model of its own lane that
+                # the other box serves from the same checkpoint too: its own path holds it (the 4th review of v1.43.0)
+                return False if ours else self._own_key_refused(name)
             if attempt == 2:
                 # a box lists it and refused it twice (its list lags a switch): never answered here with this box's
                 # own model, which docs/pair.md promises; the client tries again (found in review, 2026-11-03)
@@ -7630,12 +7706,20 @@ class H(BaseHTTPRequestHandler):
                 sse, tail, anthropic = "text/event-stream" in ctype, b"", self.path.startswith("/v1/messages")
                 died = False                # its engine closed on it or died during it: no "ok pair" (review, 2026-11-04)
                 ordered = False             # it said it ends the request by order: nothing is bound (decision 1031)
+                part = b""                  # NDJSON: a line not whole yet, relayed once it is
+
+                def gone():
+                    if died and not ordered:
+                        # a death it relayed, its client gone before the stream's end: bound all the same (1019), where
+                        # the binding waited for that end (the 4th review of v1.43.0, 2026-11-04)
+                        killer_note(self._killer_fp, peer["name"])
+                    self._done("CLIENT GONE during pair")
                 while True:
                     try:
                         b = resp.read1(65536)
                     except (OSError, http.client.HTTPException) as e:
                         if left.is_set():
-                            self._done("CLIENT GONE during pair"); return None
+                            gone(); return None
                         # the peer's proxy ended its stream without the last chunk (its engine died, or
                         # the box went): the client's stream is cut the same way, never ended, so it
                         # reads the incomplete answer it is and retries (role 3's contract; found in
@@ -7651,6 +7735,21 @@ class H(BaseHTTPRequestHandler):
                         self._done("UPSTREAM CUT pair"); return None
                     if not b:
                         break
+                    if not sse:
+                        # the Ollama routes' NDJSON, line by line: the other box's end by order is a line of its own,
+                        # which no Ollama client reads (ollama-python's ChatResponse needs its message), so it stays
+                        # here; relayed, the client's parser failed on it (the 4th review of v1.43.0, 2026-11-04)
+                        lines = part + b
+                        cut = lines.rfind(b"\n") + 1
+                        b, part = lines[:cut], lines[cut:]
+                        if HOP_ENDED_NDJSON in b:
+                            kept = [ln for ln in b.split(b"\n")[:-1] if ln + b"\n" != HOP_ENDED_NDJSON]
+                            ordered = ordered or len(kept) < b.count(b"\n")
+                            b = b"".join(ln + b"\n" for ln in kept)
+                        if len(part) > 65536:
+                            b, part = b + part, b""     # a line that never ends goes as it comes
+                        if not b:
+                            continue
                     seen = tail + b
                     if b"x_alzeo_ended" in seen and ended_by_order_in(seen):
                         ordered = True
@@ -7668,7 +7767,12 @@ class H(BaseHTTPRequestHandler):
                     try:
                         self._chunk(b)
                     except OSError:
-                        self._done("CLIENT GONE during pair"); return None
+                        gone(); return None
+                if part:
+                    try:
+                        self._chunk(part)           # its last line, with no line end
+                    except OSError:
+                        gone(); return None
                 if died and not ordered:
                     # bound at the stream's end, once an order said before or after the death would have come (1019,
                     # 1031): a death vLLM relayed during an ordered stop was bound (the delta's 3rd review, 2026-11-04)

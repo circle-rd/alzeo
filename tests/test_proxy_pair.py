@@ -43,6 +43,7 @@ TEST_REV = "1a2b3c4d5e" * 4            # the checkpoint every test box says it s
 # What a box says before it cuts a request the other box sent on, which it ends by order (decision 1031)
 HOP_ENDED_OPENAI = (b'data: {"id":"keepalive","object":"chat.completion.chunk","created":0,"model":"keepalive",'
                     b'"choices":[],"x_alzeo_ended":"order"}\n\n')
+HOP_ENDED_NDJSON = b'{"x_alzeo_ended": "order"}\n'      # on the Ollama routes' NDJSON
 # What vllm 0.29.0 (the pinned image) answers when its EngineCore died: rendered from its own code on the reference box
 # (create_error_response of an EngineDeadError, by starlette's JSONResponse; a stream's event by json.dumps)
 VLLM_DEAD_500 = (b'{"error":{"message":"EngineCore encountered an issue. See stack trace (above) for the root cause.",'
@@ -177,7 +178,8 @@ def fake_engine(name, model):
         delay = 0.0
         mode = "ok"                 # "down": /v1/models answers 503 (a boot) ; "cut": a stream dies mid-way ;
                                     # "busy": every POST answers 503 ; "die": every POST is read, then the
-                                    # connection closed without an answer (an engine that died on it)
+                                    # connection closed without an answer (an engine that died on it) ;
+                                    # "vllm_dead_more": a stream whose EngineCore died, more events after it
 
         def log_message(self, *a):
             pass
@@ -226,6 +228,7 @@ def fake_engine(name, model):
                 self.connection.shutdown(socket.SHUT_RDWR)
                 return
             if Handler.mode == "vllm_dead":             # vLLM 0.29.0's EngineCore died: its 500, byte for byte
+                time.sleep(body.get("x_dead_after", 0))  # at once, or once a keeper opened the stream
                 out = VLLM_DEAD_500
                 self.send_response(500)
                 self.send_header("Content-Type", "application/json")
@@ -266,6 +269,15 @@ def fake_engine(name, model):
                 if Handler.mode == "vllm_dead_stream":  # its EngineCore died during the stream: its error event
                     part = b"data: " + VLLM_DEAD_EVENT + b"\n\n"
                     self.wfile.write(b"%x\r\n%s\r\n0\r\n\r\n" % (len(part), part)); self.wfile.flush()
+                    return
+                if Handler.mode == "vllm_dead_more":    # the same event, and more after it before the end
+                    part = b"data: " + VLLM_DEAD_EVENT + b"\n\n"
+                    self.wfile.write(b"%x\r\n%s\r\n" % (len(part), part)); self.wfile.flush()
+                    more = b'data: {"choices":[{"index":0,"delta":{"content":"x"}}]}\n\n'
+                    for _ in range(40):
+                        time.sleep(0.05)
+                        self.wfile.write(b"%x\r\n%s\r\n" % (len(more), more)); self.wfile.flush()
+                    self.wfile.write(b"0\r\n\r\n"); self.wfile.flush()
                     return
                 if Handler.mode == "cut" and i == 1:
                     self.connection.shutdown(socket.SHUT_RDWR)      # the engine dies mid-stream
@@ -591,6 +603,8 @@ class PairFixture:
         self.E1.served[:], self.E2.served[:] = list(self.MODELS[0]), list(self.MODELS[1])
         self.E1.delay = self.E2.delay = 0.0
         self.E1.mode = self.E2.mode = "ok"
+        if getattr(self, "mod", None) is not None:
+            getattr(self.mod, "forget_unit_reads", lambda: None)()          # lane_away keeps systemd's answer a second
         # where each journal stood: a line asserted is one this test wrote, never one of an earlier test (review,
         # 2026-11-03)
         self.journal_at = {label: len(self.journal_of(label)) for label in ("spark1", "spark2")}
@@ -1001,6 +1015,47 @@ class TwoBoxesBehindOneEndpoint(PairFixture, unittest.TestCase):
         self.assertIn(b'"one"', first)
         self.assertLess(time.monotonic() - t0, 1.5, "its first line before its end")
         self.assertIn(b'"two"', r.read())
+
+    def test_the_other_boxs_end_by_order_line_never_reaches_an_ollama_client(self):
+        # decision 1031's line on the Ollama routes is the entry's to read: relayed, ollama-python's ChatResponse(**part)
+        # failed on a line with no message (the 4th review of v1.43.0, 2026-11-04)
+        class EndsByOrder(http.server.BaseHTTPRequestHandler):
+            protocol_version = "HTTP/1.1"
+
+            def log_message(self, *a):
+                pass
+
+            def do_GET(self):
+                out = json.dumps({"object": "list", "data": [{"id": "qwen3.8-flash-next-fp4"}]}).encode()
+                self.send_response(200); self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(out))); self.end_headers(); self.wfile.write(out)
+
+            def do_POST(self):
+                self.rfile.read(int(self.headers.get("Content-Length") or 0))
+                self.send_response(200); self.send_header("Content-Type", "application/x-ndjson")
+                self.send_header("Transfer-Encoding", "chunked"); self.end_headers()
+                for line in (b'{"message": {"content": "one"}, "done": false}\n', HOP_ENDED_NDJSON):
+                    self.wfile.write(b"%x\r\n%s\r\n" % (len(line), line)); self.wfile.flush()
+                self.close_connection = True
+                self.connection.shutdown(socket.SHUT_RDWR)                      # cut, not ended
+        port = self.spare_proxy("ndjson-ended", KEY_1, peers=[("spark2", tls_peer(self, EndsByOrder))])
+        c = http.client.HTTPConnection("127.0.0.1", port, timeout=30)
+        self.addCleanup(c.close)
+        c.request("POST", "/api/chat", json.dumps(self.chat("qwen3.8-flash-next-fp4", stream=True)).encode(),
+                  {"Content-Type": "application/json", "Authorization": f"Bearer {KEY_1}"})
+        r = c.getresponse()
+        got = b""
+        try:
+            while True:
+                b = r.read1(65536)
+                if not b:
+                    break
+                got += b
+        except (http.client.HTTPException, OSError):
+            pass                                                                # cut, not ended
+        self.assertIn(b'"one"', got)
+        self.assertNotIn(b"x_alzeo_ended", got, "the other box's line reached the Ollama client")
+        self.assert_said("ndjson-ended", "ended it by order, nothing is bound")
 
     def test_the_other_box_never_names_the_engines_requests_here(self):
         # SGLang aborts every request whose rid starts with one it aborts: the other box naming rids "0" to "f",
@@ -1725,6 +1780,9 @@ class TwoBoxesBehindOneEndpointInProcess(TwoBoxesBehindOneEndpoint):
 
     def test_an_ndjson_stream_from_the_other_box_arrives_as_it_comes(self):
         super().test_an_ndjson_stream_from_the_other_box_arrives_as_it_comes()
+
+    def test_the_other_boxs_end_by_order_line_never_reaches_an_ollama_client(self):
+        super().test_the_other_boxs_end_by_order_line_never_reaches_an_ollama_client()
 
     def test_the_other_box_never_names_the_engines_requests_here(self):
         super().test_the_other_box_never_names_the_engines_requests_here()
@@ -2941,6 +2999,146 @@ class TwoBoxesServeOneModel(PairFixture, unittest.TestCase):
         self.assertIn(b"serves another model now", out)
         self.assertNotIn("conv-bound-failed-read-0", self.E1.users)
 
+    def test_a_hop_whose_engine_closes_as_its_lane_stops_by_order_gets_a_503_that_says_so(self):
+        # decision 1031: a hop queued or in prefill here when this box's cockpit loads another lane, its engine closing
+        # before any byte: a plain 503, which the other box took for an engine away, served the request itself, paused
+        # this box 30 s and counted a failover (the 4th review of v1.43.0, 2026-11-04)
+        if not self.INPROC:
+            self.skipTest("the unit's job is said in this test's process")
+        m = self.mod
+        saved = m.unit_stopping_by_order
+        m.unit_stopping_by_order = lambda: True
+        self.addCleanup(setattr, m, "unit_stopping_by_order", saved)
+        self.addCleanup(m._KILLERS.clear)
+        self.E1.mode = "die"
+        st, out, headers = self.tls_call(self.pport1, "/v1/chat/completions",
+                                         dict(self.chat("qwen3.8-27b"), user="hop-closed-ordered"))
+        self.assertEqual(st, 503, out[:300])
+        self.assertEqual(headers.get("X-Alzeo-Pair-Ended"), "order", out[:300])
+        self.assertEqual(len(m._KILLERS), 0, "an ordered stop bound the request")
+
+    def test_an_ordered_death_in_a_stream_the_keeper_opened_is_said_in_it(self):
+        # decision 1031: vLLM's 500 under an ordered stop, once the keeper had opened the stream: no header goes then,
+        # and the other box bound the request for 10 minutes (the 4th review of v1.43.0, 2026-11-04)
+        if not self.INPROC:
+            self.skipTest("the unit's job is said in this test's process")
+        m = self.mod
+        saved = m.unit_stopping_by_order
+        m.unit_stopping_by_order = lambda: True
+        self.addCleanup(setattr, m, "unit_stopping_by_order", saved)
+        self.E1.mode = "vllm_dead"
+        hop = dict(self.chat("qwen3.8-27b"), user="hop-dead-kept", stream=True, x_dead_after=m.KEEPALIVE_S + 1.5)
+        st, out, _ = self.tls_call(self.pport1, "/v1/chat/completions", hop)
+        self.assertEqual(st, 200, out[:300])                                    # the keeper's stream
+        self.assertIn(b"EngineCore", out)
+        self.assertIn(b'"x_alzeo_ended":"order"', out, out[-400:])
+
+    def test_a_death_the_other_box_relayed_before_its_client_left_is_bound(self):
+        # decision 1019: a death the other box relayed in its stream was bound at the stream's end, once an order said
+        # after it would have come; a client that left first (the SDKs raise on that event) left it unbound, and its
+        # resend could take this box's engine down too (the 4th review of v1.43.0, 2026-11-04)
+        if not self.INPROC:
+            self.skipTest("the binding is read in this test's process")
+        m = self.mod
+        self.addCleanup(m._KILLERS.clear)
+        watch = m.H._client_left
+        m.H._client_left = lambda h: False                                      # its writes see it gone, not the watch
+        self.addCleanup(setattr, m.H, "_client_left", watch)
+        held = self.busy(self.E1, self.port1, KEY_1, "local-only", 2, 6.0)    # this box busy: a new one goes there
+        self.E2.mode = "vllm_dead_more"
+        raw = json.dumps(dict(self.turns("conv-dead-left", 1)[0], stream=True)).encode()
+        c = http.client.HTTPConnection("127.0.0.1", self.port1, timeout=30)
+        c.request("POST", "/v1/chat/completions", raw,
+                  {"Content-Type": "application/json", "Authorization": f"Bearer {KEY_1}"})
+        resp = c.getresponse()
+        got = b""
+        while b"EngineCore" not in got:
+            b = resp.read1(65536)
+            if not b:
+                break
+            got += b
+        self.assertIn(b"EngineCore", got, got[-300:])
+        self.assertIn(b"spark2", got, "served here: the test needs the other box's stream")
+        resp.close()                                                            # it raises on that event, and leaves:
+        c.close()                                                               # its answer held the socket
+        fp = m.body_fingerprint(raw, "/v1/chat/completions")
+        deadline = time.monotonic() + 6
+        while m.killer_box(fp) is None and time.monotonic() < deadline:
+            time.sleep(0.1)
+        self.assertEqual(m.killer_box(fp), "spark2", "a death relayed before its client left was bound to nothing")
+        for th in held:
+            th.join(30)
+
+    def test_a_request_bound_here_is_answered_here_once_the_other_box_said_nothing_for_long(self):
+        # bound to this box, which serves another model now: the other box's last good list named the model long ago,
+        # every read failing since (it is off): refused for the binding's 10 minutes, where the same request unbound got
+        # this box's lane's answer (decision 986; the 4th review of v1.43.0, 2026-11-04)
+        if not self.INPROC:
+            self.skipTest("the binding and the lists are set in this test's process")
+        m = self.mod
+        self.addCleanup(m._KILLERS.clear)
+        r = self.turns("conv-bound-off", 1)[0]
+        m.killer_note(m.body_fingerprint(json.dumps(r).encode(), "/v1/chat/completions"), "")
+        real = m.served_models
+        m.served_models = lambda *a, **k: ["qwen3.8-flash-next-fp4"]           # this box serves another model now
+        self.addCleanup(setattr, m, "served_models", real)
+        with m._PAIR_LOCK:
+            row = dict(m._PAIR_MODELS["spark2"])
+            m._PAIR_MODELS["spark2"] = dict(row, models=(), known=("qwen3.8-27b",), error="unreachable",
+                                            known_ts=time.monotonic() - m.PAIR_KNOWN_WAIT_S - 60, ts=time.monotonic())
+        self.addCleanup(lambda: m._PAIR_MODELS.__setitem__("spark2", row))
+        st, out, _ = self.call("/v1/chat/completions", r)
+        self.assertEqual(st, 200, out[:300])
+        self.assertIn(b"from spark1", out)
+
+    def test_a_box_that_reads_no_key_holds_its_own_lane_from_the_same_checkpoint_too(self):
+        # its engine away, the other box on the same checkpoint: refused at once ("cannot read its own key"), where the
+        # other checkpoint went on to this box's own path (the 4th review of v1.43.0, 2026-11-04)
+        if not self.INPROC:
+            self.skipTest("the key is read in this test's process")
+        m = self.mod
+        saved = (m._door_key, m.served_models, m.unit_texts, m.unit_jobs, m._LAST_LANE["lane"])
+
+        def restore():
+            m._door_key, m.served_models, m.unit_texts, m.unit_jobs = saved[:4]
+            m._LAST_LANE["lane"] = saved[4]
+        self.addCleanup(restore)
+
+        def away(*a, **k):
+            raise m.EngineUnreachable("connection refused (the test's engine away)")
+        m._door_key, m.served_models, m.unit_texts, m.unit_jobs = (lambda: None), away, (lambda: None), (lambda: [])
+        m._LAST_LANE["lane"] = (frozenset({"qwen3.8-27b"}), TEST_REV)         # its own lane, the other box's checkpoint
+        st, out, _ = self.call("/v1/chat/completions", self.chat("qwen3.8-27b"))
+        self.assertNotIn(b"cannot read its own key", out, "a request of its own lane was turned away")
+        self.assertEqual(st, 200, out[:300])                                    # its own path; this test's engine answers
+        self.assertIn(b"from spark1", out)
+
+    def test_a_recovery_restart_to_a_staged_checkpoint_binds_what_its_engine_closed_on(self):
+        # decision 1049: an update staged another checkpoint, and the cockpit restarts a wedged engine; 1041 took that
+        # restart for the Load of the staged checkpoint, an order, and the request that wedged the engine went unbound
+        # (the 4th review of v1.43.0, 2026-11-04)
+        if not self.INPROC:
+            self.skipTest("the unit's job is said in this test's process")
+        m = self.mod
+        saved = (m.unit_jobs, m.unit_start_texts, getattr(m, "unit_recovering", None))
+
+        def restore():
+            m.unit_jobs, m.unit_start_texts = saved[:2]
+            if saved[2] is not None:
+                m.unit_recovering = saved[2]
+        self.addCleanup(restore)
+        self.addCleanup(m._KILLERS.clear)
+        m.unit_jobs = lambda: [("qwen38-sglang.service", "restart")]
+        m.unit_start_texts = lambda unit: [f"docker run x --served-model-name qwen3.8-27b --revision {'ab' * 20}"]
+        m.unit_recovering = lambda unit: True                                   # the cockpit's mark (decision 1049)
+        r = self.turns("conv-recovery", 1)[0]
+        self.E1.mode = "die"
+        st, out, _ = self.call("/v1/chat/completions", r)
+        self.assertNotEqual(st, 200, out[:300])
+        self.assertIn("conv-recovery-0", self.E1.users, "the test needs this box's engine to have it")
+        self.assertEqual(m.killer_box(m.body_fingerprint(json.dumps(r).encode(), "/v1/chat/completions")), "",
+                         "the cockpit's recovery was taken for an order, and bound nothing")
+
     def test_a_box_that_reads_no_key_holds_what_its_own_engine_will_serve(self):
         # its engine away, the other box on another checkpoint: the request goes on to this box's own path; the key's
         # refusal came first and turned it away (the delta's 3rd review, 2026-11-04)
@@ -2970,9 +3168,12 @@ class TwoBoxesServeOneModel(PairFixture, unittest.TestCase):
         if not self.INPROC:
             self.skipTest("the unit's job is said in this test's process")
         m = self.mod
-        saved = m.unit_jobs
+        saved = (m.unit_jobs, m.unit_start_texts)
         m.unit_jobs = lambda: [("qwen38-sglang.service", "restart")]          # the cockpit's restart of a wedged engine
-        self.addCleanup(setattr, m, "unit_jobs", saved)
+        # to the checkpoint it serves: this proxy names no unit, and the comparison of decision 1041 was never reached
+        # (the 4th review of v1.43.0, 2026-11-04)
+        m.unit_start_texts = lambda unit: [f"docker run x --served-model-name qwen3.8-27b --revision {TEST_REV}"]
+        self.addCleanup(lambda: (setattr(m, "unit_jobs", saved[0]), setattr(m, "unit_start_texts", saved[1])))
         self.addCleanup(m._KILLERS.clear)
         r = self.turns("conv-restart", 1)[0]
         self.E1.mode = "die"
@@ -3015,10 +3216,12 @@ class TwoBoxesServeOneModel(PairFixture, unittest.TestCase):
         self.assertIn(b"from spark1", out)
         self.assertEqual(self.E2.users, [], "a client of this box got the other checkpoint")
         m.unit_texts = lambda: [starting.format(TEST_REV)]                    # the same checkpoint there: it serves
+        getattr(m, "forget_unit_reads", lambda: None)()                         # lane_away keeps its read a second
         st, out, _ = self.call("/v1/chat/completions", self.chat("qwen3.8-27b"))
         self.assertEqual(st, 200, out[:300])
         self.assertIn(b"from spark2", out)
         m.unit_texts = lambda: [starting.replace("qwen3.8-27b", "qwen3.8-flash-next-fp4").format("ab" * 20)]
+        getattr(m, "forget_unit_reads", lambda: None)()
         st, out, _ = self.call("/v1/chat/completions", self.chat("qwen3.8-27b"))
         self.assertEqual(st, 200, out[:300])                                    # its lane serves another model: there
         self.assertIn(b"from spark2", out)
@@ -3089,6 +3292,7 @@ class TwoBoxesServeOneModel(PairFixture, unittest.TestCase):
         self.assertEqual(st, 200, out[:300])
         self.assertIn(b"from spark2", out, "a box that serves no text lane kept the other box's model from its client")
         m._UNIT_FACTS["states"] = ("deactivating",)                             # a crash, its restart not due yet
+        getattr(m, "forget_unit_reads", lambda: None)()                         # lane_away keeps its read a second
         before = len(self.E2.users)
         st, out, _ = self.call("/v1/chat/completions", self.chat("qwen3.8-27b"))
         self.assertEqual(st, 200, out[:300])                                    # this box's own path (role 6's hold)
@@ -3584,6 +3788,24 @@ class TwoBoxesServeOneModelInProcess(TwoBoxesServeOneModel):
 
     def test_a_box_that_reads_no_key_holds_what_its_own_engine_will_serve(self):
         super().test_a_box_that_reads_no_key_holds_what_its_own_engine_will_serve()
+
+    def test_a_hop_whose_engine_closes_as_its_lane_stops_by_order_gets_a_503_that_says_so(self):
+        super().test_a_hop_whose_engine_closes_as_its_lane_stops_by_order_gets_a_503_that_says_so()
+
+    def test_an_ordered_death_in_a_stream_the_keeper_opened_is_said_in_it(self):
+        super().test_an_ordered_death_in_a_stream_the_keeper_opened_is_said_in_it()
+
+    def test_a_death_the_other_box_relayed_before_its_client_left_is_bound(self):
+        super().test_a_death_the_other_box_relayed_before_its_client_left_is_bound()
+
+    def test_a_request_bound_here_is_answered_here_once_the_other_box_said_nothing_for_long(self):
+        super().test_a_request_bound_here_is_answered_here_once_the_other_box_said_nothing_for_long()
+
+    def test_a_box_that_reads_no_key_holds_its_own_lane_from_the_same_checkpoint_too(self):
+        super().test_a_box_that_reads_no_key_holds_its_own_lane_from_the_same_checkpoint_too()
+
+    def test_a_recovery_restart_to_a_staged_checkpoint_binds_what_its_engine_closed_on(self):
+        super().test_a_recovery_restart_to_a_staged_checkpoint_binds_what_its_engine_closed_on()
 
     def test_an_ordered_503_whose_body_was_cut_is_still_an_order(self):
         super().test_an_ordered_503_whose_body_was_cut_is_still_an_order()
@@ -4281,8 +4503,9 @@ class ThePairsPieces(unittest.TestCase):
         engine.kill()
         engine.wait()
         m._UNIT_FACTS.update(ts=-1e9, texts=None)
-        # its process gone: unsure, what its unit starts, read again a second on (never kept 10 s)
-        self.assertEqual(m.unit_revision(), "cd" * 20)
+        # its process gone: unsure, read again a second on (never kept 10 s), and no checkpoint: what its unit starts is
+        # its next start, which an update may have changed (the 4th review of v1.43.0, 2026-11-04)
+        self.assertIsNone(m.unit_revision())
         self.assertLess(m._UNIT_FACTS["ts"], time.monotonic() - 8)
 
     def _systemd_says(self, shown):
@@ -4294,16 +4517,22 @@ class ThePairsPieces(unittest.TestCase):
             return subprocess.CompletedProcess(argv, 0, shown["out"], "")
         saved = (m.HOLD_UNITS, m.subprocess, m.PAIR_CHECKPOINT, m._LAST_LANE["lane"])
         m.HOLD_UNITS, m.subprocess, m.PAIR_CHECKPOINT = ("qwen38-sglang.service",), types.SimpleNamespace(run=run), None
-        m._UNIT_FACTS.update(ts=-1e9, texts=None)
-        m._HOLD_SEEN["ts"] = -1e9
+        self._forget()
 
         def restore():
             m.HOLD_UNITS, m.subprocess, m.PAIR_CHECKPOINT = saved[:3]
             m._LAST_LANE["lane"] = saved[3]
-            m._UNIT_FACTS.update(ts=-1e9, texts=None, states=())
-            m._HOLD_SEEN["ts"] = -1e9
+            m._UNIT_FACTS.update(states=())
+            self._forget()
         self.addCleanup(restore)
         return calls
+
+    def _forget(self):
+        """What systemd said, forgotten: read again at the next ask (lane_away keeps it a second, the 4th review)."""
+        m = self.mod
+        getattr(m, "forget_unit_reads", lambda: None)()
+        m._UNIT_FACTS.update(ts=-1e9, texts=None)
+        m._HOLD_SEEN["ts"] = -1e9
 
     def test_an_engine_whose_command_reads_empty_is_read_again_not_kept(self):
         # its process between fork and exec, or a zombie: an empty command was kept 10 s, the box saying no checkpoint
@@ -4323,26 +4552,31 @@ class ThePairsPieces(unittest.TestCase):
         self.assertIsNone(m.unit_texts())
         self.assertEqual(len(calls), 2, "an empty command was kept 10 s")
 
-    def _systemd_answers(self, jobs, shown, starts):
-        """systemctl stubbed: list-jobs says jobs, show -p ExecStart --value says starts, any other show says shown."""
+    def _systemd_answers(self, jobs, shown, starts, run=None):
+        """systemctl stubbed: list-jobs says jobs, show -p ExecStart --value says starts, show -p InvocationID --value
+        says run (the unit's run, decision 1049), any other show says shown."""
         m = self.mod
 
-        def run(argv, **kw):
+        def answer(argv, **kw):
             if argv[1] == "list-jobs":
                 out = jobs["out"]
             elif "--value" in argv and "ExecStart" in argv:
                 out = starts["out"]
+            elif "--value" in argv and "InvocationID" in argv:
+                out = (run or {"out": ""})["out"]
             else:
                 out = shown["out"]
             return subprocess.CompletedProcess(argv, 0, out, "")
         saved = (m.HOLD_UNITS, m.subprocess, m.PAIR_CHECKPOINT, m._LAST_LANE["lane"])
-        m.HOLD_UNITS, m.subprocess, m.PAIR_CHECKPOINT = ("qwen38-sglang.service",), types.SimpleNamespace(run=run), None
-        m._UNIT_FACTS.update(ts=-1e9, texts=None)
+        m.HOLD_UNITS, m.subprocess = ("qwen38-sglang.service",), types.SimpleNamespace(run=answer)
+        m.PAIR_CHECKPOINT = None
+        self._forget()
 
         def restore():
             m.HOLD_UNITS, m.subprocess, m.PAIR_CHECKPOINT = saved[:3]
             m._LAST_LANE["lane"] = saved[3]
-            m._UNIT_FACTS.update(ts=-1e9, texts=None, states=())
+            m._UNIT_FACTS.update(states=())
+            self._forget()
         self.addCleanup(restore)
 
     def test_a_lane_stopped_by_order_is_no_lane_here_and_a_restart_brings_back_what_its_unit_starts(self):
@@ -4357,6 +4591,7 @@ class ThePairsPieces(unittest.TestCase):
         m._LAST_LANE["lane"] = (frozenset({"qwen3.8-27b"}), "cd" * 20)
         self.assertEqual(m.lane_away(), (frozenset(), None), "a lane stopped by order kept its model as this box's")
         jobs["out"] = "8 qwen38-sglang.service restart running\n"            # a restart: what it brings back
+        self._forget()                                                          # lane_away keeps its read a second
         self.assertEqual(m.lane_away(), (frozenset({"qwen3.8-27b"}), "ab" * 20))
 
     def test_a_restart_to_another_checkpoint_is_an_order_and_to_the_same_one_is_not(self):
@@ -4375,6 +4610,94 @@ class ThePairsPieces(unittest.TestCase):
         self.assertTrue(m.unit_stopping_by_order())
         jobs["out"] = ""
         self.assertFalse(m.unit_stopping_by_order())
+
+    def test_a_restart_the_cockpit_makes_to_recover_its_engine_is_no_order_whatever_it_loads(self):
+        # decision 1049: the cockpit marks its restarts of a wedged or zombie engine with the run they restart. A restart
+        # to another checkpoint than the one served is an order (1041) without that mark, and a mark of another run (a
+        # Load since) is none (the 4th review of v1.43.0, 2026-11-04)
+        m = self.mod
+        jobs = {"out": "8 qwen38-sglang.service restart running\n"}
+        starts = {"out": f"{{ path=/usr/bin/docker ; argv[]=docker run x --served-model-name qwen3.8-27b --revision "
+                         f"{'ab' * 20} ; }}"}
+        run = {"out": "run-1\n"}
+        self._systemd_answers(jobs, {"out": ""}, starts, run)
+        m._LAST_LANE["lane"] = (frozenset({"qwen3.8-27b"}), "cd" * 20)       # it served another checkpoint
+        marks = pathlib.Path(tempfile.mkdtemp(prefix="kp-recovery-")) / "recovery-restarts.json"
+        self.addCleanup(shutil.rmtree, marks.parent, True)
+        saved = getattr(m, "RECOVERY_FILE", None)
+        m.RECOVERY_FILE = str(marks)
+        self.addCleanup(setattr, m, "RECOVERY_FILE", saved)
+        self.assertTrue(m.unit_stopping_by_order(), "no mark: the Load of another checkpoint, an order (1041)")
+        marks.write_text(json.dumps({"qwen38-sglang.service": {"invocation": "run-1", "at": 1.0, "why": "autoheal"}}))
+        self.assertFalse(m.unit_stopping_by_order(), "the cockpit's recovery was taken for an order")
+        run["out"] = "run-2\n"                                                  # a later run: the mark is another's
+        self.assertTrue(m.unit_stopping_by_order())
+        marks.write_text("[1, 2]")                                              # a mark that cannot be read
+        run["out"] = "run-1\n"
+        self.assertTrue(m.unit_stopping_by_order())
+
+    def test_an_engine_away_reads_systemd_once_a_second_whatever_the_requests(self):
+        # lane_away read systemd afresh for each request while this box's engine was away: two or three systemctl a
+        # request, for hours on a box serving images (the 4th review of v1.43.0, 2026-11-04)
+        m = self.mod
+        calls = self._systemd_says({"out": "ActiveState=inactive\nMainPID=0\n"})
+        for _ in range(20):
+            self.assertEqual(m.lane_away(), (frozenset(), None))               # images now, or no lane
+        self.assertLessEqual(len(calls), 3, [c[1] for c in calls])
+
+    def test_a_read_of_systemd_that_failed_decides_nothing(self):
+        # a systemctl that failed stored no state, which lane_away read as no text lane: the lane's model went to the
+        # other box whatever its checkpoint (decision 1018), and the failure was kept 10 s (the 4th review of v1.43.0)
+        m = self.mod
+        self._systemd_says({"out": ""})
+
+        def times_out(argv, **kw):
+            raise subprocess.TimeoutExpired(argv, 3)
+
+        def refused(argv, **kw):
+            return subprocess.CompletedProcess(argv, 1, "", "Failed to connect to bus")
+        m._LAST_LANE["lane"] = (frozenset({"qwen3.8-27b"}), "cd" * 20)
+        for fails in (times_out, refused):
+            with self.subTest(fails=fails.__name__):
+                m.subprocess = types.SimpleNamespace(run=fails)
+                self._forget()
+                self.assertEqual(m.lane_away(), (frozenset({"qwen3.8-27b"}), "cd" * 20))
+                self.assertLess(m._UNIT_FACTS["ts"], time.monotonic() - 8, "a read that failed was kept 10 s")
+
+    def test_a_main_process_gone_or_a_zombie_names_no_checkpoint(self):
+        # its unit's ExecStart is its NEXT start: read for a main process gone or a zombie (a crash, before systemd reaps
+        # it), this box said the checkpoint an update or switch-model.sh had staged for the one it served (the 4th review
+        # of v1.43.0, 2026-11-04)
+        m = self.mod
+        p = subprocess.Popen(["true"])                                          # a zombie: not reaped yet
+        self.addCleanup(p.wait)
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            with open(f"/proc/{p.pid}/stat") as f:
+                if f.read().split(")")[-1].split()[0] == "Z":
+                    break
+            time.sleep(0.01)
+        starts = (f"ExecStart={{ path=/usr/bin/docker ; argv[]=docker run x --served-model-name qwen3.8-27b --revision "
+                  f"{'ab' * 20} ; }}\n")
+        shown = {"out": f"ActiveState=active\nMainPID={p.pid}\n{starts}"}
+        self._systemd_says(shown)
+        self.assertIsNone(m.unit_texts(), "a zombie said what its unit starts next")
+        shown["out"] = f"ActiveState=active\nMainPID=4194305\n{starts}"        # over any pid_max: gone
+        self._forget()
+        self.assertIsNone(m.unit_texts(), "a process gone said what its unit starts next")
+        shown["out"] = f"ActiveState=activating\nMainPID=0\n{starts}"           # a start under way: what it starts
+        self._forget()
+        self.assertEqual(m.unit_revision(), "ab" * 20)
+
+    def test_a_script_that_is_not_utf8_is_read_all_the_same(self):
+        # a launcher edited by hand in Latin-1 raised UnicodeDecodeError out of unit_stopping_by_order and lane_away under
+        # a restart job, and the request's handler died with no answer (the 4th review of v1.43.0, 2026-11-04)
+        m = self.mod
+        d = pathlib.Path(tempfile.mkdtemp(prefix="kp-latin1-"))
+        self.addCleanup(shutil.rmtree, d, True)
+        script = d / "launch.sh"
+        script.write_bytes(b"#!/bin/bash\n# caf\xe9\nexec docker run x --served-model-name qwen3.8-27b\n")
+        self.assertEqual(m.names_in(m.with_scripts(f"/bin/bash {script}")), frozenset({"qwen3.8-27b"}))
 
     def test_a_command_that_names_no_model_yet_reads_what_the_unit_starts(self):
         # systemd 255 runs systemd-executor as the main process before the exec: a command naming no model, kept 10 s,
@@ -4418,13 +4741,11 @@ class ThePairsPieces(unittest.TestCase):
         self._systemd_says(shown)
         self.assertEqual(m.lane_away(), (frozenset({"qwen3.8-27b"}), "ab" * 20))
         shown["out"] = "ActiveState=deactivating\nMainPID=0\n"                 # stopping, no job: a crash
-        m._UNIT_FACTS.update(ts=-1e9, texts=None)
-        m._HOLD_SEEN["ts"] = -1e9
+        self._forget()
         m._LAST_LANE["lane"] = (frozenset({"qwen3.8-27b"}), "cd" * 20)
         self.assertEqual(m.lane_away(), (frozenset({"qwen3.8-27b"}), "cd" * 20))
         shown["out"] = "ActiveState=inactive\nMainPID=0\n"                     # no text lane: images, or none
-        m._UNIT_FACTS.update(ts=-1e9, texts=None)
-        m._HOLD_SEEN["ts"] = -1e9
+        self._forget()
         self.assertEqual(m.lane_away(), (frozenset(), None))
 
     def test_a_dead_engines_answer_relayed_in_a_stream_the_keeper_opened_is_known(self):
