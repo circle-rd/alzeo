@@ -2271,6 +2271,24 @@ class TwoBoxesServeOneModel(PairFixture, unittest.TestCase):
         lines = self.journal_of("spark1")[self.journal_at.get("spark1", 0):]
         self.assertLessEqual(lines.count("engine unreachable"), 1, lines[-1500:])
 
+    def test_a_request_bound_to_a_box_now_serving_another_checkpoint_goes_nowhere(self):
+        # decisions 1018 and 1019 together: bound to the other box by its engine dying on it, a request went there
+        # even once that box served another checkpoint of the model, the uncensored 27B for a client of the stock one
+        if not self.INPROC:
+            self.skipTest("this box's checkpoint is set in this test's process")
+        m = self.mod
+        r = self.turns("conv-bound-rev", 1)[0]
+        m.killer_note(json.dumps(r).encode(), "/v1/chat/completions", "spark2")
+        self.addCleanup(m._KILLERS.clear)
+        saved = m.unit_revision
+        m.unit_revision = lambda: "ab" * 20             # this box serves another checkpoint than spark2 now
+        self.addCleanup(setattr, m, "unit_revision", saved)
+        st, out, _ = self.call("/v1/chat/completions", r)
+        self.assertEqual(st, 503, out[:300])
+        self.assertIn(b"from another checkpoint", out)
+        self.assertNotIn("conv-bound-rev-0", self.E2.users, "it went to the box serving another checkpoint")
+        self.assertNotIn("conv-bound-rev-0", self.E1.users, "it was served here, where an engine never closed on it")
+
     def test_a_burst_of_new_conversations_is_shared(self):
         self.E1.delay = self.E2.delay = 1.0
         out = []
@@ -2653,6 +2671,9 @@ class TwoBoxesServeOneModelInProcess(TwoBoxesServeOneModel):
 
     def test_a_refusal_served_here_is_counted_once_this_box_served_it(self):
         super().test_a_refusal_served_here_is_counted_once_this_box_served_it()
+
+    def test_a_request_bound_to_a_box_now_serving_another_checkpoint_goes_nowhere(self):
+        super().test_a_request_bound_to_a_box_now_serving_another_checkpoint_goes_nowhere()
 
 
 class ThePairsPieces(unittest.TestCase):

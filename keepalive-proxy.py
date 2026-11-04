@@ -6790,6 +6790,18 @@ class H(BaseHTTPRequestHandler):
                     _say_once_a_minute("killer here", f"{self._peer} pair: a request an engine closed on moments ago "
                                                       f"stays on this box, no other box gets it (decision 1019)")
                     return False
+                mine = unit_revision()
+                theirs = (_PAIR_MODELS.get(bound) or {}).get("revision")
+                if local is not None and name in local and (mine is None or theirs != mine):
+                    # a model both serve, that box from another checkpoint now (or saying none): it is not sent there
+                    # (decision 1018), nor served here (1019): nowhere, until it is forgotten
+                    log(f"{self._peer} pair: {bound}'s engine or connection closed on this request moments ago, and "
+                        f"{bound} serves {name} from another checkpoint now: nowhere (decisions 1018 and 1019)")
+                    self._pair_refuse(503, "engine_unavailable", f"box {bound}, whose engine or connection closed on this "
+                                      f"request moments ago, serves {name} from another checkpoint now: this request is "
+                                      f"served nowhere else for a while; send it again later", pair_served_map(conf, local))
+                    self._done("503 pair request bound elsewhere")
+                    return True
                 log(f"{self._peer} pair: {bound}'s engine or connection closed on this request moments ago: "
                     f"{bound} or nowhere (decision 1019)")
                 self._forward_peer(body, peer, name, conf, local, fallback=False)
