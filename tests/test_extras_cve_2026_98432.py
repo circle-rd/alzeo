@@ -4,6 +4,7 @@ refuses what it does not know and dry-runs without changing anything (sudo, sysc
 never touches the machine)."""
 import os
 import pathlib
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -24,9 +25,19 @@ class TheCveExtra(unittest.TestCase):
     def test_the_unit_loads_the_installed_table_before_the_network(self):
         u = (D / "cve-2026-98432-nft.service").read_text()
         self.assertIn("ExecStart=/usr/sbin/nft -f /etc/nft-cve-2026-98432.nft", u)
-        self.assertIn("ExecStop=/usr/sbin/nft delete table ip cve_2026_98432", u)
+        self.assertIn("ExecStop=-/usr/sbin/nft delete table ip cve_2026_98432", u)
         self.assertIn("Before=network-pre.target", u)
         self.assertIn("WantedBy=multi-user.target", u)
+
+    def test_the_unit_follows_nftables_service_and_a_table_already_gone(self):
+        # nftables.service's stock config flushes the whole ruleset, this table included: at a boot that ran it after the
+        # unit, or at its reload, the table went and the unit still said active; and a stop with the table gone failed
+        # (the 4th review of v1.43.0, 2026-11-04)
+        u = (D / "cve-2026-98432-nft.service").read_text().splitlines()
+        for line in ("After=nftables.service", "PartOf=nftables.service", "ReloadPropagatedFrom=nftables.service",
+                     "ExecReload=/usr/sbin/nft -f /etc/nft-cve-2026-98432.nft",
+                     "ExecStop=-/usr/sbin/nft delete table ip cve_2026_98432"):
+            self.assertIn(line, u)
 
     def test_the_sysctls_are_the_mitigations_two(self):
         keys = {ln.split("=")[0].strip(): ln.split("=")[1].strip()
@@ -72,6 +83,86 @@ class TheCveExtra(unittest.TestCase):
     def test_the_check_fails_where_the_mitigation_is_not_in_place(self):
         p = self._run("--check")                           # sysctl says 1, no unit: not in place
         self.assertNotEqual(p.returncode, 0, p.stdout)
+
+    # ---- the script run whole in a root of its own: sudo runs what it is given, nft, systemctl and sysctl say what the
+    # test sets, and every call is written down
+    def _box(self, nft_parses=True, mptcp="1", sudo=True):
+        tmp = pathlib.Path(tempfile.mkdtemp(prefix="cve-extra-"))
+        self.addCleanup(shutil.rmtree, tmp, True)
+        root, bin_, log = tmp / "root", tmp / "bin", tmp / "calls.log"
+        for d in ("etc/systemd/system", "etc/sysctl.d"):
+            (root / d).mkdir(parents=True)
+        bin_.mkdir()
+        stubs = {
+            "sudo": 'echo "sudo $*" >> "$LOG"\n[ "$1" = -n ] && exit $SUDO_N\nexec "$@"',
+            "nft": ('echo "nft $*" >> "$LOG"\n[ "$1" = -c ] && exit $NFT_C\n'
+                    'case "$*" in "list table ip cve_2026_98432") echo "ip hdrlength != 5 counter packets 3 bytes 9 drop";; '
+                    'esac\nexit 0'),
+            "systemctl": ('echo "systemctl $*" >> "$LOG"\ncase "$1" in is-enabled) echo enabled;; is-active) echo active;; '
+                          'esac\nexit 0'),
+            "sysctl": ('echo "sysctl $*" >> "$LOG"\ncase "$*" in "-n net.mptcp.enabled") echo "$MPTCP";; '
+                       '"-n net.ipv4.tcp_migrate_req") echo 0;; esac\nexit 0'),
+        }
+        for name, body in stubs.items():
+            f = bin_ / name
+            f.write_text(f"#!/bin/sh\n{body}\n")
+            f.chmod(0o755)
+        env = dict(os.environ, PATH=f"{bin_}:/usr/bin:/bin", CVE_EXTRA_ROOT=str(root), LOG=str(log),
+                   NFT_C="0" if nft_parses else "1", MPTCP=mptcp, SUDO_N="0" if sudo else "1")
+
+        def run(*args):
+            p = subprocess.run(["bash", str(D / "setup.sh"), *args], env=env, capture_output=True, text=True,
+                               timeout=60)
+            calls = log.read_text() if log.exists() else ""
+            log.unlink(missing_ok=True)
+            return p, calls
+        return root, env, run
+
+    def test_a_table_that_does_not_parse_leaves_the_installed_one_alone(self):
+        # it was installed over /etc's before nft -c read it: "nothing loaded", and the next boot loaded nothing (the 4th
+        # review of v1.43.0, 2026-11-04)
+        root, env, run = self._box(nft_parses=False)
+        good = root / "etc/nft-cve-2026-98432.nft"
+        good.write_text("the table an earlier run installed\n")
+        p, calls = run()
+        self.assertNotEqual(p.returncode, 0)
+        self.assertIn("does not parse", p.stderr)
+        self.assertEqual(good.read_text(), "the table an earlier run installed\n")
+        self.assertNotIn("sudo install", calls)
+
+    def test_a_run_again_loads_the_table_it_installs(self):
+        # enable --now leaves a oneshot that already ran as it was: the table changed, the old one stayed until a reboot
+        # (the 4th review of v1.43.0, 2026-11-04)
+        root, env, run = self._box(mptcp="0")
+        p, _ = run()
+        self.assertEqual(p.returncode, 0, p.stderr + p.stdout)
+        p, calls = run()                                                        # the unit active since the first
+        self.assertEqual(p.returncode, 0, p.stderr + p.stdout)
+        self.assertIn("systemctl reload-or-restart cve-2026-98432-nft.service", calls)
+        self.assertEqual((root / "etc/nft-cve-2026-98432.nft").read_text(), (D / "cve-2026-98432.nft").read_text())
+
+    def test_the_check_without_sudo_says_the_table_was_not_read(self):
+        # without sudo at hand it read the sysctls and the unit, not the table, and said 0: in place (the 4th review of
+        # v1.43.0, 2026-11-04)
+        root, env, run = self._box(mptcp="0", sudo=False)
+        p, _ = run("--check")
+        self.assertEqual(p.returncode, 2, p.stdout)
+        self.assertIn("nft table: not read", p.stdout)
+
+    def test_the_uninstall_puts_mptcp_back_as_it_was(self):
+        # it forced MPTCP on, whatever it was before the install (the 4th review of v1.43.0, 2026-11-04)
+        for before in ("0", "1"):
+            with self.subTest(before=before):
+                root, env, run = self._box(mptcp=before)
+                p, _ = run()
+                self.assertEqual((root / "etc/nft-cve-2026-98432.before").read_text(), f"net.mptcp.enabled={before}\n")
+                env["MPTCP"] = "0"                                            # the mitigation's own value now
+                p, _ = run()                                                    # a run again keeps the first
+                self.assertEqual((root / "etc/nft-cve-2026-98432.before").read_text(), f"net.mptcp.enabled={before}\n")
+                p, calls = run("--uninstall")
+                self.assertEqual(p.returncode, 0, p.stderr)
+                self.assertIn(f"sysctl -w net.mptcp.enabled={before}", calls)
+                self.assertFalse((root / "etc/nft-cve-2026-98432.before").exists())
 
 
 if __name__ == "__main__":
