@@ -164,6 +164,28 @@ class TheCveExtra(unittest.TestCase):
         self.assertFalse(drop.exists())
         self.assertFalse(drop.parent.exists(), "its directory, empty, stayed")
 
+    def test_a_box_already_mitigated_is_told_what_happens_to_mptcp(self):
+        # its dry run said it would record MPTCP's value, and its removal that MPTCP went back to its value before the
+        # install, where nothing was recorded and the kernel's default came back (the 6th review of v1.43.0, 2026-11-04)
+        root, env, run = self._box(mptcp="0")
+        (root / "etc/sysctl.d/99-cve-2026-98432.conf").write_text("net.mptcp.enabled = 0\n")
+        p, _ = run("--dry-run")
+        self.assertIn("would record no MPTCP value", p.stdout)
+        self.assertNotIn("would write MPTCP's value", p.stdout)
+        p, _ = run("--uninstall")
+        self.assertIn("MPTCP back to 1, the kernel's default", p.stdout)
+
+    def test_the_check_wants_the_drop_in(self):
+        # the drop-in on nftables.service is part of the mitigation: its absence passed the check with no test that
+        # failed (the 6th review of v1.43.0, 2026-11-04, a mutant without that check line stayed green)
+        root, env, run = self._box(mptcp="0")
+        p, _ = run()
+        self.assertEqual(p.returncode, 0, p.stderr + p.stdout)
+        (root / "etc/systemd/system/nftables.service.d/cve-2026-98432.conf").unlink()
+        p, _ = run("--check")
+        self.assertEqual(p.returncode, 1, p.stdout)
+        self.assertIn("nftables.service drop-in: MISSING", p.stdout)
+
     def test_a_box_already_mitigated_records_no_mptcp_of_its_own(self):
         # a run over a mitigation installed before (its sysctls set, MPTCP 0) wrote that 0 as MPTCP's value before the
         # install, and --uninstall left MPTCP off (the 5th review of v1.43.0, 2026-11-04)
