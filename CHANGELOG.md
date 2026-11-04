@@ -109,9 +109,15 @@ recovery's mark was removed when systemctl failed after systemd had taken the re
 slow to say the engine's run, and one the cockpit left behind counted for a later restart of the same run: a mark
 counts for the restart it was written for only now, the unit's state changing within 2 minutes of it. An order split
 across two reads went unread, the words of an engine's death inside an Ollama tool call's arguments read as one, and
-the order's line on the Ollama routes could follow a line over 64 KiB with no line end. tests/test_proxy_pair.py has
-two boxes that serve the 27B from their start, each rule its test, and each test fails on v1.42.1 or on the commit
-before its fix.
+the order's line on the Ollama routes could follow a line over 64 KiB with no line end. An eighth review found more,
+fixed here too. A request whose first try got the engine's 503, held and sent again, was out of every stop's reach:
+the engine's error took it for an answer relayed whole, and on SGLang a stopped Anthropic stream then ended as if
+whole, the fault v1.40.3 fixed. The cockpit removed a recovery's mark when systemd did not answer, the very case the
+mark is kept for, and once the restart's stop was done, when systemd's job reads "start". A mark expired during a stop
+slower than 2 minutes: it counts now from the moment the unit left active, which systemd sets once. A request of the
+box's own client stayed bound when its dead stream ended cut after the stop showed, not cleanly. And a box alone read
+systemd at the end of each dead stream, for nothing. tests/test_proxy_pair.py has two boxes that serve the 27B from
+their start, each rule its test, and each test fails on v1.42.1 or on the commit before its fix.
 
 **Ollama clients get their stream as it comes.** The proxy relayed every answer that is not SSE in blocks of 64 KiB,
 so a client of the Ollama routes (`/api/chat`, `/api/generate`) got its NDJSON stream in bursts, most answers whole at
