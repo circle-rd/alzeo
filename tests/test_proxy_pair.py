@@ -328,6 +328,7 @@ def fake_peer(listed, post, running=0, slots=None, revision=TEST_REV):
         protocol_version = "HTTP/1.1"
         state = {"listed": listed, "post": post, "running": running}
         seen: list = []
+        heard: list = []                    # the checkpoint each POST carried (X-Alzeo-Pair-Checkpoint), or None
 
         def log_message(self, *a):
             pass
@@ -356,6 +357,7 @@ def fake_peer(listed, post, running=0, slots=None, revision=TEST_REV):
         def do_POST(self):
             self.rfile.read(int(self.headers.get("Content-Length") or 0))
             Peer.seen.append(self.path)
+            Peer.heard.append(self.headers.get("X-Alzeo-Pair-Checkpoint"))
             code, obj = Peer.state["post"]
             time.sleep(Peer.state.get("delay", 0))
             if Peer.state.get("cut"):           # its answer cut on the way: fewer bytes than it said
@@ -2232,6 +2234,30 @@ class TwoBoxesServeOneModel(PairFixture, unittest.TestCase):
                     th.join(30)
                 self.E1.users.clear()
 
+    def test_a_shared_request_carries_this_boxs_checkpoint_and_never_the_clients(self):
+        # decision 1018: the checkpoint the other box must serve a shared request from comes with it, set by the entry
+        # alone (review, 2026-11-04)
+        Peer = fake_peer(["qwen3.8-27b", "marker-carries"], PEER_ANSWER)
+        entry = self.spare_proxy("spark1-carries", KEY_1, peers=(("spark2", tls_peer(self, Peer)),))
+        self.until_listed("marker-carries", port=entry)
+        held = self.busy(self.E1, entry, KEY_1, "local-only", 1, 3.0)          # one here, none there: it goes there
+        st, out, _ = self.call("/v1/chat/completions", self.chat("qwen3.8-27b"), port=entry,
+                               headers={"X-Alzeo-Pair-Checkpoint": "ab" * 20})
+        self.assertEqual(st, 200, out[:300])
+        self.assertEqual(len(Peer.seen), 1)
+        self.assertEqual(Peer.heard, [TEST_REV], "the entry's checkpoint, never the one its client wrote")
+        for th in held:
+            th.join(30)
+
+    def test_a_request_for_a_model_only_the_other_box_serves_carries_no_checkpoint(self):
+        Peer = fake_peer(["qwen3.8-flash-next-fp4", "marker-alone"], PEER_ANSWER)
+        entry = self.spare_proxy("spark1-alone", KEY_1, peers=(("spark2", tls_peer(self, Peer)),))
+        self.until_listed("marker-alone", port=entry)
+        st, out, _ = self.call("/v1/chat/completions", self.chat("qwen3.8-flash-next-fp4"), port=entry,
+                               headers={"X-Alzeo-Pair-Checkpoint": "ab" * 20})
+        self.assertEqual(st, 200, out[:300])
+        self.assertEqual(Peer.heard, [None], "a model this box does not serve: no checkpoint to keep")
+
     def test_a_tool_call_the_other_box_served_is_watched_here_too(self):
         # role 8: a call naming a watched host, in an answer this box relayed from the other one, was written in the
         # other box's journal alone, and this box's cockpit showed no banner for its own client (review, 2026-11-03)
@@ -2387,8 +2413,9 @@ class TwoBoxesServeOneModel(PairFixture, unittest.TestCase):
         if not self.INPROC:
             self.skipTest("this box's engine is said away in this test's process")
         m = self.mod
-        m._LAST_REV["qwen3.8-27b"] = "ab" * 20                                # this box served another checkpoint
-        self.addCleanup(m._LAST_REV.pop, "qwen3.8-27b", None)
+        saved_lane = m._LAST_LANE["lane"]
+        m._LAST_LANE["lane"] = (frozenset({"qwen3.8-27b"}), "ab" * 20)       # this box served another checkpoint
+        self.addCleanup(m._LAST_LANE.__setitem__, "lane", saved_lane)
         real = m.served_models
 
         def away(*a, **k):
@@ -2399,10 +2426,60 @@ class TwoBoxesServeOneModel(PairFixture, unittest.TestCase):
         self.assertEqual(st, 503, out[:300])
         self.assertIn(b"another checkpoint", out)
         self.assertEqual(self.E2.users, [], "a client of this box got the other checkpoint")
-        m._LAST_REV["qwen3.8-27b"] = TEST_REV                                 # the same checkpoint there: it serves
+        m._LAST_LANE["lane"] = (frozenset({"qwen3.8-27b"}), TEST_REV)        # the same checkpoint there: it serves
         st, out, _ = self.call("/v1/chat/completions", self.chat("qwen3.8-27b"))
         self.assertEqual(st, 200, out[:300])
         self.assertIn(b"from spark2", out)
+
+    def test_this_engine_starting_its_lane_goes_to_no_other_checkpoint(self):
+        # decision 1018: an update restarts this proxy and the engine together, and the 27B loads for minutes. This
+        # proxy, new, had never seen its engine answer, and sent the 27B's clients to the other box whatever its
+        # checkpoint (review, 2026-11-04): the command of the engine starting names its model and checkpoint
+        if not self.INPROC:
+            self.skipTest("this box's engine is said away in this test's process")
+        m = self.mod
+        saved = (m.served_models, m.unit_texts, m._LAST_LANE["lane"])
+
+        def restore():
+            m.served_models, m.unit_texts = saved[:2]
+            m._LAST_LANE["lane"] = saved[2]
+        self.addCleanup(restore)
+
+        def away(*a, **k):
+            raise m.EngineUnreachable("connection refused (the test's engine starting)")
+        m.served_models = away
+        m._LAST_LANE["lane"] = (frozenset(), None)                             # a proxy that never saw it answer
+        starting = ("/usr/bin/docker run --rm --name qwen38-sglang img python3 -m sglang.launch_server --model-path "
+                    "/m --served-model-name qwen3.8-27b --revision {} --max-running-requests 8")
+        m.unit_texts = lambda: [starting.format("ab" * 20)]                   # its engine loads another checkpoint
+        st, out, _ = self.call("/v1/chat/completions", self.chat("qwen3.8-27b"))
+        self.assertEqual(st, 503, out[:300])
+        self.assertIn(b"another checkpoint", out)
+        self.assertEqual(self.E2.users, [], "a client of this box got the other checkpoint")
+        m.unit_texts = lambda: [starting.format(TEST_REV)]                    # the same checkpoint there: it serves
+        st, out, _ = self.call("/v1/chat/completions", self.chat("qwen3.8-27b"))
+        self.assertEqual(st, 200, out[:300])
+        self.assertIn(b"from spark2", out)
+        m.unit_texts = lambda: [starting.replace("qwen3.8-27b", "qwen3.8-flash-next-fp4").format("ab" * 20)]
+        st, out, _ = self.call("/v1/chat/completions", self.chat("qwen3.8-27b"))
+        self.assertEqual(st, 200, out[:300])                                    # its lane serves another model: there
+        self.assertIn(b"from spark2", out)
+
+    def test_a_request_sent_on_for_another_checkpoint_than_this_boxs_is_refused(self):
+        # decision 1018, the receiving side: the other box's row of this one, read minutes ago, said the checkpoint this
+        # box served before a switch under the same name, and the hop said nothing this box could check (review,
+        # 2026-11-04). The entry's checkpoint comes with the request now, and another one gets a 409
+        hop = dict(self.chat("qwen3.8-27b"), user="hop-checkpoint")
+        st, out = self.tls_call(self.pport1, "/v1/chat/completions", hop,
+                                headers={"X-Alzeo-Pair-Checkpoint": "ab" * 20})[:2]
+        self.assertEqual(st, 409, out[:300])
+        self.assertIn(b"model_not_served", out)
+        self.assertIn(b"another checkpoint", out)
+        self.assertNotIn("hop-checkpoint", self.E1.users, "this box served another checkpoint's request")
+        st, out = self.tls_call(self.pport1, "/v1/chat/completions", hop, headers={"X-Alzeo-Pair-Checkpoint": TEST_REV})[:2]
+        self.assertEqual(st, 200, out[:300])
+        st, out = self.tls_call(self.pport1, "/v1/chat/completions", dict(hop, user="hop-no-checkpoint"))[:2]
+        self.assertEqual(st, 200, out[:300])                                    # a hop that carries none: no check
 
     def test_an_ordered_stop_binds_no_request(self):
         # decision 1019 binds a request that may have killed an engine: a stop ordered to the lane's unit (a Load, an
@@ -2862,6 +2939,12 @@ class TwoBoxesServeOneModelInProcess(TwoBoxesServeOneModel):
 
     def test_an_ordered_stop_binds_no_request(self):
         super().test_an_ordered_stop_binds_no_request()
+
+    def test_this_engine_starting_its_lane_goes_to_no_other_checkpoint(self):
+        super().test_this_engine_starting_its_lane_goes_to_no_other_checkpoint()
+
+    def test_a_request_sent_on_for_another_checkpoint_than_this_boxs_is_refused(self):
+        super().test_a_request_sent_on_for_another_checkpoint_than_this_boxs_is_refused()
 
     def test_a_request_bound_to_a_box_whose_list_is_unknown_is_tried_there(self):
         super().test_a_request_bound_to_a_box_whose_list_is_unknown_is_tried_there()
@@ -3423,8 +3506,12 @@ class ThePairsPieces(unittest.TestCase):
         self.addCleanup(shutil.rmtree, tmp, True)
         script = tmp / "launch-lane.sh"
         script.write_text("#!/bin/bash\n# --max-num-seqs 99, a comment, counts not\nexec vllm serve m --max-num-seqs 16\n")
-        shown = ("ActiveState=inactive\nExecStart={ path=/usr/bin/docker ; argv[]=docker run x --max-running-requests 8 "
-                 f"; }}\n\nActiveState=active\nExecStart={{ path={script} ; argv[]={script} ; }}\n")
+        # the active unit's main process, as it was started: a script not yet at its exec
+        engine = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)", str(script)])
+        self.addCleanup(engine.wait)
+        self.addCleanup(engine.kill)
+        shown = ("ActiveState=inactive\nMainPID=0\n\n"
+                 f"MainPID={engine.pid}\nActiveState=active\n")
         calls = []
 
         def run(argv, **kw):
@@ -3446,6 +3533,45 @@ class ThePairsPieces(unittest.TestCase):
         m.HOLD_UNITS = ()
         m._UNIT_FACTS.update(ts=-1e9, texts=None)
         self.assertIsNone(m.unit_slots(), "no unit named: a proxy run by hand or by a test")
+
+    def test_this_box_says_the_checkpoint_its_engine_runs_not_the_one_its_unit_names_next(self):
+        # switch-model.sh rewrites the unit and reloads systemd without a restart: the box said the new checkpoint while
+        # its engine served the old one until its next start (review, 2026-11-04)
+        m = self.mod
+        engine = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)", "--served-model-name",
+                                   "qwen3.8-27b", "--revision", "ab" * 20, "--max-running-requests", "8"])
+        self.addCleanup(engine.wait)
+        self.addCleanup(engine.kill)
+        shown = (f"ActiveState=active\nMainPID={engine.pid}\nExecStart={{ path=/usr/bin/docker ; argv[]=docker run x "
+                 f"--served-model-name qwen3.8-27b --revision {'cd' * 20} --max-running-requests 8 ; }}\n")
+
+        def run(argv, **kw):
+            return subprocess.CompletedProcess(argv, 0, shown, "")
+        saved = (m.HOLD_UNITS, m.subprocess, m.PAIR_CHECKPOINT)
+        m.HOLD_UNITS = ("qwen38-sglang.service",)
+        m.subprocess = types.SimpleNamespace(run=run)
+        m.PAIR_CHECKPOINT = None                                                # a box whose units say it
+        m._UNIT_FACTS.update(ts=-1e9, texts=None)
+
+        def restore():
+            m.HOLD_UNITS, m.subprocess, m.PAIR_CHECKPOINT = saved
+            m._UNIT_FACTS.update(ts=-1e9, texts=None)
+        self.addCleanup(restore)
+        self.assertEqual(m.unit_revision(), "ab" * 20, "the unit's next start, not what its engine serves")
+        self.assertEqual(m.lane_away(), (frozenset({"qwen3.8-27b"}), "ab" * 20))
+        engine.kill()
+        engine.wait()
+        m._UNIT_FACTS.update(ts=-1e9, texts=None)
+        self.assertIsNone(m.unit_revision(), "its process gone: nothing said, nothing shared")
+
+    def test_the_names_a_command_serves_are_read_from_it(self):
+        names_in = self.mod.names_in
+        self.assertEqual(names_in(["docker run x --served-model-name qwen3.8-27b --revision ab"]),
+                         frozenset({"qwen3.8-27b"}))
+        self.assertEqual(names_in(["exec vllm serve m --served-model-name=ornith-1.5-122b \\\n --port 1"]),
+                         frozenset({"ornith-1.5-122b"}))
+        self.assertEqual(names_in(["x --served-model-name-extra y", "xx--served-model-name z"]), frozenset())
+        self.assertEqual(names_in([]), frozenset())
 
     def test_this_box_says_its_slots_in_the_list_it_gives_the_other(self):
         m = self.mod
@@ -3484,7 +3610,7 @@ class ThePairsPieces(unittest.TestCase):
             h = object.__new__(m.H)
             h._peer, h._hold_until, h._held_sse = "test", None, False
             h._forward_peer = lambda *a, res=res, **k: res
-            h._pair_alt = ([{"name": peer}], "qwen3.8-27b", {"name": "me", "peers": []}, None, [])
+            h._pair_alt = ([{"name": peer}], "qwen3.8-27b", {"name": "me", "peers": []}, None, [], TEST_REV)
             with m._PAIR_LOCK:
                 m._PAIR_MODELS[peer] = {"models": ("qwen3.8-27b",), "ts": time.monotonic()}
             self.assertFalse(h._pair_take_over(b"{}"), res)
@@ -3693,7 +3819,7 @@ class ThePairsPieces(unittest.TestCase):
         h._forward_peer = lambda *a, **k: tried.append(a)
         for hold_until, held_sse in ((time.monotonic() + 30, False), (None, True)):
             h._hold_until, h._held_sse = hold_until, held_sse
-            h._pair_alt = ([{"name": "p"}], "qwen3.8-27b", {"name": "me", "peers": []}, None, [])
+            h._pair_alt = ([{"name": "p"}], "qwen3.8-27b", {"name": "me", "peers": []}, None, [], TEST_REV)
             self.assertFalse(h._pair_take_over(b"{}"))
         self.assertEqual(tried, [], "a request whose answer began was sent to the other box")
 
@@ -3703,7 +3829,7 @@ class ThePairsPieces(unittest.TestCase):
         m = self.mod
         h = object.__new__(m.H)
         h._peer, h._hold_until, h._held_sse = "test", None, False
-        alt = ([{"name": "p"}], "qwen3.8-27b", {"name": "me", "peers": []}, None, [])
+        alt = ([{"name": "p"}], "qwen3.8-27b", {"name": "me", "peers": []}, None, [], TEST_REV)
         m._PAIR_COOL["p"] = time.monotonic() + 60
         self.addCleanup(m._PAIR_COOL.pop, "p", None)
         with m._GEN_LOCK:

@@ -865,7 +865,8 @@ PAIR_KILLER_KEEP_S = PAIR_KILLER_KEEP_S if math.isfinite(PAIR_KILLER_KEEP_S) and
 PAIR_KILLER_MAX = 1024                  # the fingerprints kept, the oldest dropped first
 _KILLERS: "collections.OrderedDict[str, tuple]" = collections.OrderedDict()    # fingerprint -> (box, until)
 _KILLERS_LOCK = threading.Lock()
-_LAST_REV: dict = {}                    # model -> the checkpoint this box's lane served it from, last seen (1018)
+# The lane this box's engine served at its last answer: (its names, its checkpoint), one tuple set at once (1018)
+_LAST_LANE = {"lane": (frozenset(), None)}
 
 
 def killer_note(fp, box):
@@ -4454,7 +4455,13 @@ class _PeerHTTPS(urllib.request.HTTPSHandler):
 # What never crosses the pair: the client's credentials on the way out (the certificate is the pair's),
 # a cookie either way (cookies know no port: a browser's cookie for this box's cockpit went to the other
 # box, and the other box's could be set here; found in review, 2026-11-03)
-PAIR_DROP_OUT = frozenset({"authorization", "x-api-key", "proxy-authorization", "cookie", PAIR_HOP.lower()})
+# The checkpoint a request sent on must be served from, when the entry serves its model too (decision 1018): the
+# other box refuses it with a 409 if it serves another one now. A box that switched checkpoints under the same name
+# was sent shared requests until its list was read again, minutes later for a box left idle (found in review,
+# 2026-11-04). Set by the entry alone: a client's is dropped with its credentials.
+PAIR_CKPT = "X-Alzeo-Pair-Checkpoint"
+PAIR_DROP_OUT = frozenset({"authorization", "x-api-key", "proxy-authorization", "cookie", PAIR_HOP.lower(),
+                           PAIR_CKPT.lower()})
 PAIR_DROP_IN = frozenset({"x-accel-buffering", "set-cookie"})
 
 
@@ -4723,11 +4730,16 @@ PAIR_CHECKPOINT = PAIR_CHECKPOINT if re.fullmatch(r"[0-9a-f]{40}", PAIR_CHECKPOI
 
 
 def unit_texts():
-    """The command of the active unit named in PROXY_HOLD_UNITS: its ExecStart and the scripts it runs, their comments
-    left out, or None when systemd does not say (no unit named, none active). Read again 10 s on at most, by one
-    request at a time (a burst at the cache's end ran one systemctl each, and a late one wrote its older answer), and
-    forgotten with the engine's rules when another engine serves (forget_engine_rules; found in review of v1.43.0,
-    2026-11-03). The rid override keeps its own reader (unit_sets_rid_override)."""
+    """The command the engine of the active unit named in PROXY_HOLD_UNITS runs now: the arguments its main process was
+    started with (/proc/<MainPID>/cmdline) and the scripts they name, their comments left out; or None when systemd
+    does not say (no unit named, none active, no main process to read). Every text lane's unit execs docker run, whose
+    arguments name its model, its checkpoint and its slots, a start under way included. The unit's own ExecStart says
+    what its NEXT start runs: switch-model.sh rewrites it and reloads systemd without a restart, and this box said the
+    stock checkpoint while its engine served the uncensored one until its next start (found in review, 2026-11-04; the
+    cockpit asks the engine, cockpit.py, for the same reason). Read again 10 s on at most, by one request at a time
+    (a burst at the cache's end ran one systemctl each, and a late one wrote its older answer), and forgotten with the
+    engine's rules when another engine serves (forget_engine_rules; found in review of v1.43.0, 2026-11-03). The rid
+    override keeps its own reader (unit_sets_rid_override)."""
     if not HOLD_UNITS:
         return None
     with _UNIT_FACTS_LOCK:
@@ -4736,13 +4748,17 @@ def unit_texts():
             return _UNIT_FACTS["texts"]
         found = None
         try:
-            out = subprocess.run(["systemctl", "show", *HOLD_UNITS, "-p", "ActiveState", "-p", "ExecStart"],
+            out = subprocess.run(["systemctl", "show", *HOLD_UNITS, "-p", "ActiveState", "-p", "MainPID"],
                                  capture_output=True, text=True, timeout=3)
             for block in (out.stdout.split("\n\n") if out.returncode == 0 else ()):
                 props = dict(ln.split("=", 1) for ln in block.splitlines() if "=" in ln)
                 if props.get("ActiveState") != "active":
                     continue
-                found = [props.get("ExecStart", "")]
+                pid = props.get("MainPID", "")
+                if not pid.isdigit() or int(pid) <= 0:
+                    break
+                with open(f"/proc/{int(pid)}/cmdline", "rb") as f:
+                    found = [" ".join(f.read().decode("utf-8", "replace").split("\0"))]
                 for script in re.findall(r"(/\S+\.sh)\b", found[0]):
                     try:
                         with open(script, encoding="utf-8") as f:
@@ -4778,9 +4794,29 @@ def revision_in(texts):
     return found.pop() if len(found) == 1 else None
 
 
+_SERVED_FLAG = re.compile(r"(?<![\w-])--served-model-name(?:=|[ \t]+)([A-Za-z0-9][\w.:/+-]*)")
+
+
+def names_in(texts):
+    """The names an engine's command serves its model under (--served-model-name)."""
+    return frozenset(m.group(1) for x in texts for m in _SERVED_FLAG.finditer(x))
+
+
+def lane_away():
+    """(names, checkpoint) of the lane this box serves while its engine does not answer: what the command of its
+    engine says (a start under way: an update restarts this proxy and an engine of minutes of loading together), else
+    what this proxy saw it serve last, else nothing known. A client of the stock 27B got the uncensored one from the
+    other box while this box restarted (found in review, 2026-11-04)."""
+    texts = unit_texts()
+    names = names_in(texts) if texts else frozenset()
+    if names:
+        return names, (revision_in(texts) or PAIR_CHECKPOINT)
+    return _LAST_LANE["lane"]
+
+
 def unit_revision():
-    """The checkpoint this box's lane serves (decision 1018): the revision its active unit names, which every lane's
-    unit carries, else PAIR_CHECKPOINT, else None. switch-model.sh serves four checkpoints of the 27B (stock,
+    """The checkpoint this box's lane serves (decision 1018): the revision the command of its engine names, which every
+    lane's unit carries, else PAIR_CHECKPOINT, else None. switch-model.sh serves four checkpoints of the 27B (stock,
     uncensored, fp8, uncensored-fp8) and three of Flash under one name each: two boxes shared them as one model, and a
     client of the stock box got the uncensored one (code review of 2026-11-03)."""
     texts = unit_texts()
@@ -6808,10 +6844,9 @@ class H(BaseHTTPRequestHandler):
             local = served_models() or None     # an engine that names nothing yet (a boot) is unknown
         except EngineUnreachable:
             local = None
-        if local is not None and name in local:
-            served_rev = unit_revision()
-            if served_rev:
-                _LAST_REV[name] = served_rev    # what this box's clients get here: kept for while its engine is away
+        if local is not None:
+            # what this box's clients get here, kept for while its engine is away (lane_away)
+            _LAST_LANE["lane"] = (frozenset(local), unit_revision())
         if not hop:
             self._killer_fp = body_fingerprint(body, route)
             bound = killer_box(self._killer_fp)
@@ -6830,13 +6865,14 @@ class H(BaseHTTPRequestHandler):
                     _say_once_a_minute("killer here", f"{self._peer} pair: a request an engine closed on moments ago "
                                                       f"stays on this box, no other box gets it (decision 1019)")
                     return False
-                mine = unit_revision()
+                names, mine = (frozenset(local), unit_revision()) if local is not None else lane_away()
+                ours = name in names        # this box's lane serves it too: from the same checkpoint only (1018)
                 theirs = (_PAIR_MODELS.get(bound) or {}).get("revision")
                 if theirs is None:
                     # its list not read, or read while it restarted: that box is tried, and its list read again; a
                     # list read that failed said "another checkpoint" to each retry for 10 minutes (review, 2026-11-04)
                     _peer_models_soon(peer)
-                if local is not None and name in local and mine and theirs and theirs != mine:
+                if ours and (not mine or (theirs and theirs != mine)):
                     # a model both serve, that box from another checkpoint now (or saying none): it is not sent there
                     # (decision 1018), nor served here (1019): nowhere, until it is forgotten
                     log(f"{self._peer} pair: {bound}'s engine or connection closed on this request moments ago, and "
@@ -6850,18 +6886,32 @@ class H(BaseHTTPRequestHandler):
                     return False                # nothing goes to another box on the say of a box that reads no key
                 log(f"{self._peer} pair: {bound}'s engine or connection closed on this request moments ago: "
                     f"{bound} or nowhere (decision 1019)")
-                if self._forward_peer(body, peer, name, conf, local, fallback=False) == "moved":
+                if self._forward_peer(body, peer, name, conf, local, fallback=False,
+                                      checkpoint=mine if ours else None) == "moved":
                     # that box serves another model now: the client got no answer at all, its 409 written nowhere
                     # (found in review, 2026-11-04)
                     self._pair_refused(bound, name, "moved", "this request goes nowhere for a while")
                     self._pair_refuse(503, "engine_unavailable", f"box {bound}, whose engine or connection closed on "
-                                      f"this request moments ago, serves another model now: this request is served "
-                                      f"nowhere else for a while; send it again later", pair_served_map(conf, local))
+                                      f"this request moments ago, serves another model or checkpoint now: this "
+                                      f"request is served nowhere else for a while; send it again later",
+                                      pair_served_map(conf, local))
                     self._done("503 pair request bound elsewhere")
                 return True
         if local is not None and name in local:
-            # a request the other box sent on is this box's to serve: sent back, two boxes would hand it to each other
-            return False if hop else self._pair_spread(body, route, name, conf, local)
+            if not hop:
+                return self._pair_spread(body, route, name, conf, local)
+            # a request the other box sent on is this box's to serve: sent back, two boxes would hand it to each other.
+            # Unless that box serves the model too and from another checkpoint than this one now (decision 1018): it
+            # is told so, reads this box's list again and serves it itself
+            want = (self.headers.get(PAIR_CKPT) or "").strip().lower()
+            if want and want != unit_revision():
+                me = (conf or {}).get("name") or "this box"
+                log(f"{self._peer} REFUSED {name} sent on by {hop[:40]}: this box serves it from another checkpoint")
+                self._pair_refuse(409, "model_not_served", f"this box ({me}) serves {name} from another checkpoint "
+                                  f"than box {hop[:40]} now", {me: list(local)})
+                self._done("409 pair another checkpoint here")
+                return True
+            return False
         me = (conf or {}).get("name") or "this box"
         if hop:
             # sent on by an entry for a model this box served moments ago: an engine that does not
@@ -6882,6 +6932,8 @@ class H(BaseHTTPRequestHandler):
         # (3) after a peer's 409, every list read again from that moment (found in review, 2026-11-02: a name
         # in no list had each peer read twice, a frozen one doubling the wait)
         since = None
+        names, mine = lane_away() if local is None else (frozenset(), None)
+        ours = name in names                # this box's engine away, a model its lane serves (decision 1018)
         for attempt in (0, 1, 2):
             peer = next((p for p in conf["peers"] if name in peer_models(p, fresh=attempt > 0, since=since)), None)
             if peer is None:
@@ -6900,7 +6952,7 @@ class H(BaseHTTPRequestHandler):
                 self._done("503 pair own key unreadable")
                 return True
             theirs = (_PAIR_MODELS.get(peer["name"]) or {}).get("revision")
-            if local is None and _LAST_REV.get(name) and theirs != _LAST_REV[name]:
+            if ours and (not mine or theirs != mine):
                 # this box's engine away (a crash, a restart), the model its lane served sent to the other box: only
                 # from the same checkpoint (decision 1018), where a client of the stock 27B got the uncensored one
                 # while this box restarted (found in review, 2026-11-04)
@@ -6919,7 +6971,9 @@ class H(BaseHTTPRequestHandler):
                                   f"twice (it is switching lanes): try again", pair_served_map(conf, local))
                 self._done("503 pair peer unreachable")
                 return True
-            if self._forward_peer(body, peer, name, conf, local) != "moved":
+            # counted on the tile as served there while this box's engine was away, a model both serve (996)
+            if self._forward_peer(body, peer, name, conf, local, checkpoint=mine if ours else None,
+                                  count="rescued" if ours else None) != "moved":
                 return True
             since = time.monotonic()        # the peer serves another model since its list was read
         if local is None:
@@ -6939,7 +6993,7 @@ class H(BaseHTTPRequestHandler):
         now = time.monotonic()
         me = conf["name"]
         blocks, size = prefix_blocks(body, route)
-        peers, mine = [], unit_revision()
+        peers, mine = [], None
         for p in conf["peers"]:
             _peer_models_soon(p)
             # the list as kept at its last read, however old: a box that switched lanes since says 409 and is read
@@ -6950,6 +7004,8 @@ class H(BaseHTTPRequestHandler):
             # filled it (found in review of v1.43.0, 2026-11-03); it is shared with once updated
             if name in (row.get("models") or ()) and row.get("running") is not None \
                     and _PAIR_COOL.get(p["name"], 0) <= now:
+                # read once a box is a candidate: systemctl ran for each request of a model no other box served
+                mine = mine or unit_revision()
                 if mine is None or row.get("revision") != mine:
                     # another checkpoint under the same name, or one not said: each box keeps its own (decision 1018)
                     _say_once_a_minute(f"checkpoint {p['name']}", f"{self._peer} pair: {p['name']} serves {name} from "
@@ -6992,10 +7048,11 @@ class H(BaseHTTPRequestHandler):
         if pick == me:
             # the other boxes that serve it, the fewest in flight first: they take it if this box's engine does not
             # answer it (_pair_take_over)
-            self._pair_alt = (sorted(peers, key=lambda p: load[p["name"]]), name, conf, local, blocks)
+            self._pair_alt = (sorted(peers, key=lambda p: load[p["name"]]), name, conf, local, blocks, mine)
             return False
         peer = next(p for p in peers if p["name"] == pick)
-        res = self._forward_peer(body, peer, name, conf, local, fallback=True, reserved=True, count=why)
+        res = self._forward_peer(body, peer, name, conf, local, fallback=True, reserved=True, count=why,
+                                 checkpoint=mine)
         if res is None:
             return True
         if res == "lost":                   # it had it whole (decision 1017): its client is told so, nothing runs here
@@ -7061,7 +7118,7 @@ class H(BaseHTTPRequestHandler):
         alt, self._pair_alt = getattr(self, "_pair_alt", None), None
         if alt is None or self._hold_until is not None or getattr(self, "_held_sse", False):
             return False
-        peers, name, conf, local, blocks = alt
+        peers, name, conf, local, blocks, mine = alt
         with _GEN_LOCK:
             was = (self in _GENERATIONS, self in _PAIR_HERE)
             _PAIR_HERE.discard(self)
@@ -7073,7 +7130,7 @@ class H(BaseHTTPRequestHandler):
             # the body as this box has it: the client's, with fixes this proxy makes and the other one makes again the
             # same way (tool schemas, reasoning effort), not a copy of the client's kept for the whole request, which
             # held one body more in memory on a paired box (found in review, 2026-11-03)
-            res = self._forward_peer(asked, peer, name, conf, local, fallback=True, count="rescued")
+            res = self._forward_peer(asked, peer, name, conf, local, fallback=True, count="rescued", checkpoint=mine)
             if res is None:
                 affinity_forget(conf["name"], blocks)
                 affinity_note(peer["name"], blocks, time.monotonic())
@@ -7150,7 +7207,8 @@ class H(BaseHTTPRequestHandler):
         self._done("503 engine unreachable")
         return True
 
-    def _forward_peer(self, body, peer, name, conf, local, fallback=False, reserved=False, count=None):
+    def _forward_peer(self, body, peer, name, conf, local, fallback=False, reserved=False, count=None,
+                      checkpoint=None):
         """Role 10: the request to the peer's pair port as the client wrote it, without its credentials
         (the certificate is the pair's: the peer admits it with its own key); its answer relayed as it
         comes. "moved" when the peer answers that it serves another model now (409 model_not_served),
@@ -7158,12 +7216,14 @@ class H(BaseHTTPRequestHandler):
         "fallback" when the peer does not answer, or refuses it as away (503, 529), and "too long" when its pool is too
         small for the prompt, before a byte went to the caller. reserved: the caller counted it in flight already
         (_pair_spread). count: what the tile counts it as (decision 996), once the other box's answer came, never for one
-        that came back here (the tile said "sent there" of requests that bounced, found in review, 2026-11-03)."""
+        that came back here (the tile said "sent there" of requests that bounced, found in review, 2026-11-03).
+        checkpoint: the one the other box must serve the model from (PAIR_CKPT, decision 1018), when this box serves it
+        too; it answers 409 otherwise, which is "moved" here."""
         if not reserved:
             pair_sent(peer["name"], 1)
         self._pair_count = (peer["name"], count) if count else None
         try:
-            return self._forward_peer_inner(body, peer, name, conf, local, fallback)
+            return self._forward_peer_inner(body, peer, name, conf, local, fallback, checkpoint)
         finally:
             pair_sent(peer["name"], -1)
 
@@ -7173,11 +7233,13 @@ class H(BaseHTTPRequestHandler):
         if c:
             pair_spread_count(*c)
 
-    def _forward_peer_inner(self, body, peer, name, conf, local, fallback):
+    def _forward_peer_inner(self, body, peer, name, conf, local, fallback, checkpoint=None):
         # the client's key, cookies included, never cross the pair: a browser's cookie for this box's cockpit
         # (cookies know no port) went to the other box (found in review, 2026-11-03)
         h = {k: v for k, v in self.headers.items()
              if k.lower() not in HOP and k.lower() not in PAIR_DROP_OUT and not k.lower().startswith("x-override-")}
+        if checkpoint:
+            h[PAIR_CKPT] = checkpoint
         req = urllib.request.Request(peer["proxy"] + self.path, data=body, headers=h, method=self.command)
         log(f"{self._peer} -> pair {peer['name']} for {name}")
         done, left = threading.Event(), threading.Event()
