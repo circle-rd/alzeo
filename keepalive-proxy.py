@@ -6934,6 +6934,14 @@ class H(BaseHTTPRequestHandler):
         # with its new model (found in review, 2026-11-02). A pair.json that names no peer is a box alone
         # (found in review, 2026-11-02: `pair.py name` alone made a lane name this box does not serve a 404)
         if (not (conf and conf["peers"]) and not hop) or route not in PAIR_ROUTES or not body:
+            if _KILLERS and not hop and route in PAIR_ROUTES and body:
+                # the pair dissolved since: a request bound to the box that left goes nowhere for its time, never to
+                # this box's engine (decision 1019; it ran here, found in the delta's review, 2026-11-04)
+                self._killer_fp = body_fingerprint(body, route)
+                bound = killer_box(self._killer_fp)
+                if bound not in (None, "", (conf or {}).get("name") or ""):
+                    return self._bound_refused(f"box {bound}, whose engine or connection closed on this request moments "
+                                               f"ago, is no longer in this pair", conf, None)
             return False
         name = body_model(body)
         if name not in LANE_NAMES:
@@ -6960,21 +6968,17 @@ class H(BaseHTTPRequestHandler):
                 if peer is None and bound not in ("", conf.get("name") or ""):
                     # bound to a box that left the pair since: served here, it was the fallback 1019 rules out (found
                     # in review, 2026-11-04). "" is this box, alone when it noted it (killer_note's box alone)
-                    self._pair_refuse(503, "engine_unavailable", f"box {bound}, whose engine or connection closed on "
-                                      f"this request moments ago, is no longer in this pair: this request is served "
-                                      f"nowhere else for a while; send it again later", pair_served_map(conf, local))
-                    self._done("503 pair request bound elsewhere")
-                    return True
+                    return self._bound_refused(f"box {bound}, whose engine or connection closed on this request moments "
+                                               f"ago, is no longer in this pair", conf, local)
                 if peer is None:
                     # this box's engine closed on it moments ago: here or nowhere
-                    if local is not None and name not in local:
-                        # this box serves another model now: never that model for this one (docs/pair.md), and never
-                        # the other box (found in review, 2026-11-04)
-                        self._pair_refuse(503, "engine_unavailable", "an engine closed on this request moments ago, "
-                                          "and this box serves another model now: this request is served nowhere "
-                                          "for a while; send it again later", pair_served_map(conf, local))
-                        self._done("503 pair request bound elsewhere")
-                        return True
+                    if local is not None and name not in local and any(
+                            name in ((_PAIR_MODELS.get(p["name"]) or {}).get("models") or ()) for p in conf["peers"]):
+                        # this box serves another model now, the other box this one: never that model for this one
+                        # (docs/pair.md), and never the other box (found in review, 2026-11-04). A name no box serves
+                        # is this box's lane's to answer (decision 986), and was refused 10 minutes (the delta's review)
+                        return self._bound_refused("an engine closed on this request moments ago, and this box serves "
+                                                   "another model now", conf, local)
                     _say_once_a_minute("killer here", f"{self._peer} pair: a request an engine closed on moments ago "
                                                       f"stays on this box, no other box gets it (decision 1019)")
                     return False
@@ -6990,13 +6994,12 @@ class H(BaseHTTPRequestHandler):
                     # (decision 1018), nor served here (1019): nowhere, until it is forgotten
                     log(f"{self._peer} pair: {bound}'s engine or connection closed on this request moments ago, and "
                         f"{bound} serves {name} from another checkpoint now: nowhere (decisions 1018 and 1019)")
-                    self._pair_refuse(503, "engine_unavailable", f"box {bound}, whose engine or connection closed on this "
-                                      f"request moments ago, serves {name} from another checkpoint now: this request is "
-                                      f"served nowhere else for a while; send it again later", pair_served_map(conf, local))
-                    self._done("503 pair request bound elsewhere")
-                    return True
+                    return self._bound_refused(f"box {bound}, whose engine or connection closed on this request "
+                                               f"moments ago, serves {name} from another checkpoint now", conf, local)
                 if not CLIENT_KEYS and not _door_key():
-                    return False                # nothing goes to another box on the say of a box that reads no key
+                    # nothing goes to another box on the say of a box that reads no key, and a request bound there is
+                    # not this box's either (decision 1019): it ran here (found in the delta's review, 2026-11-04)
+                    return self._own_key_refused(name)
                 log(f"{self._peer} pair: {bound}'s engine or connection closed on this request moments ago: "
                     f"{bound} or nowhere (decision 1019)")
                 if self._forward_peer(body, peer, name, conf, local, fallback=False,
@@ -7004,11 +7007,8 @@ class H(BaseHTTPRequestHandler):
                     # that box serves another model now: the client got no answer at all, its 409 written nowhere
                     # (found in review, 2026-11-04)
                     self._pair_refused(bound, name, "moved", "this request goes nowhere for a while")
-                    self._pair_refuse(503, "engine_unavailable", f"box {bound}, whose engine or connection closed on "
-                                      f"this request moments ago, serves another model or checkpoint now: this "
-                                      f"request is served nowhere else for a while; send it again later",
-                                      pair_served_map(conf, local))
-                    self._done("503 pair request bound elsewhere")
+                    self._bound_refused(f"box {bound}, whose engine or connection closed on this request moments ago, "
+                                        f"serves another model or checkpoint now", conf, local)
                 return True
         if local is not None and name in local:
             if not hop:
@@ -7055,27 +7055,18 @@ class H(BaseHTTPRequestHandler):
                     continue
                 break
             if not CLIENT_KEYS and not _door_key():
-                # this box admitted the request without checking a key (its own is unreadable: the engine's check
-                # was left to do it, and a request sent on never reaches it), so nothing goes to another box on
-                # its say: the pair's certificate would carry it (found in review, 2026-11-02). Its own lane is still
-                # served as before: this is checked only when a peer would get the request.
-                log(f"{self._peer} REFUSED {name}: this box cannot read its own key, so it sends nothing on to a peer")
-                self._pair_refuse(503, "engine_unavailable", "this box cannot read its own key "
-                                  "(~/.config/qwen38/api-key), so it sends no request on to another box", {})
-                self._done("503 pair own key unreadable")
-                return True
+                return self._own_key_refused(name)
             theirs = (_PAIR_MODELS.get(peer["name"]) or {}).get("revision")
             if ours and (not mine or theirs != mine):
-                # this box's engine away (a crash, a restart), the model its lane served sent to the other box: only
-                # from the same checkpoint (decision 1018), where a client of the stock 27B got the uncensored one
-                # while this box restarted (found in review, 2026-11-04)
-                log(f"{self._peer} pair: this box's engine does not answer, and {peer['name']} serves {name} from "
-                    f"another checkpoint: not sent there (decision 1018)")
-                self._pair_refuse(503, "engine_unavailable", f"this box's engine does not answer now, and box "
-                                  f"{peer['name']} serves {name} from another checkpoint than this box: try again "
-                                  f"once this box answers", pair_served_map(conf, local))
-                self._done("503 pair another checkpoint")
-                return True
+                # this box's engine away (a crash, a restart), the model its lane serves: never to the other box from
+                # another checkpoint (decision 1018), where a client of the stock 27B got the uncensored one while this box
+                # restarted (found in review, 2026-11-04). It goes on to this box's own path, which holds it while its
+                # engine comes back (role 6) or says 503, as for a model no other box serves: a 503 at once cut a
+                # restart's clients off (the delta's review, 2026-11-04)
+                _say_once_a_minute(f"away {name}", f"{self._peer} pair: this box's engine does not answer, and "
+                                                   f"{peer['name']} serves {name} from another checkpoint: not sent "
+                                                   f"there, this box's own path takes it (decision 1018)")
+                return False
             if attempt == 2:
                 # a box lists it and refused it twice (its list lags a switch): never answered here with this box's
                 # own model, which docs/pair.md promises; the client tries again (found in review, 2026-11-03)
@@ -7172,9 +7163,10 @@ class H(BaseHTTPRequestHandler):
             self._pair_refused(pick, name, res, "its client is told 503")
             self._pair_lost(pick, name, conf, local)
             return True
-        if res == "gone":                   # its client left while that box did not answer: nothing to serve here
+        if res in ("gone", "left"):         # its client left: nothing to serve here
             affinity_forget(pick, blocks)
-            self._pair_refused(pick, name, "fallback", "its client left")
+            if res == "gone":               # ...while that box did not answer: paused as one that does not
+                self._pair_refused(pick, name, "fallback", "its client left")
             return True
         # the peer did not answer, or serves another model now: this box serves it, no byte of an answer having gone
         # out (decision 998: never a request whose answer began), and the conversation is this box's from now on
@@ -7206,6 +7198,24 @@ class H(BaseHTTPRequestHandler):
                 row = _PAIR_MODELS.get(pick)
                 if row:
                     _PAIR_MODELS[pick] = dict(row, models=tuple(m for m in row["models"] if m != name), ts=0.0)
+
+    def _bound_refused(self, why, conf, local):
+        """Decision 1019: a request an engine closed on moments ago that goes nowhere now: a 503 to send it again later."""
+        self._pair_refuse(503, "engine_unavailable", f"{why}: this request is served nowhere for a while; send it "
+                          f"again later", pair_served_map(conf, local) if conf else {})
+        self._done("503 pair request bound elsewhere")
+        return True
+
+    def _own_key_refused(self, name):
+        """This box admitted the request without checking a key (its own is unreadable: the engine's check was left to
+        do it, and a request sent on never reaches it), so nothing goes to another box on its say: the pair's
+        certificate would carry it (found in review, 2026-11-02). Its own lane is still served as before: this is
+        checked only when a peer would get the request."""
+        log(f"{self._peer} REFUSED {name}: this box cannot read its own key, so it sends nothing on to a peer")
+        self._pair_refuse(503, "engine_unavailable", "this box cannot read its own key "
+                          "(~/.config/qwen38/api-key), so it sends no request on to another box", {})
+        self._done("503 pair own key unreadable")
+        return True
 
     def _killed_here(self):
         """This box's engine closed the connection on this request, before its answer or during it (decision 1019):
@@ -7247,6 +7257,8 @@ class H(BaseHTTPRequestHandler):
             # same way (tool schemas, reasoning effort), not a copy of the client's kept for the whole request, which
             # held one body more in memory on a paired box (found in review, 2026-11-03)
             res = self._forward_peer(asked, peer, name, conf, local, fallback=True, count="rescued", checkpoint=mine)
+            if res == "left":               # its client left before that box read it: nothing moves (review, 2026-11-04)
+                return True
             if res is None:
                 affinity_forget(conf["name"], blocks)
                 affinity_note(peer["name"], blocks, time.monotonic())
@@ -7330,7 +7342,7 @@ class H(BaseHTTPRequestHandler):
         comes. "moved" when the peer answers that it serves another model now (409 model_not_served),
         None once the caller has its answer. With fallback (this box serves the model too, decision 998),
         "lost" when the peer had it whole and closed the connection with no answer (decision 1017), "gone" when its
-        client left before the peer took the connection,
+        client left before the peer took the connection, "left" when it left while its body was still on its way there,
         "fallback" when the peer does not answer, or refuses it as away (503, 529), and "too long" when its pool is too
         small for the prompt, before a byte went to the caller. reserved: the caller counted it in flight already
         (_pair_spread). count: what the tile counts it as (decision 996), once the other box's answer came, never for one
@@ -7438,7 +7450,11 @@ class H(BaseHTTPRequestHandler):
                     # it when its client left, its body still on its way, and a healthy box was paused 30 s (found in
                     # review, 2026-11-04)
                     took = getattr(getattr(req, "upstream", None), "kept_sock", None) is not None
-                    return "gone" if fallback and isinstance(e, urllib.error.URLError) and not took else None
+                    if fallback and isinstance(e, urllib.error.URLError):
+                        # "left": that box took it and never read it all, so it holds none of its prefix: the caller
+                        # forgets the conversation there, where None moved it (the delta's review, 2026-11-04)
+                        return "left" if took else "gone"
+                    return None
                 why = _pair_why(e)
                 # urllib wraps in a URLError what h.request raised (the connection, its TLS, the send): the other box
                 # never had the request whole. What getresponse raised comes bare: it had it, and closed the

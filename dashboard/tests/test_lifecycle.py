@@ -744,7 +744,6 @@ class FeedOutcomes(unittest.TestCase):
         "502 engine closed a hop": "fail",   # role 10 (v6.52): the engine closed a request the other box sent on
         "503 pair request lost": "fail",     # role 10 (v6.52, decision 1017): the other box had it and gave no answer
         "503 pair request bound elsewhere": "fail",  # role 10 (v6.52, 1018 and 1019): bound to a box of another checkpoint
-        "503 pair another checkpoint": "fail",  # role 10 (v6.52, 1018): this engine away, the other box's checkpoint another
         "503 engine unreachable (upstream 502)": "fail",
         "502 upstream": "fail",
         # v6.20: the two fields SGLang leaves unbounded and dies on rather than

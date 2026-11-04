@@ -2388,6 +2388,8 @@ class TwoBoxesServeOneModel(PairFixture, unittest.TestCase):
 
         class Slow(Base):
             def do_POST(self):
+                if Base.state.get("fast"):
+                    return Base.do_POST(self)
                 time.sleep(8)                                                   # it reads nothing of the body yet
         entry = self.spare_proxy("spark1-slow-read", KEY_1, peers=(("spark2", tls_peer(self, Slow)),))
         self.until_listed("marker-slow-read", port=entry)
@@ -2405,6 +2407,13 @@ class TwoBoxesServeOneModel(PairFixture, unittest.TestCase):
                          "a box that took the connection was paused as one that does not answer")
         for th in held:
             th.join(30)
+        # that box never read the conversation: it holds none of it, and the next turn is not pulled there by a prefix it
+        # does not have (the conversation was moved there, the delta's review, 2026-11-04)
+        Base.state["fast"] = True
+        again = dict(self.chat("qwen3.8-27b"), messages=[{"role": "user", "content": "x" * (200 << 10)}])
+        st, out, _ = self.call("/v1/chat/completions", again, port=entry)
+        self.assertEqual(st, 200, out[:300])
+        self.assertIn(b"from spark1", out, "the conversation was kept on the box that never read it")
 
     def test_a_shared_request_carries_this_boxs_checkpoint_and_never_the_clients(self):
         # decision 1018: the checkpoint the other box must serve a shared request from comes with it, set by the entry
@@ -2595,8 +2604,10 @@ class TwoBoxesServeOneModel(PairFixture, unittest.TestCase):
         m.served_models = away
         self.addCleanup(setattr, m, "served_models", real)
         st, out, _ = self.call("/v1/chat/completions", self.chat("qwen3.8-27b"))
-        self.assertEqual(st, 503, out[:300])
-        self.assertIn(b"another checkpoint", out)
+        # this box's own path, which holds it while its engine comes back (role 6): a 503 at once cut a restart's
+        # clients off (the delta's review, 2026-11-04). The engine of these tests answers, so it serves it
+        self.assertEqual(st, 200, out[:300])
+        self.assertIn(b"from spark1", out)
         self.assertEqual(self.E2.users, [], "a client of this box got the other checkpoint")
         m._LAST_LANE["lane"] = (frozenset({"qwen3.8-27b"}), TEST_REV)        # the same checkpoint there: it serves
         st, out, _ = self.call("/v1/chat/completions", self.chat("qwen3.8-27b"))
@@ -2678,6 +2689,55 @@ class TwoBoxesServeOneModel(PairFixture, unittest.TestCase):
         self.assertNotIn("conv-bound-alone-0", self.E2.users)
         for th in held:
             th.join(30)
+
+    def test_a_request_bound_here_for_a_name_no_box_serves_is_this_boxs_lanes(self):
+        # decision 986: a lane name no box serves is answered by this box's lane; bound here, it was refused "this box
+        # serves another model now" for 10 minutes though nothing switched (the delta's review, 2026-11-04)
+        if not self.INPROC:
+            self.skipTest("the binding is set in this test's process")
+        m = self.mod
+        self.addCleanup(m._KILLERS.clear)
+        r = dict(self.turns("conv-bound-986", 1)[0], model="qwen3.8-flash-next-fp4")
+        m.killer_note(m.body_fingerprint(json.dumps(r).encode(), "/v1/chat/completions"), "spark1")
+        st, out, _ = self.call("/v1/chat/completions", r)
+        self.assertEqual(st, 200, out[:300])
+        self.assertIn(b"from spark1", out)
+
+    def test_a_request_bound_to_the_other_box_on_a_box_that_reads_no_key_runs_nowhere(self):
+        # decision 1019 and the key rule: bound to the other box, a box that reads no key ran it on its own engine, the
+        # fallback 1019 rules out (the delta's review, 2026-11-04)
+        if not self.INPROC:
+            self.skipTest("the key is read in this test's process")
+        m = self.mod
+        self.addCleanup(m._KILLERS.clear)
+        saved = m._door_key
+        m._door_key = lambda: None
+        self.addCleanup(setattr, m, "_door_key", saved)
+        r = self.turns("conv-bound-nokey", 1)[0]
+        m.killer_note(m.body_fingerprint(json.dumps(r).encode(), "/v1/chat/completions"), "spark2")
+        st, out, _ = self.call("/v1/chat/completions", r)
+        self.assertEqual(st, 503, out[:300])
+        self.assertIn(b"cannot read its own key", out)
+        self.assertNotIn("conv-bound-nokey-0", self.E1.users + self.E2.users)
+
+    def test_a_request_bound_to_a_box_of_a_pair_dissolved_since_goes_nowhere(self):
+        # decision 1019: the pair dissolved, a request bound to the box that left ran on this box's engine (the delta's
+        # review, 2026-11-04)
+        if not self.INPROC:
+            self.skipTest("the pair is read in this test's process")
+        m = self.mod
+        self.addCleanup(m._KILLERS.clear)
+        saved = m.pair_conf
+        m.pair_conf = lambda: {"name": "spark1", "peers": []}
+        self.addCleanup(setattr, m, "pair_conf", saved)
+        r = self.turns("conv-bound-dissolved", 1)[0]
+        m.killer_note(m.body_fingerprint(json.dumps(r).encode(), "/v1/chat/completions"), "spark2")
+        st, out, _ = self.call("/v1/chat/completions", r)
+        self.assertEqual(st, 503, out[:300])
+        self.assertIn(b"no longer in this pair", out)
+        self.assertNotIn("conv-bound-dissolved-0", self.E1.users)
+        st, out, _ = self.call("/v1/chat/completions", self.turns("conv-not-bound", 1)[0])
+        self.assertEqual(st, 200, out[:300])                                    # an unbound one is served as on a box alone
 
     def test_a_request_bound_to_a_box_that_left_the_pair_goes_nowhere(self):
         # decision 1019: bound to a box no longer in pair.json, it was served here, the fallback 1019 rules out
@@ -2792,8 +2852,8 @@ class TwoBoxesServeOneModel(PairFixture, unittest.TestCase):
                     "/m --served-model-name qwen3.8-27b --revision {} --max-running-requests 8")
         m.unit_texts = lambda: [starting.format("ab" * 20)]                   # its engine loads another checkpoint
         st, out, _ = self.call("/v1/chat/completions", self.chat("qwen3.8-27b"))
-        self.assertEqual(st, 503, out[:300])
-        self.assertIn(b"another checkpoint", out)
+        self.assertEqual(st, 200, out[:300])                                    # this box's own path (role 6's hold)
+        self.assertIn(b"from spark1", out)
         self.assertEqual(self.E2.users, [], "a client of this box got the other checkpoint")
         m.unit_texts = lambda: [starting.format(TEST_REV)]                    # the same checkpoint there: it serves
         st, out, _ = self.call("/v1/chat/completions", self.chat("qwen3.8-27b"))
@@ -2847,9 +2907,11 @@ class TwoBoxesServeOneModel(PairFixture, unittest.TestCase):
         self.assertEqual(st, 200, out[:300])
         self.assertIn(b"from spark2", out, "a box that serves no text lane kept the other box's model from its client")
         m.text_lane_coming = lambda: True                                       # a crash on its way back: its own 27B
+        before = len(self.E2.users)
         st, out, _ = self.call("/v1/chat/completions", self.chat("qwen3.8-27b"))
-        self.assertEqual(st, 503, out[:300])
-        self.assertIn(b"another checkpoint", out)
+        self.assertEqual(st, 200, out[:300])                                    # this box's own path (role 6's hold)
+        self.assertIn(b"from spark1", out)
+        self.assertEqual(len(self.E2.users), before, "a client of this box got the other checkpoint")
 
     def test_a_request_sent_on_for_another_checkpoint_than_this_boxs_is_refused(self):
         # decision 1018, the receiving side: the other box's row of this one, read minutes ago, said the checkpoint this
@@ -3358,6 +3420,15 @@ class TwoBoxesServeOneModelInProcess(TwoBoxesServeOneModel):
 
     def test_a_request_bound_to_a_box_that_left_the_pair_goes_nowhere(self):
         super().test_a_request_bound_to_a_box_that_left_the_pair_goes_nowhere()
+
+    def test_a_request_bound_here_for_a_name_no_box_serves_is_this_boxs_lanes(self):
+        super().test_a_request_bound_here_for_a_name_no_box_serves_is_this_boxs_lanes()
+
+    def test_a_request_bound_to_the_other_box_on_a_box_that_reads_no_key_runs_nowhere(self):
+        super().test_a_request_bound_to_the_other_box_on_a_box_that_reads_no_key_runs_nowhere()
+
+    def test_a_request_bound_to_a_box_of_a_pair_dissolved_since_goes_nowhere(self):
+        super().test_a_request_bound_to_a_box_of_a_pair_dissolved_since_goes_nowhere()
 
     def test_a_request_bound_while_this_box_was_alone_is_this_boxs(self):
         super().test_a_request_bound_while_this_box_was_alone_is_this_boxs()
