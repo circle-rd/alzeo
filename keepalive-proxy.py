@@ -945,6 +945,20 @@ def killer_note(fp, box):
             _KILLERS.popitem(last=False)
 
 
+def peer_may_serve(conf, name):
+    """True when a box of the pair may serve name: its list names it now, named it at its last good read (a read that
+    failed keeps those in "known"), or was never read since pair.json was. Only the current list counted, and a box
+    whose read failed, or a pair.json read again, let this box answer with the other model it serves now (the delta's
+    3rd review, 2026-11-04)."""
+    for p in conf.get("peers") or ():
+        row = _PAIR_MODELS.get(p["name"])
+        if row is None or row.get("known") is None and not row.get("models"):
+            return True                     # never read: it may
+        if name in (row.get("models") or ()) or name in (row.get("known") or ()):
+            return True
+    return False
+
+
 def killers_live():
     """True while a binding is kept: the ones that ended leave first, from the front, the oldest noted (each note moves
     its own to the end). Only a note purged them, and after one binding a box alone hashed every body for good (the
@@ -5079,7 +5093,16 @@ PAIR_ENDED = "X-Alzeo-Pair-Ended"
 HOP_ENDED_ANTHROPIC = b'event: ping\ndata: {"type": "ping", "x_alzeo_ended": "order"}\n\n'
 HOP_ENDED_OPENAI = (b'data: {"id":"keepalive","object":"chat.completion.chunk","created":0,"model":"keepalive",'
                     b'"choices":[],"x_alzeo_ended":"order"}\n\n')
-HOP_ENDED_RE = re.compile(rb'"x_alzeo_ended":\s?"order"')     # JSON structure: model output has its quotes escaped
+HOP_ENDED_NDJSON = b'{"x_alzeo_ended": "order"}\n'      # a line of its own on the Ollama routes' NDJSON streams
+
+
+def ended_by_order_in(seen):
+    """The other box's end by order in what it streamed: one of its whole events, or its line at a line's start. Model
+    output never writes those: its text is an escaped JSON string in an SSE event, and an Ollama tool call's arguments,
+    an object, sit inside a longer line. A field matched anywhere was set by a tool call's arguments on the Ollama routes
+    (the delta's 3rd review, 2026-11-04)."""
+    return (HOP_ENDED_OPENAI in seen or HOP_ENDED_ANTHROPIC in seen
+            or (b"\n" + HOP_ENDED_NDJSON) in (b"\n" + seen))
 
 
 def sse_error(msg):
@@ -5620,8 +5643,11 @@ class H(BaseHTTPRequestHandler):
         raw = herr.read()
         try: herr.close()
         except Exception: pass
+        died_by_order = False
         if herr.code == 500 and ENGINE_DIED_RE.search(raw):
             self._killed_here()             # vLLM's engine died with this request (decision 1019)
+            # ...or its lane was stopped by order: the other box is told, and binds nothing (decision 1031)
+            died_by_order = bool(self._pair_hop()) and unit_stopping_by_order()
         if herr.code in (502, 503, 504):
             self._unavailable(f"it answered HTTP {herr.code}, as it does while starting or shutting down", quiet)
             self._done(f"503 engine unreachable (upstream {herr.code})", quiet=quiet); return
@@ -5634,6 +5660,8 @@ class H(BaseHTTPRequestHandler):
             for k in [k for k in headers if k.lower() == "location"]:
                 u = urllib.parse.urlsplit(headers[k])
                 headers[k] = urllib.parse.urlunsplit(("", "", u.path or "/", u.query, ""))
+        if died_by_order:
+            headers[PAIR_ENDED] = "order"
         try: self._answer(herr.code, headers, raw)
         except Exception: pass
         self._done(f"{herr.code} upstream")
@@ -5663,6 +5691,7 @@ class H(BaseHTTPRequestHandler):
             return                      # the hold already sent this stream's 200 and headers
         self._out_begun = True          # decision 1031: what an ordered end can still say (_say_ended_by_order)
         self._out_sse = any(k.lower() == "content-type" and "text/event-stream" in str(v) for k, v in headers.items())
+        self._out_ndjson = any(k.lower() == "content-type" and "application/x-ndjson" in str(v) for k, v in headers.items())
         self.close_connection = True
         self.send_response(status)
         for k, v in headers.items():
@@ -6000,23 +6029,19 @@ class H(BaseHTTPRequestHandler):
         """Decision 1031: this request, which the other box of a pair sent on, ends here by order; that box is told
         before the cut, and binds nothing. A 503 with PAIR_ENDED when no byte of an answer went out, the stream's own
         keepalive event with "x_alzeo_ended" in a stream open, nothing in an answer begun that is not a stream."""
-        if not self._pair_hop():
+        if not self._pair_hop() or getattr(self, "_said_ended", False):
             return
+        self._said_ended = True
         try:
             if getattr(self, "_held_sse", False) or getattr(self, "_out_sse", False):
                 self._chunk(HOP_ENDED_ANTHROPIC if self.path.startswith("/v1/messages") else HOP_ENDED_OPENAI)
+            elif getattr(self, "_out_ndjson", False):
+                self._chunk(HOP_ENDED_NDJSON)
             elif not getattr(self, "_out_begun", False):
-                body = json.dumps({"error": {"type": "engine_unavailable", "message": "keepalive-proxy: this box "
-                                   "ended the request by order (its Abort all, its memory floor or a stop of its "
-                                   "lane); send it again"}}).encode()
-                self.send_response(503)
-                self.send_header("Content-Type", "application/json")
-                self.send_header("Content-Length", str(len(body)))
-                self.send_header(PAIR_ENDED, "order")
-                self.send_header("Connection", "close")
-                self.end_headers()
-                self.wfile.write(body)
-                self.wfile.flush()
+                # in the client's dialect, with Retry-After, as every 503 of the pair (the delta's 3rd review)
+                me = (pair_conf() or {}).get("name") or "the other box"
+                self._pair_refuse(503, "engine_unavailable", f"box {me} ended this request by order (its Abort all, its "
+                                  f"memory floor or a stop of its lane): send it again", {}, extra={PAIR_ENDED: "order"})
                 self._out_begun = True
         except OSError:
             pass
@@ -6464,6 +6489,8 @@ class H(BaseHTTPRequestHandler):
                 # incomplete transfer it is, as it would talking to the engine directly.
                 log(f"{self._peer} the engine cut a non-streamed answer short "
                     f"({type(cut).__name__}); relayed without its end")
+                if self._pair_hop() and unit_stopping_by_order():
+                    self._say_ended_by_order()  # an Ollama route's NDJSON stream, its lane stopped by order (1031)
                 try: self.connection.shutdown(socket.SHUT_RDWR)
                 except Exception: pass
                 self._killed_here()             # it died during its answer (decision 1019)
@@ -6600,6 +6627,8 @@ class H(BaseHTTPRequestHandler):
             if b"EngineCore" in val and ENGINE_DIED_RE.search(val):
                 self._killed_here()         # vLLM's engine died during this answer (decision 1019)
                 died = True
+                if self._pair_hop() and unit_stopping_by_order():
+                    self._say_ended_by_order()  # its lane stopped by order: said before the death it relays (1031)
             self._note_rid(val)
             if not anthropic and engine_aborted(val):
                 # v6.47: the engine ended this generation as aborted (finish_reason "abort", which
@@ -6868,15 +6897,15 @@ class H(BaseHTTPRequestHandler):
             self._done("503 engine unreachable"); return
 
     # ---- role 10: the pair ---------------------------------------------------
-    def _pair_refuse(self, status, kind, msg, served):
+    def _pair_refuse(self, status, kind, msg, served, extra=None):
         """A refusal of the pair's own, in the caller's dialect, with what each box serves; a 503 says when
         to try again, as every other 503 of this proxy does (v6.9). Through _answer: a stream this proxy
-        opened while it held the request gets it as an error event."""
+        opened while it held the request gets it as an error event. extra: headers it carries too."""
         if self.path.startswith("/v1/messages"):
             err = {"type": "error", "error": {"type": kind, "message": "keepalive-proxy: " + msg, "served": served}}
         else:
             err = {"error": {"type": kind, "message": "keepalive-proxy: " + msg, "served": served}}
-        headers = {"Content-Type": "application/json"}
+        headers = {"Content-Type": "application/json", **(extra or {})}
         if status == 503:
             headers["Retry-After"] = "30"
         try: self._answer(status, headers, json.dumps(err).encode())
@@ -7036,8 +7065,7 @@ class H(BaseHTTPRequestHandler):
                                                f"ago, is no longer in this pair", conf, local)
                 if peer is None:
                     # this box's engine closed on it moments ago: here or nowhere
-                    if local is not None and name not in local and any(
-                            name in ((_PAIR_MODELS.get(p["name"]) or {}).get("models") or ()) for p in conf["peers"]):
+                    if local is not None and name not in local and peer_may_serve(conf, name):
                         # this box serves another model now, the other box this one: never that model for this one
                         # (docs/pair.md), and never the other box (found in review, 2026-11-04). A name no box serves
                         # is this box's lane's to answer (decision 986), and was refused 10 minutes (the delta's review)
@@ -7118,8 +7146,6 @@ class H(BaseHTTPRequestHandler):
                     since = self._t_pair
                     continue
                 break
-            if not CLIENT_KEYS and not _door_key():
-                return self._own_key_refused(name)
             theirs = (_PAIR_MODELS.get(peer["name"]) or {}).get("revision")
             if ours and (not mine or theirs != mine):
                 # this box's engine away (a crash, a restart), the model its lane serves: never to the other box from
@@ -7131,6 +7157,10 @@ class H(BaseHTTPRequestHandler):
                                                    f"{peer['name']} serves {name} from another checkpoint: not sent "
                                                    f"there, this box's own path takes it (decision 1018)")
                 return False
+            if not CLIENT_KEYS and not _door_key():
+                # after the other checkpoint, which sends nothing on: refused before, a box reading no key turned away
+                # what it holds for its own engine (the delta's 3rd review, 2026-11-04)
+                return self._own_key_refused(name)
             if attempt == 2:
                 # a box lists it and refused it twice (its list lags a switch): never answered here with this box's
                 # own model, which docs/pair.md promises; the client tries again (found in review, 2026-11-03)
@@ -7476,6 +7506,17 @@ class H(BaseHTTPRequestHandler):
                     # the client left while the other box said no: nothing to serve here either (found in review,
                     # 2026-11-03: a refusal brought the request back to this box's engine, which computed it for nobody)
                     self._done("CLIENT GONE during pair"); return None
+                ordered = (e.headers.get(PAIR_ENDED) or "").strip().lower() == "order"
+                if ordered and e.code == 503:
+                    # it ended it there by order (its Abort all, its floor, a stop of its lane): not run here too (decision
+                    # 1017), not bound to it (1031), and that box is no box that fails: no pause, nothing on the tile.
+                    # Read before its body, which a cut made a refusal run here (the delta's 3rd review, 2026-11-04)
+                    log(f"{self._peer} pair: {peer['name']} ended this request by order: its client is told 503")
+                    self._pair_refuse(503, "engine_unavailable", f"box {peer['name']} ended this request by order (its "
+                                      f"Abort all, its memory floor or a stop of its lane): send it again",
+                                      pair_served_map(conf, local))
+                    self._done("503 pair stopped there")
+                    return None
                 if fallback and e.code in (503, 529) and (data is None or len(data) > PAIR_ANSWER_MAX):
                     return "fallback"       # its refusal's status said it all, its body cut or too long (same review)
                 if data is None:
@@ -7488,18 +7529,12 @@ class H(BaseHTTPRequestHandler):
                     self._pair_refuse(502, "upstream_too_large", f"the answer of box {peer['name']} is over "
                                       f"{PAIR_ANSWER_MAX} bytes", pair_served_map(conf, local))
                     self._done("502 pair answer too large"); return None
-                if (e.code == 502 and b'"upstream_closed"' in data) or (e.code == 500 and ENGINE_DIED_RE.search(data)):
+                if not ordered and ((e.code == 502 and b'"upstream_closed"' in data)
+                                    or (e.code == 500 and ENGINE_DIED_RE.search(data))):
                     killer_note(self._killer_fp, peer["name"])                          # decision 1019
                 if e.code == 409 and b'"model_not_served"' in data:
                     log(f"{self._peer} pair: {peer['name']} serves another model now; the lists are read again")
                     return "moved"
-                if e.code == 503 and (e.headers.get(PAIR_ENDED) or "").strip().lower() == "order":
-                    # it ended it there by order (its Abort all, its floor): not run here too (decision 1017), not bound
-                    # to it (1031), and that box is no box that fails: no pause, nothing on the tile
-                    log(f"{self._peer} pair: {peer['name']} ended this request by order: its client is told 503")
-                    self._plain(503, {k: v for k, v in e.headers.items() if k.lower() not in PAIR_DROP_IN}, data)
-                    self._done("503 pair stopped there")
-                    return None
                 refused = _pair_refused_here(e.code, data) if fallback else None
                 if refused:
                     return "fallback" if refused == "away" else "too long"
@@ -7607,12 +7642,10 @@ class H(BaseHTTPRequestHandler):
                     if not b:
                         break
                     seen = tail + b
-                    if b"x_alzeo_ended" in seen and HOP_ENDED_RE.search(seen):
+                    if b"x_alzeo_ended" in seen and ended_by_order_in(seen):
                         ordered = True
                     if HOP_CLOSED_B in seen or (b"EngineCore" in seen and ENGINE_DIED_RE.search(seen)):
-                        # its engine closed on it after its hold opened the stream, or vLLM's died during it (1019)
-                        killer_note(self._killer_fp, peer["name"])
-                        died = True
+                        died = True         # its engine closed on it after its hold opened the stream, or vLLM's died
                     if sse:                         # role 8, line by line: a read may end in the middle of one
                         lines = tail + b
                         cut = lines.rfind(b"\n")
@@ -7626,6 +7659,10 @@ class H(BaseHTTPRequestHandler):
                         self._chunk(b)
                     except OSError:
                         self._done("CLIENT GONE during pair"); return None
+                if died and not ordered:
+                    # bound at the stream's end, once an order said before or after the death would have come (1019,
+                    # 1031): a death vLLM relayed during an ordered stop was bound (the delta's 3rd review, 2026-11-04)
+                    killer_note(self._killer_fp, peer["name"])
                 self._finish()
                 self._done("502 pair upstream" if died else "ok pair")
                 return None
