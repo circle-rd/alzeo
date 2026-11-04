@@ -105,9 +105,10 @@ list was read): the entry then serves it itself.
   - When the other box had the request and closed the connection with no answer (a restart of its proxy,
     its power), the client gets a 503 and the request runs nowhere else: a request that took that box down
     does not take the entry down too. That box gets no request of a model both serve for 30 s either. When
-    it ends the request by order instead (its Abort all, its memory floor, a stop of its lane), it says so:
-    the client gets a 503 too and the request runs nowhere else, an Abort all there not undone here, with no
-    pause and nothing bound.
+    it ends the request by order instead (its Abort all, its memory floor, a stop of its lane, or a restart of
+    it to another checkpoint), it says so: the client gets a 503 too and the request runs nowhere else, an
+    Abort all there not undone here, with no pause and nothing bound. On the Ollama routes, the line that says
+    so stays at the entry: an Ollama client reads no such line.
   - When the other box refuses a prompt too long for its pool (a 64 GB box paired with a 128 GB one), the
     entry serves it, and the other box still gets the shorter ones.
   - When the entry cannot serve a request, the other box does: the entry's memory floor refuses new
@@ -121,10 +122,13 @@ list was read): the entry then serves it itself.
     on, before its answer or during it, died with (vLLM answers those with a 500), or that the other box had
     and dropped, goes to that box or nowhere, never shared, handed back or taken over, and nowhere once that
     box left the pair, or the pair was dissolved. It can take one box down, as on a box alone (decision 1019).
-    A stop of the lane's unit (a Load of another lane, the Stop button), an Abort all and the memory floor end
-    requests by order, which bind nothing, and a box that ends so a request the other box sent tells it before
-    the cut. A restart binds them as an engine's death, the cockpit's own restart of a wedged engine included:
-    their retries wait for that engine (decision 1030).
+    A stop of the lane's unit (a Load of another lane, the Stop button), a restart of it that loads another
+    checkpoint than the one the box served (the cockpit's Load of another checkpoint of the lane, decision
+    1041), an Abort all and the memory floor end requests by order, which bind nothing, and a box that ends so
+    a request the other box sent tells it before the cut. Any other restart binds them as an engine's death:
+    their retries wait for that engine (decision 1030). So does the cockpit's restart of a wedged or stuck
+    engine, whatever checkpoint an update or switch-model.sh staged for its next start: the cockpit says which
+    run it restarts to recover it, in ~/.config/qwen38/recovery-restarts.json (decision 1049).
   - While the entry's engine is away (a crash, a restart), a model its lane serves (as the command of its
     engine says, what its unit starts, or as it served last) goes to the other box only from the same
     checkpoint (decision 1018): otherwise the entry holds it while its own engine comes back, as for a model no

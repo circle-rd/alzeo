@@ -26,18 +26,20 @@ share keeping them together up to the gap of 4, then 4 to each box once both box
 connection), refuses the entry's certificate (it was paired again without the entry), or answers 503 (its engine away,
 or its memory floor) or 529 (the floor, in the Anthropic dialect), before a byte of its answer went out, the entry
 serves the request itself, and that box gets no request of a model both serve for 30 s. When the other box had the
-request and closed the connection with no answer (an Abort all there, its floor, a restart, its power), the client
-gets a 503 and the request runs nowhere else (decision 1017). A prompt too long for the other box's pool (a 64 GB box
+request and closed the connection with no answer (a restart of its proxy, its power), the client gets a 503 and the
+request runs nowhere else (decision 1017). A prompt too long for the other box's pool (a 64 GB box
 paired with a 128 GB one) is served by the entry, with no pause. What the entry cannot serve goes to the other box at
 once: a request its memory floor refuses, a prompt too long for its pool, a long prompt its warming engine cannot
 measure yet, or one its engine does not answer at the first try (connection refused, or the 502, 503 or 504 of a lane
 that starts or stops), instead of a wait for the lane. A request whose answer began is never sent again, nor one an
 engine closed the connection on or died with (vLLM answers those with a 500), which could take the other engine down
 too, and for 10 minutes such a request, sent again by its client, goes to that box or nowhere (decision 1019). A stop
-of the lane's unit (a Load of another lane, the Stop button), an Abort all and the memory floor end requests by order,
-which bind nothing, and a box that ends so a request the other box sent tells it before the cut (decision 1031). A
-restart binds them as an engine's death, the cockpit's own restart of a wedged engine included: their retries wait for
-that engine (decision 1030). While the entry's engine is away, a model its lane serves goes to the other box from the
+of the lane's unit (a Load of another lane, the Stop button), a restart of it to another checkpoint than the one the
+box served (the cockpit's Load of another checkpoint, decision 1041), an Abort all and the memory floor end requests by
+order, which bind nothing, and a box that ends so a request the other box sent tells it before the cut (decision 1031).
+Any other restart binds them as an engine's death, and so does the cockpit's restart of a wedged or stuck engine,
+whatever checkpoint an update staged for its next start: their retries wait for that engine (decisions 1030 and 1049).
+While the entry's engine is away, a model its lane serves goes to the other box from the
 same checkpoint only, and waits for the entry's engine otherwise. The tile of each cockpit says what it sent the other
 box, and why, even while that box does not answer. docs/pair.md says it all.
 
@@ -72,15 +74,33 @@ order, so the request that may have wedged it went to the other box, and the oth
 deaths from the entry, its retries refused 10 minutes after a Load there. A box restarted with its engine read no
 checkpoint while its unit started, an engine's command read in the instant between fork and exec was kept empty 10 s,
 a request of a lane name no box serves was refused once bound here, and one bound to the other box ran here on a box
-that reads no key or once the pair was dissolved. tests/test_proxy_pair.py has two boxes that serve the 27B from their
-start, each rule its test, and each test fails on v1.42.1 or on the commit before its fix.
+that reads no key or once the pair was dissolved. A fourth review, at its highest level too (decision 1043), found
+more, fixed here (decision 1048). An end by order went unsaid where the lane's engine closed a request before any byte
+or died in a stream already open, and its line on the Ollama routes reached the entry's client, whose parser failed on
+it. A death relayed in the other box's stream was bound to nothing when the client left first. A box serving images
+asked systemd two or three times a request, a read of systemd that failed sent the 27B to the other box whatever its
+checkpoint, and a crashed engine was read as the checkpoint its unit starts next. A box that reads no key refused its
+own lane's model, a request bound here was refused 10 minutes while the other box was off, and a launcher edited in
+Latin-1 ended a request with no answer. And the cockpit's restart of a wedged engine read as an order again when an
+update had staged another checkpoint: the cockpit says which restarts recover an engine now (decision 1049).
+tests/test_proxy_pair.py has two boxes that serve the 27B from their start, each rule its test, and each test fails on
+v1.42.1 or on the commit before its fix.
+
+**Ollama clients get their stream as it comes.** The proxy relayed every answer that is not SSE in blocks of 64 KiB,
+so a client of the Ollama routes (`/api/chat`, `/api/generate`) got its NDJSON stream in bursts, most answers whole at
+their end, on a box alone too. It relays each line as it comes now. And v1.40.3 cut the SSE stream of a generation the
+cockpit stopped (an Abort all, the memory floor), so that a client never takes the part it got for a whole answer:
+SGLang ends a stopped Ollama stream with a last line that says it is done, which the proxy relayed. That stream is cut
+too now (both found by the fourth review, each with a test that fails on the commit before).
 
 **A kernel CVE, and an extra for it.** CVE-2026-98432, a race in the kernel's IPv4 TCP handshake reachable over the
 network with no login, is rated Critical (CVSS 9.8) by Ubuntu, whose tracker listed linux-nvidia-6.17 as "Ignored (end
 of life)" and linux-nvidia-7.0 as "Vulnerable" on 2026-11-04. extras/cve-2026-98432 mitigates it until a fixed kernel
 ships: an nftables table of its own that drops IPv4 TCP packets carrying IP options, and MPTCP off, opt-in and
 reversible, never run by the installer (docs/operations.md). Installed on the reference box: Docker's rules unchanged,
-the API and the cockpit answering, a connect carrying an IP option dropped.
+the API and the cockpit answering, a connect carrying an IP option dropped. The table is loaded after
+nftables.service where that runs (its stock config flushes the whole ruleset), a run again loads the table it
+installs, `--check` says 2 when it cannot read the table without sudo, and `--uninstall` puts MPTCP back as it was.
 
 **What an update does.** The proxy (v6.52) and the cockpit restart. No engine, no lane and no unit file changes. A
 box without a pair works as before, and so does a pair that serves two models, but for one case: a request the other
