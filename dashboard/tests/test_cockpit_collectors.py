@@ -1030,6 +1030,23 @@ class AWedgedEngineTheAutohealRestartsIsARecovery(Base):
         self.assertEqual(self.actions, [("unit", {"verb": "restart", "unit": self.U}, "autoheal")])
 
 
+class TheLifecycleTickKeepsTheRunItRead(Base):
+    """A recovery's job falls back on the run the lifecycle tick read when systemd does not say it at the restart (the 7th
+    review of v1.43.0). A tick whose read failed erased it, where systemd slow under memory pressure, a wedged engine's
+    very case, fails both (found re-reading that fix, 2026-11-04). In a dry run: no action of the tick runs."""
+    U = "qwen38-sglang.service"
+
+    def test_a_tick_whose_read_failed_keeps_the_run_read_before(self):
+        cp = self.cp
+        self.addCleanup(cp.LAST_RUN.pop, self.U, None)
+        self.box({f"systemctl show {self.U}": "ActiveState=active\nSubState=running\nInvocationID=run-7\n"})
+        cp.collect_lifecycle()
+        self.assertEqual(cp.LAST_RUN.get(self.U), "run-7")
+        self.box({})
+        cp.collect_lifecycle()
+        self.assertEqual(cp.LAST_RUN.get(self.U), "run-7", "a read that failed erased the run read before")
+
+
 class ARecoveryRestartIsMarkedByItsOwnJob(Base):
     """Decisions 1049 and 1058: the job that runs a recovery restart (autoheal, zombie) marks it for the proxy just before
     its systemctl, under JOB_LOCK, and removes the mark when that fails. Marked where the action was asked, a duplicate
@@ -1073,6 +1090,61 @@ class ARecoveryRestartIsMarkedByItsOwnJob(Base):
         job = self.run_job("ui", 0)
         self.assertEqual(job.rc, 9)
         self.assertIsNone(self.mark())
+
+    def test_a_restart_systemd_took_keeps_its_mark_when_systemctl_failed(self):
+        # systemctl can fail after PID 1 took the job (sd-bus's timeout under memory pressure): its mark, removed, let
+        # that restart read as an order (the 7th review of v1.43.0, 2026-11-04)
+        self.box({f"systemctl show {self.U}": "InvocationID=run-7\n",
+                  "systemctl list-jobs": f"12 {self.U} restart running\n"})
+        job = self.run_job("autoheal", 1)
+        self.assertEqual(job.rc, 1, job.lines)
+        self.assertEqual((self.mark() or {}).get("invocation"), "run-7", "the mark of a restart under way was removed")
+
+    def test_a_restart_systemd_ran_already_keeps_its_mark_when_systemctl_failed(self):
+        # its job gone already, the unit's run another: that restart went, and its mark stays
+        shown = []
+
+        def answer(argv, timeout=5.0, merge_err=False):
+            if argv[:2] == ["systemctl", "show"]:
+                shown.append(argv)
+                return "InvocationID=run-7\n" if len(shown) == 1 else "InvocationID=run-8\n"
+            return ""
+        self.cp.run = answer
+        job = self.run_job("autoheal", 1)
+        self.assertEqual(job.rc, 1, job.lines)
+        self.assertEqual((self.mark() or {}).get("invocation"), "run-7", "the mark of a restart that went was removed")
+
+    def test_a_run_systemd_does_not_say_now_is_the_ticks(self):
+        # systemd slow to answer at the restart: no mark and nothing said, the proxy then reading the restart of a lane
+        # with a staged checkpoint as an order (the 7th review of v1.43.0, 2026-11-04)
+        self.box({f"systemctl show {self.U}": ""})
+        self.cp.LAST_RUN[self.U] = "run-7"
+        self.addCleanup(self.cp.LAST_RUN.pop, self.U, None)
+        job = self.run_job("zombie", 0)
+        self.assertEqual(job.rc, 0, f"no mark when its command ran (9): {job.lines}")
+        self.assertEqual((self.mark() or {}).get("invocation"), "run-7")
+
+    def test_a_restart_with_no_run_known_says_so(self):
+        self.box({f"systemctl show {self.U}": ""})
+        self.cp.LAST_RUN.pop(self.U, None)
+        events = []
+        saved = self.cp.add_event
+        self.cp.add_event = lambda kind, text: events.append((kind, text))
+        self.addCleanup(setattr, self.cp, "add_event", saved)
+        self.run_job("autoheal", 0)
+        self.assertTrue(any("could not be marked for the proxy" in text for _, text in events), events)
+
+    def test_a_write_that_fails_leaves_no_temp_file(self):
+        # names per thread piled up when a write or its rename failed (the 7th review of v1.43.0, 2026-11-04)
+        cp = self.cp
+        d = cp.CONFIG_DIR / "marks-as-a-dir"
+        d.mkdir(exist_ok=True)
+        self.addCleanup(shutil.rmtree, d, True)
+        saved = cp.RECOVERY_FILE
+        cp.RECOVERY_FILE = d                                                    # a rename onto a directory fails
+        self.addCleanup(setattr, cp, "RECOVERY_FILE", saved)
+        cp._write_recovery_marks({self.U: {"invocation": "run-7", "at": 1.0, "why": "autoheal"}})
+        self.assertEqual(list(cp.CONFIG_DIR.glob("marks-as-a-dir*.tmp")), [])
 
     def test_only_the_job_writes_the_marks(self):
         src = (DASH / "cockpit.py").read_text()

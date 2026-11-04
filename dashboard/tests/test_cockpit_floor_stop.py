@@ -131,7 +131,7 @@ class Base(unittest.TestCase):
 class TheStop(Base):
     def test_the_floor_stops_through_the_proxy_with_its_floor_and_pause(self):
         done = self.ck.engine_abort_all(why="MemAvailable 2.9 GiB under the 3.0 GiB floor with 1 running")
-        self.assertEqual(done, {"via": "proxy", "stopped": 2, "abort_all": True})
+        self.assertEqual(done, {"via": "proxy", "stopped": 2, "abort_all": True, "finishing": 0})
         self.assertEqual(len(Recorder.calls), 1, Recorder.calls)
         name, path, auth, body = Recorder.calls[0]
         self.assertEqual((name, path, auth), ("proxy", "/proxy/stop", "Bearer test-key"))
@@ -177,7 +177,8 @@ class WhenTheProxysAbortAllDidNotGo(Base):
     def test_on_sglang_the_cockpit_sends_it(self):
         Recorder.proxy_answer = {"stopped": 0, "abort_all": False}
         done = self.ck.engine_abort_all(why="floor")
-        self.assertEqual(done, {"via": "proxy", "stopped": 0, "abort_all": True, "abort_all_by": "cockpit"})
+        self.assertEqual(done, {"via": "proxy", "stopped": 0, "abort_all": True, "finishing": 0,
+                                "abort_all_by": "cockpit"})
         self.assertEqual([(c[0], c[1], c[3]) for c in Recorder.calls][1:],
                          [("engine", "/abort_request", {"abort_all": True})])
 
@@ -215,6 +216,55 @@ class WhenTheProxysAbortAllDidNotGo(Base):
         self.assertEqual(out["mem_floor"]["aborts"], 0)
         self.assertFalse([a for a in audits if a.get("kind") == "mem_floor"][0]["ok"])
         self.assertEqual([c[0] for c in Recorder.calls], ["proxy"])
+
+
+class AStopThatLeavesAnswersToFinish(Base):
+    """An answer relayed whole is no stop target (the 6th review of v1.43.0): a stop that found only such answers said "no
+    generation ran through the proxy" and no word of them (the 7th review, 2026-11-04). It says them now, and still
+    fails: nothing was stopped, and the floor never counts an abort it could not make (review, 2026-10-14)."""
+
+    def test_on_vllm_a_floor_that_found_only_finished_answers_says_them_and_counts_nothing(self):
+        Recorder.proxy_answer = {"stopped": 0, "abort_all": False, "finishing": 1}
+        self.serving("qwen38-flash-local.service")
+        floor, out, audits = self.floor_fires()
+        self.assertEqual(len(floor), 1, floor)
+        self.assertIn("abort failed: no generation ran through the proxy (1 finished answer(s) left to go out whole), "
+                      "and the Flash FP4-Local lane's vLLM has no route", floor[0])
+        self.assertEqual(out["mem_floor"]["aborts"], 0)
+        self.assertFalse([a for a in audits if a.get("kind") == "mem_floor"][0]["ok"])
+
+    def test_on_vllm_the_operators_abort_all_says_the_answers_left_to_finish(self):
+        Recorder.proxy_answer = {"stopped": 0, "abort_all": False, "finishing": 1}
+        self.serving("qwen38-flash-local.service")
+        with self.assertRaises(RuntimeError) as e:
+            self.ck.job_abort_all(None)
+        self.assertIn("no generation ran through the proxy (1 finished answer(s) left to go out whole), and",
+                      str(e.exception))
+
+    def test_on_sglang_a_stop_that_found_only_finished_answers_still_raises(self):
+        # SGLang's abort_all failed too: a generation sent to the engine straight may run still
+        Recorder.proxy_answer, Recorder.engine_takes = {"stopped": 0, "abort_all": False, "finishing": 1}, False
+        with self.assertRaises(RuntimeError) as e:
+            self.ck.engine_abort_all(why="floor")
+        self.assertIn("no generation ran through the proxy (1 finished answer(s) left to go out whole), and SGLang's "
+                      "abort_all failed", str(e.exception))
+
+    def test_a_floor_that_cut_some_says_the_finished_answers_it_left(self):
+        Recorder.proxy_answer = {"stopped": 2, "abort_all": False, "finishing": 1}
+        self.serving("qwen38-ornith-122b.service")
+        floor, out, _ = self.floor_fires()
+        self.assertEqual(len(floor), 1, floor)
+        self.assertIn("2 generation(s) stopped through the proxy (cut, their clients retry), and new ones wait for "
+                      "memory; 1 finished answer(s) left to go out whole", floor[0])
+        self.assertEqual(out["mem_floor"]["aborts"], 1)
+
+    def test_the_operators_abort_all_says_the_finished_answers_it_left(self):
+        Recorder.proxy_answer = {"stopped": 1, "abort_all": True, "finishing": 1}
+        ok, lines, data = self.ck.job_abort_all(None)
+        self.assertTrue(ok)
+        self.assertIn("1 client(s) cut, who see their connection end and retry, the others ended by SGLang's "
+                      "abort_all; 1 finished answer(s) left to go out whole", lines[0])
+        self.assertEqual(data["finishing"], 1)
 
 
 class TheFloor(Base):

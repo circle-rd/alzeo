@@ -885,17 +885,22 @@ def engine_abort_all(timeout: float = 8.0, why: str = "", floor: bool = True) ->
     t0 = time.monotonic()
     try:
         out = json.loads(urllib.request.urlopen(req, timeout=timeout).read() or b"{}")
-        done = {"via": "proxy", "stopped": int(out.get("stopped") or 0), "abort_all": bool(out.get("abort_all"))}
+        done = {"via": "proxy", "stopped": int(out.get("stopped") or 0), "abort_all": bool(out.get("abort_all")),
+                "finishing": int(out.get("finishing") or 0)}
     except Exception as e:  # noqa: BLE001 (the way of before follows, and says why)
         done, missed = None, f"the proxy did not take the stop ({type(e).__name__}: {str(e)[:80]})"
     if done is not None:
         if done["abort_all"]:
             return done
+        # answers relayed whole, left to go out, are no generation a stop cuts: said, and never counted as stopped. A
+        # stop that found only those said "no generation ran through the proxy" and no word of them (the 7th review of
+        # v1.43.0, 2026-11-04)
+        left = f" ({done['finishing']} finished answer(s) left to go out whole)" if done["finishing"] else ""
         if kolibri_serving() or nemotron_serving():
             if done["stopped"]:
                 return done
             lane = "the Kolibri lane" if kolibri_serving() else b12x_lane_name()
-            raise RuntimeError(f"no generation ran through the proxy, and {lane}'s vLLM has no route that "
+            raise RuntimeError(f"no generation ran through the proxy{left}, and {lane}'s vLLM has no route that "
                                "aborts one sent to it straight (stopping the lane stops them)")
         try:
             sglang_abort_all(max(2.0, timeout - (time.monotonic() - t0)))
@@ -903,7 +908,7 @@ def engine_abort_all(timeout: float = 8.0, why: str = "", floor: bool = True) ->
         except Exception as e:  # noqa: BLE001 (said, and raised when nothing at all was stopped)
             missed = f"SGLang's abort_all failed ({type(e).__name__}: {str(e)[:80]})"
         if not done["stopped"]:
-            raise RuntimeError(f"no generation ran through the proxy, and {missed}")
+            raise RuntimeError(f"no generation ran through the proxy{left}, and {missed}")
         return {**done, "missed": missed}
     if kolibri_serving():
         raise RuntimeError("the Kolibri lane's vLLM has no route that aborts its generations "
@@ -927,6 +932,8 @@ def floor_said(done: dict) -> str:
                 "for memory")
     else:
         said = f"no generation ran through the proxy, and SGLang's abort_all ended the others{by}"
+    if done.get("finishing"):
+        said += f"; {done['finishing']} finished answer(s) left to go out whole"
     return said + (f" ({done['missed']})" if done.get("missed") else "")
 
 
@@ -2315,13 +2322,17 @@ def _recovery_marks() -> dict:
 
 
 def _write_recovery_marks(marks: dict) -> None:
-    # a file of its own, then one rename: the proxy reads a whole file or the one before (the 6th review of v1.43.0)
-    tmp = RECOVERY_FILE.with_name(f"{RECOVERY_FILE.name}.{os.getpid()}.{threading.get_ident()}.tmp")
+    # one writer (run_job, under JOB_LOCK): one temp file, then one rename, so the proxy reads a whole file or the one
+    # before; removed when either fails, where names per thread piled up (the 6th and 7th reviews of v1.43.0)
+    tmp = RECOVERY_FILE.with_name(RECOVERY_FILE.name + ".tmp")
     try:
         tmp.write_text(json.dumps(marks))
         os.replace(tmp, RECOVERY_FILE)
     except OSError:
-        pass
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
 
 
 def mark_recovery(unit: str, invocation: str, why: str) -> None:
@@ -2347,6 +2358,20 @@ def forget_recovery(unit: str, invocation: str) -> None:
         _write_recovery_marks(marks)
 
 
+LAST_RUN: dict = {}           # unit -> its InvocationID at the lifecycle tick's last read (decision 1049)
+
+
+def restart_due(unit: str, invocation: str) -> bool:
+    """True while systemd has a restart of unit queued or running, or once its run is another than invocation: a
+    systemctl that failed after PID 1 took the job (sd-bus's timeout under memory pressure) restarted it all the same, and
+    its mark, removed, let that restart read as an order (the 7th review of v1.43.0, 2026-11-04)."""
+    jobs = run(["systemctl", "list-jobs", "--no-legend", "--no-pager", unit])
+    if any(f[1:3] == [unit, "restart"] for f in (ln.split() for ln in jobs.splitlines()) if len(f) >= 3):
+        return True
+    now = unit_invocation(unit)
+    return bool(now) and now != invocation
+
+
 def unit_invocation(unit: str) -> str:
     """The unit's run now, its InvocationID, or "" when systemd does not say."""
     raw = run(["systemctl", "show", unit, "-p", "InvocationID"])
@@ -2368,6 +2393,10 @@ def collect_lifecycle():
                    "ActiveState,SubState,ActiveEnterTimestampMonotonic,StateChangeTimestampMonotonic,"
                    "InvocationID,Result,NRestarts"])
         d = dict(ln.split("=", 1) for ln in raw.splitlines() if "=" in ln)
+        if d.get("InvocationID"):
+            # a recovery's job falls back on it (run_job): the last read that said one, a read that failed under memory
+            # pressure, a wedged engine's very case, leaving it as it was
+            LAST_RUN[unit] = d["InvocationID"]
         active = d.get("ActiveState", "?")
         if unit not in lc.ENGINE_UNITS:
             states[unit] = "ready" if active == "active" else "stopped"
@@ -3393,8 +3422,16 @@ def run_job(job: Job):
                 # and removed when that fails. Marked where the action was asked, a duplicate refused busy erased the
                 # running restart's mark, a refused sudo left it, and two threads wrote the file at once (the 6th review
                 # of v1.43.0, 2026-11-04). A dry run never gets here
-                recovery = (job.params["unit"], unit_invocation(job.params["unit"]))
-                mark_recovery(recovery[0], recovery[1], job.origin)
+                unit = job.params["unit"]
+                # its run, read now, else as the lifecycle tick read it: systemd slow to answer left the restart
+                # unmarked, and said nothing (the 7th review of v1.43.0, 2026-11-04)
+                recovery = (unit, unit_invocation(unit) or LAST_RUN.get(unit, ""))
+                if recovery[1]:
+                    mark_recovery(recovery[0], recovery[1], job.origin)
+                else:
+                    recovery = None
+                    add_event(job.origin, f"{unit}: its restart could not be marked for the proxy (systemd said no run): "
+                                          "on a pair, a request that wedged it may go to the other box")
             proc = subprocess.Popen(job.argv, stdout=subprocess.PIPE,
                                     stderr=subprocess.STDOUT, text=True,
                                     cwd=str(REPO_DIR), start_new_session=True)
@@ -3423,12 +3460,12 @@ def run_job(job: Job):
                 proc.stdout.close()
             job.rc = proc.wait(timeout=30)
             status = "done" if job.rc == 0 and not expired.is_set() else "failed"
-            if recovery and status != "done":
+            if recovery and status != "done" and not restart_due(*recovery):
                 forget_recovery(*recovery)
     except Exception as e:  # noqa: BLE001
         status = "failed"
         job.append(f"[cockpit] {type(e).__name__}: {e}")
-        if recovery:
+        if recovery and not restart_due(*recovery):
             forget_recovery(*recovery)
     finally:
         job.ended = time.time()
@@ -5057,6 +5094,8 @@ def job_abort_all(job: Job):
         return True, [f"every in-flight generation stopped through the proxy: {done['stopped']} client(s) cut, "
                       "who see their connection end and retry"
                       + (", the others ended by SGLang's abort_all" if done.get("abort_all") else "")
+                      + (f"; {done['finishing']} finished answer(s) left to go out whole"
+                         if done.get("finishing") else "")
                       + (f" ({done['missed']})" if done.get("missed") else "")], {"ok": True, **done}
     return True, ["every in-flight generation aborted at the engine (clients see their stream end); "
                   + done.get("missed", "")], {"ok": True, **done}
