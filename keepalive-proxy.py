@@ -568,10 +568,7 @@ def text_lane_coming():
                                      capture_output=True, text=True, timeout=3).stdout.split()
                 coming = any(st in ("active", "activating", "reloading") for st in out)
                 if not coming:
-                    jobs = subprocess.run(["systemctl", "list-jobs", "--no-legend", "--no-pager", *HOLD_UNITS],
-                                          capture_output=True, text=True, timeout=3).stdout
-                    coming = any(len(f) >= 3 and f[1] in HOLD_UNITS and f[2] in _BACK_JOBS
-                                 for f in (ln.split() for ln in jobs.splitlines()))
+                    coming = any(kind in _BACK_JOBS for _, kind in unit_jobs())
                 _HOLD_SEEN["coming"] = coming
             except Exception:
                 _HOLD_SEEN["coming"] = False
@@ -598,19 +595,27 @@ def engine_answers():
         return False
 
 
-def unit_job_running():
-    """True while systemd runs a job on a unit named in PROXY_HOLD_UNITS (a stop, a restart, a start: the cockpit's
-    Load, an update, switch-model.sh). The engine closing a request then is that order, not what the request did: an
-    ordered stop closed every request in flight and bound each one to its box for 10 minutes (decision 1019, found in
-    review, 2026-11-04). A crash has no job until its restart is due. False when systemd does not say."""
+def unit_jobs():
+    """[(unit, job type)] of the jobs systemd runs or has queued on the units named in PROXY_HOLD_UNITS, from
+    `systemctl list-jobs` (JOB UNIT TYPE STATE); [] when none is named or systemd does not say."""
     if not HOLD_UNITS:
-        return False
+        return []
     try:
-        jobs = subprocess.run(["systemctl", "list-jobs", "--no-legend", "--no-pager", *HOLD_UNITS],
-                              capture_output=True, text=True, timeout=3).stdout
+        out = subprocess.run(["systemctl", "list-jobs", "--no-legend", "--no-pager", *HOLD_UNITS],
+                             capture_output=True, text=True, timeout=3).stdout
     except Exception:
-        return False
-    return any(len(f) >= 3 and f[1] in HOLD_UNITS for f in (ln.split() for ln in jobs.splitlines()))
+        return []
+    return [(f[1], f[2]) for f in (ln.split() for ln in out.splitlines()) if len(f) >= 3 and f[1] in HOLD_UNITS]
+
+
+def unit_stopping_by_order():
+    """True while systemd stops a unit named in PROXY_HOLD_UNITS by order: a job of type stop (the cockpit's Load of
+    another lane, its Stop button, an operator's systemctl stop). The engine closing a request then is that order, not
+    what the request did: an ordered stop bound every request in flight to its box for 10 minutes (decision 1019, found
+    in review, 2026-11-04). A restart is no such order, whoever asked for it (decision 1030, 2026-11-04): the cockpit
+    restarts an engine a request may have wedged (autoheal, zombie), and a request bound then waits here for its engine
+    to come back. A crash has no job until its restart is due. False when systemd does not say."""
+    return any(kind == "stop" for _, kind in unit_jobs())
 
 
 def engine_gone_reason():
@@ -893,7 +898,7 @@ def killer_note(fp, box):
     now = time.monotonic()
     with _KILLERS_LOCK:
         for old in [k for k, (_, until) in _KILLERS.items() if until <= now]:
-            del _KILLERS[old]               # ended: a memory never emptied made every request hash its body
+            del _KILLERS[old]               # ended: they only took room among the PAIR_KILLER_MAX kept
         _KILLERS.pop(fp, None)
         _KILLERS[fp] = (box, now + PAIR_KILLER_KEEP_S)
         while len(_KILLERS) > PAIR_KILLER_MAX:
@@ -3847,9 +3852,9 @@ def running_said(data, box):
     if revision is not None:
         j["x_alzeo_revision"] = revision    # the checkpoint it serves: shared with the same one only (decision 1018)
     with _GEN_LOCK:                     # one read: a hop between two said more of the other box's than of all
-        total = len(_GENERATIONS | _PAIR_HERE | _HELD)
+        total = _busy_locked()
         yours = sum(1 for h in _GENERATIONS if getattr(h, "_pair_box", None) == box)
-    j["x_alzeo_running"] = total + _SYSTEMONE_SENT[0]
+    j["x_alzeo_running"] = total
     j["x_alzeo_running_yours"] = yours
     return rewritten(j)
 
@@ -3980,8 +3985,12 @@ def busy_here():
     or with requests held through a restart, said it ran none, and the other box sent it more (found in review of
     v1.43.0, 2026-11-03)."""
     with _GEN_LOCK:
-        n = len(_GENERATIONS | _PAIR_HERE | _HELD)
-    return n + _SYSTEMONE_SENT[0]
+        return _busy_locked()
+
+
+def _busy_locked():
+    """busy_here's count, _GEN_LOCK held by the caller (running_said reads it with the other box's share at once)."""
+    return len(_GENERATIONS | _PAIR_HERE | _HELD) + _SYSTEMONE_SENT[0]
 
 
 def pair_load(box, conf):
@@ -6698,7 +6707,7 @@ class H(BaseHTTPRequestHandler):
                 return
             if kind == "warming" and self._pair_take_over(asked, "this box's engine is warming up"):
                 return                      # its pool not measured yet: the other box's is (v6.52)
-            if self._pair_hop() and kind == "unreachable" and detail is None and not unit_job_running():
+            if self._pair_hop() and kind == "unreachable" and detail is None and not unit_stopping_by_order():
                 # a request the other box sent on, whose engine here closed the connection while it had it: a 502, not
                 # the 503 the other box takes back to its own engine, which the same request could take down too.
                 # Through _pair_refuse: a stream the hold opened gets it as an error event, where a status line written
@@ -7047,7 +7056,7 @@ class H(BaseHTTPRequestHandler):
             # filled it (found in review of v1.43.0, 2026-11-03); it is shared with once updated
             if name in (row.get("models") or ()) and row.get("running") is not None \
                     and _PAIR_COOL.get(p["name"], 0) <= now:
-                # read once a box is a candidate: systemctl ran for each request of a model no other box served
+                # this box's checkpoint (unit_texts' reading, kept 10 s), read once a box is a candidate
                 mine = mine or unit_revision()
                 if mine is None or row.get("revision") != mine:
                     # another checkpoint under the same name, or one not said: each box keeps its own (decision 1018)
@@ -7141,9 +7150,12 @@ class H(BaseHTTPRequestHandler):
         """This box's engine closed the connection on this request, before its answer or during it (decision 1019):
         a request that took it down, sent again, goes nowhere else for PAIR_KILLER_KEEP_S. Its death during the
         answer bound nothing, and the client's retry went to the other engine (found in review, 2026-11-04)."""
-        if getattr(self, "_stop_why", None) or unit_job_running():
-            return                          # stopped by this proxy (Abort all, the floor) or by an order to its unit
-        killer_note(getattr(self, "_killer_fp", None), (pair_conf() or {}).get("name") or "")
+        fp = getattr(self, "_killer_fp", None)
+        if not fp or PAIR_KILLER_KEEP_S <= 0 or getattr(self, "_stop_why", None):
+            return                          # nothing to note (a hop, a box alone), or stopped by this proxy (Abort all, the floor)
+        if unit_stopping_by_order():
+            return                          # stopped by an order to its unit (decision 1030)
+        killer_note(fp, (pair_conf() or {}).get("name") or "")
 
     def _pair_lost(self, pick, name, conf, local):
         """A 503 for a request box pick had whole and closed the connection on with no answer: it is not run here

@@ -2598,6 +2598,32 @@ class TwoBoxesServeOneModel(PairFixture, unittest.TestCase):
         self.assertIn(b"no longer in this pair", out)
         self.assertNotIn("conv-bound-left-0", self.E1.users + self.E2.users)
 
+    def test_a_restart_binds_what_its_engine_closed_on(self):
+        # decision 1030: only a stop is an order. The cockpit restarts an engine a request may have wedged (autoheal,
+        # zombie): counted as an order, that request was bound to nothing and its retry went to the other box, where it
+        # could wedge the other engine too (review, 2026-11-04)
+        if not self.INPROC:
+            self.skipTest("the unit's job is said in this test's process")
+        m = self.mod
+        saved = m.unit_jobs
+        m.unit_jobs = lambda: [("qwen38-sglang.service", "restart")]          # the cockpit's restart of a wedged engine
+        self.addCleanup(setattr, m, "unit_jobs", saved)
+        self.addCleanup(m._KILLERS.clear)
+        r = self.turns("conv-restart", 1)[0]
+        self.E1.mode = "die"
+        st, out, _ = self.call("/v1/chat/completions", r)
+        self.assertNotEqual(st, 200, out[:300])
+        hop = dict(self.chat("qwen3.8-27b"), user="hop-restart")
+        st, out = self.tls_call(self.pport1, "/v1/chat/completions", hop)[:2]
+        self.assertEqual(st, 502, out[:300])                                    # the 502 of an engine that closed on it
+        self.E1.mode = "ok"
+        held = self.busy(self.E1, self.port1, KEY_1, "local-only", 5, 4.0)     # far apart: it would go there, unbound
+        st, out, _ = self.call("/v1/chat/completions", r)
+        self.assertEqual(st, 200, out[:300])
+        self.assertIn(b"from spark1", out, "a request its engine closed on under a restart went to the other box")
+        for th in held:
+            th.join(30)
+
     def test_this_engine_starting_its_lane_goes_to_no_other_checkpoint(self):
         # decision 1018: an update restarts this proxy and the engine together, and the 27B loads for minutes. This
         # proxy, new, had never seen its engine answer, and sent the 27B's clients to the other box whatever its
@@ -2684,9 +2710,9 @@ class TwoBoxesServeOneModel(PairFixture, unittest.TestCase):
         if not self.INPROC:
             self.skipTest("the unit's job is said in this test's process")
         m = self.mod
-        saved = m.unit_job_running
-        m.unit_job_running = lambda: True                                       # a stop or restart is under way
-        self.addCleanup(setattr, m, "unit_job_running", saved)
+        saved = m.unit_jobs
+        m.unit_jobs = lambda: [("qwen38-sglang.service", "stop")]             # a Load of another lane stops this one
+        self.addCleanup(setattr, m, "unit_jobs", saved)
         self.addCleanup(m._KILLERS.clear)
         r = self.turns("conv-ordered", 1)[0]
         self.E1.mode = "die"
@@ -3135,6 +3161,9 @@ class TwoBoxesServeOneModelInProcess(TwoBoxesServeOneModel):
 
     def test_an_ordered_stop_binds_no_request(self):
         super().test_an_ordered_stop_binds_no_request()
+
+    def test_a_restart_binds_what_its_engine_closed_on(self):
+        super().test_a_restart_binds_what_its_engine_closed_on()
 
     def test_this_engine_starting_its_lane_goes_to_no_other_checkpoint(self):
         super().test_this_engine_starting_its_lane_goes_to_no_other_checkpoint()
@@ -3904,6 +3933,25 @@ class ThePairsPieces(unittest.TestCase):
                 os.environ.clear()
                 os.environ.update(saved)
             self.assertEqual(getattr(mod, name), want, f"{name}={said}")
+
+    def test_only_a_stop_job_is_an_order_and_a_restart_is_on_its_way_back(self):
+        m = self.mod
+        listed = {"out": ""}
+
+        def run(argv, **kw):
+            return subprocess.CompletedProcess(argv, 0, listed["out"], "")
+        saved = (m.HOLD_UNITS, m.subprocess)
+        m.HOLD_UNITS, m.subprocess = ("qwen38-sglang.service", "qwen38-flash.service"), types.SimpleNamespace(run=run)
+        self.addCleanup(lambda: (setattr(m, "HOLD_UNITS", saved[0]), setattr(m, "subprocess", saved[1])))
+        for jobs, order in (("12 qwen38-sglang.service stop running\n", True),
+                            ("13 qwen38-sglang.service restart running\n", False),
+                            ("14 qwen38-flash.service start waiting\n", False),
+                            ("15 qwen38-other.service stop running\n", False),      # not a lane's unit
+                            ("", False)):
+            listed["out"] = jobs
+            self.assertEqual(m.unit_stopping_by_order(), order, jobs)
+        listed["out"] = "13 qwen38-sglang.service restart running\n"
+        self.assertEqual(m.unit_jobs(), [("qwen38-sglang.service", "restart")])
 
     def test_the_marker_of_an_engine_closing_on_a_hop_is_its_error_event_only(self):
         m = self.mod
