@@ -18,8 +18,9 @@ more than half of those its lane runs at once (4 on a 128 GB box's 27B, which ru
 and more than 1.5 times as many, its next turn goes to the other box: the thresholds of SGLang's router, 64 and 1.5,
 brought to each lane (decision 1014). Each box says in the list it gives the other how many generations it runs, how
 many of them the other box sent it, and how many its lane runs at once, read in the command of its engine, and the
-entry adds its requests in flight there: eight new conversations sent at once went 4 to each box, three times in
-three.
+entry adds its requests in flight there. On the test bench, eight new conversations sent at once went 4 to each box,
+ten times in ten, and eight of one agent, which share its system prompt, went 5 and 3 the first time, the prefix they
+share keeping them together up to the gap of 4, then 4 to each box once both boxes held it, four times in four.
 
 **A box that cannot serve a request hands it on.** When the other box cannot be reached (it gets 3 s to take the
 connection), refuses the entry's certificate (it was paired again without the entry), or answers 503 (its engine away,
