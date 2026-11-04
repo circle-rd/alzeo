@@ -6855,9 +6855,9 @@ class H(BaseHTTPRequestHandler):
         model, and its own requests do not wait for a slow box."""
         if route in COUNT_ONLY_PATHS:
             # a token count generates nothing and fills no prefix cache: counted here (the same model, the same
-            # tokenizer), it places no conversation. Shared as a generation (the Anthropic SDK's count went to the
-            # other box on the paired run of 2026-11-03), a count of a whole conversation took its next turn to the
-            # box that cached none of it
+            # tokenizer), it costs no hop and no load on the other box. Shared as a generation, the Anthropic SDK's
+            # count went to the other box on the paired run of 2026-11-03, for nothing. It never placed a
+            # conversation: the fingerprints start with the route, a count's never match a generation's
             return False
         now = time.monotonic()
         me = conf["name"]

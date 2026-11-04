@@ -88,7 +88,8 @@ that says none, keep their own requests:
 - **Boxes far apart share even a conversation.** When the box a conversation is on runs more requests than
   the other by more than half of those its lane runs at once, and more than 1.5 times as many, its next turn
   goes to the other box: a long wait for one agent costs more than its prefix computed again. The 27B runs 8 at
-  once, so 5 ahead moves a conversation, and a lane that runs 16 (Kolibri, Nemotron Bolt) moves it 9 ahead.
+  once on a 128 GB box, so 5 ahead moves a conversation there (its unit on a 64 GB box says 4, so 3 ahead), and
+  a lane that runs 16 (Kolibri, Nemotron Bolt) moves it 9 ahead.
   These are the thresholds of SGLang's router (64 and 1.5), brought to each lane. Each box reads how many its
   lane runs at once in its unit (`--max-running-requests`, `--max-num-seqs`) and says it to the other. A box
   that says nothing of it counts as a lane of 8.
@@ -167,6 +168,9 @@ cockpit for now.
   `needle.sh`).
 - A conversation is known to the box it was sent to: two clients that continue one conversation through two
   entries each have it placed by its own entry.
+- A long prompt sent again after its client gave up on it is told apart by the box that served it (the journal
+  line of its client's timeout): when the boxes are far apart and the new try goes to the other box, that box
+  does not know it.
 - Abort all, in a box's cockpit, stops the generations of that box's engine. The requests it sent the other
   box run there: they end when their client leaves, or from that box's cockpit.
 - `GET /v1/models/<id>` answers for the box's own models only.

@@ -2497,7 +2497,9 @@ class TwoBoxesServeOneModel(PairFixture, unittest.TestCase):
 
     def test_a_token_count_stays_here_and_moves_no_conversation(self):
         # Claude Code counts a conversation's tokens with its whole body: the count generates nothing and fills no
-        # prefix cache, so it is counted here (the same model, the same tokenizer) and places nothing
+        # prefix cache, so it is counted here (the same model, the same tokenizer), however far apart the boxes are.
+        # Its last check, a turn served here after the count, could not fail: the fingerprints start with the route
+        # (review, 2026-11-03). Its engine here answering the count is what says it stayed
         a = self.turns("conv-k", 2)
         st, out, _ = self.call("/v1/chat/completions", a[0])
         self.assertIn(b"from spark1", out, "two idle boxes: the entry serves the first turn")
@@ -2506,10 +2508,9 @@ class TwoBoxesServeOneModel(PairFixture, unittest.TestCase):
         st, out, _ = self.call("/v1/messages/count_tokens", count)
         self.assertEqual(st, 200, out[:300])
         self.assertNotIn("/v1/messages/count_tokens", [x[0] for x in self.E2.seen], "the count went to the other box")
+        self.assertIn("/v1/messages/count_tokens", [x[0] for x in self.E1.seen], "this box's engine did not count it")
         for t in held:
             t.join(30)
-        st, out, _ = self.call("/v1/chat/completions", a[1])
-        self.assertIn(b"from spark1", out, "a token count moved the conversation to the box that does not hold it")
 
     def test_a_box_tells_the_other_how_many_it_runs_and_how_many_are_its(self):
         said = lambda: {k: v for k, v in json.loads(self.tls_call(self.pport1, "/v1/models", method="GET")[1]).items()

@@ -5,32 +5,32 @@
 **Two boxes that serve one model share its requests.** Until now, the box a request was sent to served every model it
 loads itself, and the other box of the pair got none of its requests. When both boxes load the same lane, they now
 share them, from the same checkpoint only (decision 1018), and the box a request was sent to decides where it goes
-(decisions 996 to 998). A conversation stays on
-its box: an agent sends its whole conversation again at each turn, and the box that served the turn before holds all
-of it in its prefix cache but the new turn, where the other box would compute all of it again (100,000 tokens take
-tens of seconds on the 27B). So the box keeps fingerprints of the first 4 KiB, 8 KiB, 16 KiB and so on of what it sent
-each box in the last 10 minutes, and a request goes to the box it shares its longest one with, when that covers 30 %
-of it, the `cache_threshold` of SGLang's own router, or 32 KiB, for Claude Code, which writes its system prompt and
-its tools after the conversation. A new conversation goes to the box with the fewest requests in flight, the entry
-when they tie. When the box a conversation is on runs more requests than the other by more than half of those its
-lane runs at once (4 on the 27B, which runs 8, and 8 on a lane that runs 16), and more than 1.5 times as many, its
-next turn goes to the other box: the thresholds of SGLang's router, 64 and 1.5, brought to each lane (decision 1014).
-Each box says in the list it gives the other how many generations it runs, how many of them the other box sent it,
-and how many its lane runs at once, read in its unit, and the entry adds its requests in flight there: eight new
-conversations sent at once went 4 to each box, three times in three.
+(decisions 996 to 998). A conversation stays on its box: an agent sends its whole conversation again at each turn, and
+the box that served the turn before holds all of it in its prefix cache but the new turn, where the other box would
+compute all of it again (100,000 tokens take tens of seconds on the 27B). So the box keeps fingerprints of the first 4
+KiB, 8 KiB, 16 KiB and so on of what it sent each box in the last 10 minutes, and a request goes to the box it shares
+its longest one with, when that covers 30 % of it, the `cache_threshold` of SGLang's own router, or 32 KiB, for Claude
+Code, which writes its system prompt and its tools after the conversation. A new conversation goes to the box with the
+fewest requests in flight, the entry when they tie. When the box a conversation is on runs more requests than the
+other by more than half of those its lane runs at once (4 on a 128 GB box's 27B, which runs 8, and 8 on a lane that
+runs 16), and more than 1.5 times as many, its next turn goes to the other box: the thresholds of SGLang's router, 64
+and 1.5, brought to each lane (decision 1014). Each box says in the list it gives the other how many generations it
+runs, how many of them the other box sent it, and how many its lane runs at once, read in its unit, and the entry adds
+its requests in flight there: eight new conversations sent at once went 4 to each box, three times in three.
 
 **A box that cannot serve a request hands it on.** When the other box cannot be reached (it gets 3 s to take the
 connection), or answers 503 (its engine away, or its memory floor) or 529 (the floor, in the Anthropic dialect),
 before a byte of its answer went out, the entry serves the request itself, and that box gets no request of a model
-both serve for 30 s. When the other box had the request and closed the connection with no answer (an Abort all
-there, its floor, a restart, its power), the client gets a 503 and the request runs nowhere else (decision 1017). A prompt too long for the other box's pool (a 64 GB box paired with a 128 GB one) is served by
-the entry, with no pause. What the entry cannot serve goes to the other box at once: a request its memory floor
-refuses, a prompt too long for its pool, a long prompt its warming engine cannot measure yet, or one its engine does
-not answer at the first try (connection refused, or the 502, 503 or 504 of a lane that starts or stops), instead of
-a wait for the lane. A request whose answer began is never sent again, nor one an engine closed the connection on,
-which could take the other engine down too, and for 10 minutes such a request, sent again by its client, goes to
-that box or nowhere (decision 1019). The tile of each cockpit says what it sent the other box, and why, even
-while that box does not answer. docs/pair.md says it all.
+both serve for 30 s. When the other box had the request and closed the connection with no answer (an Abort all there,
+its floor, a restart, its power), the client gets a 503 and the request runs nowhere else (decision 1017). A prompt
+too long for the other box's pool (a 64 GB box paired with a 128 GB one) is served by the entry, with no pause. What
+the entry cannot serve goes to the other box at once: a request its memory floor refuses, a prompt too long for its
+pool, a long prompt its warming engine cannot measure yet, or one its engine does not answer at the first try
+(connection refused, or the 502, 503 or 504 of a lane that starts or stops), instead of a wait for the lane. A request
+whose answer began is never sent again, nor one an engine closed the connection on, which could take the other engine
+down too, and for 10 minutes such a request, sent again by its client, goes to that box or nowhere (decision 1019).
+The tile of each cockpit says what it sent the other box, and why, even while that box does not answer. docs/pair.md
+says it all.
 
 **Reviews and tests.** An independent reviewer read the sharing, then a code review and three verifiers read it again
 (decision 1005), and every finding was checked in the code. What they found and this release fixes: the other box's
@@ -49,8 +49,8 @@ threshold of 4 requests ahead, made for the lanes that run 8 at once, moved a co
 with room to spare, its prefix computed again elsewhere. Two boxes that served two checkpoints of one lane under its
 name (switch-model.sh's stock and uncensored 27B) shared them as one model. The
 paired run with the real clients found one more: a token count was shared as a generation is (the Anthropic SDK's
-went to the other box), and a count of a whole conversation, as Claude Code sends, could take the conversation to
-the box that caches nothing for a count. A count is answered by the box it was sent to now.
+went to the other box), a hop and a load for a request that generates nothing. A count is answered by the box it
+was sent to now.
 tests/test_proxy_pair.py has two boxes that serve the 27B from their start, each rule its test, and each test fails
 on v1.42.1 or on the commit before its fix.
 
