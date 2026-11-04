@@ -344,6 +344,26 @@ def tls_peer(test, handler, me="spark2", trusts=("spark1",)):
     return port
 
 
+def sleeper(test, *args):
+    """A process whose command line ends with args, as an engine's main process, waited for until /proc shows that
+    command: Popen returns before the new image's argv is set, and 158 reads in 300 right after it were empty (the
+    delta's review, 2026-11-04), which made the tests that read it fail half the time."""
+    p = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)", *args])
+    test.addCleanup(p.wait)
+    test.addCleanup(p.kill)
+    want = (args[-1] if args else "time.sleep").encode()
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline:
+        try:
+            with open(f"/proc/{p.pid}/cmdline", "rb") as f:
+                if want in f.read():
+                    return p
+        except OSError:
+            pass
+        time.sleep(0.01)
+    test.fail("the sleeper's command line never showed")
+
+
 def fake_peer(listed, post, running=0, slots=None, revision=TEST_REV):
     """The pair port of another box, for a spare entry: it lists `listed` (ids, or None: its list fails with a 503)
     and answers every POST with `post` ((status, body)); all three may change during a test (state). `seen`: its POSTs.
@@ -2610,6 +2630,7 @@ class TwoBoxesServeOneModel(PairFixture, unittest.TestCase):
         st, out, _ = self.call("/v1/chat/completions", r)
         self.assertEqual(st, 200, out[:300])
         self.assertIn(b"spark1-", out, "sent again, a request vLLM's engine died on during its stream went elsewhere")
+        self.assert_said("spark1", "502 upstream")                            # not "ok" (the delta's review, 2026-11-04)
         self.assertNotIn("conv-vllm-dead-stream-0", self.E2.users)
         for th in held:
             th.join(30)
@@ -2782,6 +2803,24 @@ class TwoBoxesServeOneModel(PairFixture, unittest.TestCase):
         st, out, _ = self.call("/v1/chat/completions", self.chat("qwen3.8-27b"))
         self.assertEqual(st, 200, out[:300])                                    # its lane serves another model: there
         self.assertIn(b"from spark2", out)
+
+    def test_the_lane_seen_last_keeps_its_checkpoint_while_the_unit_says_none(self):
+        # its unit with no process to read for a moment, the lane seen last was written with no checkpoint, and once its
+        # engine was away every request of its model got "another checkpoint" (the delta's review, 2026-11-04)
+        if not self.INPROC:
+            self.skipTest("the lane seen last is read in this test's process")
+        m = self.mod
+        saved = (m.unit_revision, m._LAST_LANE["lane"])
+
+        def restore():
+            m.unit_revision = saved[0]
+            m._LAST_LANE["lane"] = saved[1]
+        self.addCleanup(restore)
+        m._LAST_LANE["lane"] = (frozenset({"qwen3.8-27b"}), TEST_REV)
+        m.unit_revision = lambda: None
+        st, out, _ = self.call("/v1/chat/completions", self.chat("qwen3.8-27b"))
+        self.assertEqual(st, 200, out[:300])
+        self.assertEqual(m._LAST_LANE["lane"], (frozenset({"qwen3.8-27b"}), TEST_REV))
 
     def test_a_box_that_serves_no_text_lane_now_sends_the_others_model_there(self):
         # decision 1018 holds for a model this box's lane serves: a box switched to images (or stopped) kept the 27B it
@@ -3340,6 +3379,9 @@ class TwoBoxesServeOneModelInProcess(TwoBoxesServeOneModel):
 
     def test_a_box_that_serves_no_text_lane_now_sends_the_others_model_there(self):
         super().test_a_box_that_serves_no_text_lane_now_sends_the_others_model_there()
+
+    def test_the_lane_seen_last_keeps_its_checkpoint_while_the_unit_says_none(self):
+        super().test_the_lane_seen_last_keeps_its_checkpoint_while_the_unit_says_none()
 
     def test_a_request_bound_to_a_box_whose_list_is_unknown_is_tried_there(self):
         super().test_a_request_bound_to_a_box_whose_list_is_unknown_is_tried_there()
@@ -3913,9 +3955,7 @@ class ThePairsPieces(unittest.TestCase):
         script = tmp / "launch-lane.sh"
         script.write_text("#!/bin/bash\n# --max-num-seqs 99, a comment, counts not\nexec vllm serve m --max-num-seqs 16\n")
         # the active unit's main process, as it was started: a script not yet at its exec
-        engine = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)", str(script)])
-        self.addCleanup(engine.wait)
-        self.addCleanup(engine.kill)
+        engine = sleeper(self, str(script))
         shown = ("ActiveState=inactive\nMainPID=0\n\n"
                  f"MainPID={engine.pid}\nActiveState=active\n")
         calls = []
@@ -3944,10 +3984,8 @@ class ThePairsPieces(unittest.TestCase):
         # switch-model.sh rewrites the unit and reloads systemd without a restart: the box said the new checkpoint while
         # its engine served the old one until its next start (review, 2026-11-04)
         m = self.mod
-        engine = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)", "--served-model-name",
-                                   "qwen3.8-27b", "--revision", "ab" * 20, "--max-running-requests", "8"])
-        self.addCleanup(engine.wait)
-        self.addCleanup(engine.kill)
+        engine = sleeper(self, "--served-model-name", "qwen3.8-27b", "--revision", "ab" * 20,
+                         "--max-running-requests", "8")
         shown = (f"ActiveState=active\nMainPID={engine.pid}\nExecStart={{ path=/usr/bin/docker ; argv[]=docker run x "
                  f"--served-model-name qwen3.8-27b --revision {'cd' * 20} --max-running-requests 8 ; }}\n")
 
@@ -3969,6 +4007,70 @@ class ThePairsPieces(unittest.TestCase):
         engine.wait()
         m._UNIT_FACTS.update(ts=-1e9, texts=None)
         self.assertIsNone(m.unit_revision(), "its process gone: nothing said, nothing shared")
+
+    def _systemd_says(self, shown):
+        m = self.mod
+        calls = []
+
+        def run(argv, **kw):
+            calls.append(argv)
+            return subprocess.CompletedProcess(argv, 0, shown["out"], "")
+        saved = (m.HOLD_UNITS, m.subprocess, m.PAIR_CHECKPOINT, m._LAST_LANE["lane"])
+        m.HOLD_UNITS, m.subprocess, m.PAIR_CHECKPOINT = ("qwen38-sglang.service",), types.SimpleNamespace(run=run), None
+        m._UNIT_FACTS.update(ts=-1e9, texts=None)
+        m._HOLD_SEEN["ts"] = -1e9
+
+        def restore():
+            m.HOLD_UNITS, m.subprocess, m.PAIR_CHECKPOINT = saved[:3]
+            m._LAST_LANE["lane"] = saved[3]
+            m._UNIT_FACTS.update(ts=-1e9, texts=None, states=())
+            m._HOLD_SEEN["ts"] = -1e9
+        self.addCleanup(restore)
+        return calls
+
+    def test_an_engine_whose_command_reads_empty_is_read_again_not_kept(self):
+        # its process between fork and exec, or a zombie: an empty command was kept 10 s, the box saying no checkpoint
+        # and no slots for that long after a start (the delta's review, 2026-11-04)
+        m = self.mod
+        p = subprocess.Popen(["true"])                                          # a zombie: its command line is empty
+        self.addCleanup(p.wait)
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            with open(f"/proc/{p.pid}/stat") as f:
+                if f.read().split(")")[-1].split()[0] == "Z":
+                    break
+            time.sleep(0.01)
+        calls = self._systemd_says({"out": f"ActiveState=active\nMainPID={p.pid}\n"})
+        self.assertIsNone(m.unit_texts())
+        self.assertIsNone(m.unit_texts())
+        self.assertEqual(len(calls), 2, "an empty command was kept 10 s")
+
+    def test_a_unit_starting_says_what_it_starts_and_one_stopping_keeps_the_lane_seen_last(self):
+        # the delta's review, 2026-11-04: an "activating" unit (ExecStartPre, the wait before a restart) was skipped, and
+        # a proxy restarted with its engine sent its 27B to the other box whatever its checkpoint; a unit stopping after
+        # a crash, its restart not due yet, read as no lane at all
+        m = self.mod
+        shown = {"out": "ActiveState=activating\nMainPID=0\nExecStart={ path=/usr/bin/docker ; argv[]=/usr/bin/docker run "
+                        f"x --served-model-name qwen3.8-27b --revision {'ab' * 20} ; ignore_errors=no ; }}\n"}
+        self._systemd_says(shown)
+        self.assertEqual(m.lane_away(), (frozenset({"qwen3.8-27b"}), "ab" * 20))
+        shown["out"] = "ActiveState=deactivating\nMainPID=0\n"                 # stopping, no job: a crash
+        m._UNIT_FACTS.update(ts=-1e9, texts=None)
+        m._HOLD_SEEN["ts"] = -1e9
+        m._LAST_LANE["lane"] = (frozenset({"qwen3.8-27b"}), "cd" * 20)
+        self.assertEqual(m.lane_away(), (frozenset({"qwen3.8-27b"}), "cd" * 20))
+        shown["out"] = "ActiveState=inactive\nMainPID=0\n"                     # no text lane: images, or none
+        m._UNIT_FACTS.update(ts=-1e9, texts=None)
+        m._HOLD_SEEN["ts"] = -1e9
+        self.assertEqual(m.lane_away(), (frozenset(), None))
+
+    def test_a_dead_engines_answer_relayed_in_a_stream_the_keeper_opened_is_known(self):
+        # _answer prefixes "keepalive-proxy: " to the message it relays in a stream it opened: the entry missed vLLM's
+        # death there (the delta's review, 2026-11-04)
+        m = self.mod
+        said = "EngineCore encountered an issue. See stack trace (above) for the root cause."
+        for event in (m.sse_error_openai(said, "InternalServerError"), m.sse_error(said)):
+            self.assertTrue(m.ENGINE_DIED_RE.search(event), event[:120])
 
     def test_the_names_a_command_serves_are_read_from_it(self):
         names_in = self.mod.names_in
@@ -4138,11 +4240,7 @@ class ThePairsPieces(unittest.TestCase):
         rev = "ef" * 20
         engines = []
         for r in (rev, "01" * 20):                                              # this engine, then another one
-            p = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)", "docker", "run", "x",
-                                  "--revision", r])
-            self.addCleanup(p.wait)
-            self.addCleanup(p.kill)
-            engines.append(p)
+            engines.append(sleeper(self, "docker", "run", "x", "--revision", r))
         shown = f"ActiveState=active\nMainPID={engines[0].pid}\n"
         calls = []
 

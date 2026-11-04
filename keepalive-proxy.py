@@ -3211,7 +3211,7 @@ HOP_CLOSED_B = b'"message": "keepalive-proxy: ' + HOP_CLOSED.encode() + b'"'   #
 # '{"error":{"message":"EngineCore encountered an issue. ..."', or an error event of a stream begun, json.dumps' spaces),
 # after which its server stops: an engine that went down with the request, as one that closed the connection (decision
 # 1019). Matched as JSON only: model output that quotes the sentence has its quotes escaped (review, 2026-11-04).
-ENGINE_DIED_RE = re.compile(rb'"message":\s?"EngineCore encountered an issue\.')
+ENGINE_DIED_RE = re.compile(rb'"message":\s?"(?:keepalive-proxy: )?EngineCore encountered an issue\.')
 # A fatal alert of the handshake at the first read of a request sent on: under TLS 1.3 the other box checks this box's
 # certificate after this box's side of the handshake ended and the request went out, and refuses it there (re-paired,
 # its entry of this box replaced). Its proxy never read the request: it was said lost, bound there and that box paused
@@ -4781,19 +4781,32 @@ def unit_texts():
         now = time.monotonic()
         if now - _UNIT_FACTS["ts"] <= 10:
             return _UNIT_FACTS["texts"]
-        found = None
+        found, sure, states = None, True, []
         try:
-            out = subprocess.run(["systemctl", "show", *HOLD_UNITS, "-p", "ActiveState", "-p", "MainPID"],
-                                 capture_output=True, text=True, timeout=3)
-            for block in (out.stdout.split("\n\n") if out.returncode == 0 else ()):
-                props = dict(ln.split("=", 1) for ln in block.splitlines() if "=" in ln)
-                if props.get("ActiveState") != "active":
+            out = subprocess.run(["systemctl", "show", *HOLD_UNITS, "-p", "ActiveState", "-p", "MainPID",
+                                  "-p", "ExecStart"], capture_output=True, text=True, timeout=3)
+            blocks = [dict(ln.split("=", 1) for ln in block.splitlines() if "=" in ln)
+                      for block in (out.stdout.split("\n\n") if out.returncode == 0 else ())]
+            states = [b.get("ActiveState", "") for b in blocks]
+            for props in blocks:
+                state = props.get("ActiveState")
+                if state not in ("active", "activating"):
                     continue
-                pid = props.get("MainPID", "")
-                if not pid.isdigit() or int(pid) <= 0:
+                pid, cmd = props.get("MainPID", ""), ""
+                if pid.isdigit() and int(pid) > 0:
+                    try:
+                        with open(f"/proc/{int(pid)}/cmdline", "rb") as f:
+                            cmd = " ".join(f.read().decode("utf-8", "replace").split("\0")).strip()
+                    except OSError:
+                        cmd = ""
+                if not cmd and state == "active":
+                    # its process between fork and exec (its command empty for an instant), or gone: read again at the
+                    # next request, never kept 10 s (158 reads in 300 right after a start, the delta's review, 2026-11-04)
+                    sure = False
                     break
-                with open(f"/proc/{int(pid)}/cmdline", "rb") as f:
-                    found = [" ".join(f.read().decode("utf-8", "replace").split("\0"))]
+                # an engine that runs: what it was started with; a start under way (ExecStartPre, the wait before a
+                # restart): what its unit starts, read as it was before v1.43.0 (the delta's review, 2026-11-04)
+                found = [cmd or props.get("ExecStart", "")]
                 for script in re.findall(r"(/\S+\.sh)\b", found[0]):
                     try:
                         with open(script, encoding="utf-8") as f:
@@ -4804,7 +4817,9 @@ def unit_texts():
                 break
         except Exception:
             found = None
-        _UNIT_FACTS.update(ts=now, texts=found)
+        _UNIT_FACTS["states"] = tuple(states)
+        if sure:
+            _UNIT_FACTS.update(ts=now, texts=found)
         return found
 
 
@@ -4846,10 +4861,12 @@ def lane_away():
     names = names_in(texts) if texts else frozenset()
     if names:
         return names, (revision_in(texts) or PAIR_CHECKPOINT)
-    if HOLD_UNITS and not text_lane_coming():
-        # no text lane up or on its way back: this box serves images, video or no lane now, and the model its lane
-        # served before is the other box's alone, sent there whatever its checkpoint (found re-reading this rule,
-        # 2026-11-04: a box switched to images refused its clients the other box's 27B)
+    if HOLD_UNITS and not any(s in ("active", "activating", "deactivating", "reloading")
+                              for s in _UNIT_FACTS.get("states") or ()) and not text_lane_coming():
+        # no text lane up, starting, stopping or on its way back: this box serves images, video or no lane now, and the
+        # model its lane served before is the other box's alone, sent there whatever its checkpoint (found re-reading
+        # this rule, 2026-11-04: a box switched to images refused its clients the other box's 27B). A unit that stops
+        # with no job yet (a crash, before its restart is due) keeps the lane seen last (the delta's review)
         return frozenset(), None
     return _LAST_LANE["lane"]
 
@@ -6473,6 +6490,7 @@ class H(BaseHTTPRequestHandler):
         anthropic = self.path.startswith("/v1/messages")
         ka_bytes = KA_ANTHROPIC if anthropic else KA_OPENAI
         silence = 0.0
+        died = False                        # vLLM ended the stream on its engine's death: no "ok" (the delta's review)
         while True:
             if getattr(self, "_stop_why", None):
                 # v6.47: the memory floor stopped this generation: stopped upstream, its client cut
@@ -6522,6 +6540,7 @@ class H(BaseHTTPRequestHandler):
             self._last = now; self._bytes += len(val)
             if b"EngineCore" in val and ENGINE_DIED_RE.search(val):
                 self._killed_here()         # vLLM's engine died during this answer (decision 1019)
+                died = True
             self._note_rid(val)
             if not anthropic and engine_aborted(val):
                 # v6.47: the engine ended this generation as aborted (finish_reason "abort", which
@@ -6555,9 +6574,8 @@ class H(BaseHTTPRequestHandler):
         self._finish()
         try: resp.close()          # the pump thread already ended at EOF; without this
         except Exception: pass    # the socket waits for the refcount (or cyclic GC)
-        if kind != "f":
-            self._killed_here()             # it died during its answer (decision 1019)
-        self._done("ok" if kind == "f" else "UPSTREAM CUT")
+        # the loop ends on the engine's end alone ("f"): a cut returns from inside it
+        self._done("502 upstream" if died else "ok")
 
     # ---- verbs -------------------------------------------------------------
     def _handle_inner(self, with_body):
@@ -6931,7 +6949,9 @@ class H(BaseHTTPRequestHandler):
             local = None
         if local is not None:
             # what this box's clients get here, kept for while its engine is away (lane_away)
-            _LAST_LANE["lane"] = (frozenset(local), unit_revision())
+            rev = unit_revision()
+            if rev:                     # a unit with no process to read said none: the lane seen last stays
+                _LAST_LANE["lane"] = (frozenset(local), rev)
         if not hop:
             self._killer_fp = body_fingerprint(body, route)
             bound = killer_box(self._killer_fp)
