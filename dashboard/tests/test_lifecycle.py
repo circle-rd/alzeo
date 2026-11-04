@@ -789,7 +789,8 @@ class FeedOutcomes(unittest.TestCase):
         "503 pair peer unreachable": "fail",
         "503 pair own key unreadable": "fail",   # this box cannot check a key, so it sends nothing on (review, 2026-11-02)
         "409 pair another model here": "fail",
-        "409 pair another checkpoint here": "fail",  # role 10 (v6.52, 1018): a hop for another checkpoint than this box's
+        "409 pair another checkpoint here": "fail",
+        "503 pair stopped there": "fail",  # role 10 (v6.52, 1031): the other box ended it by order, not run here too  # role 10 (v6.52, 1018): a hop for another checkpoint than this box's
         "502 pair upstream": "fail",
         "UPSTREAM CUT pair": "fail",
         "403 pair route refused": "fail",

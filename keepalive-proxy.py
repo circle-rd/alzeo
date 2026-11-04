@@ -4497,7 +4497,7 @@ class _PeerHTTPS(urllib.request.HTTPSHandler):
 PAIR_CKPT = "X-Alzeo-Pair-Checkpoint"
 PAIR_DROP_OUT = frozenset({"authorization", "x-api-key", "proxy-authorization", "cookie", PAIR_HOP.lower(),
                            PAIR_CKPT.lower()})
-PAIR_DROP_IN = frozenset({"x-accel-buffering", "set-cookie"})
+PAIR_DROP_IN = frozenset({"x-accel-buffering", "set-cookie", "x-alzeo-pair-ended"})
 
 
 def _pair_opener(context, pin, read_s):
@@ -4993,6 +4993,17 @@ def sse_error_openai(msg, kind="corrupted_output", code=None):
 # deaths measured at ~140-180 s) ignore comments.
 KA_ANTHROPIC = b'event: ping\ndata: {"type": "ping"}\n\n'
 KA_OPENAI = b'data: {"id":"keepalive","object":"chat.completion.chunk","created":0,"model":"keepalive","choices":[]}\n\n'
+# Decision 1031 (2026-11-04): a request the other box of a pair sent on, ended here by order (this box's Abort all, its
+# memory floor, a stop of its lane's unit), is said so to that box before the cut, and it binds nothing (decision
+# 1019): a 503 with PAIR_ENDED when no byte of an answer went out, else, in a stream already open, that stream's own
+# keepalive event with one field more. A comment would kill the Claude-family parsers (role 1), and an event every
+# client takes is relayed as it is. The other box bound such a request for 10 minutes: after a Load of another model
+# here, its retries got 503s that long (found in the delta's review, 2026-11-04).
+PAIR_ENDED = "X-Alzeo-Pair-Ended"
+HOP_ENDED_ANTHROPIC = b'event: ping\ndata: {"type": "ping", "x_alzeo_ended": "order"}\n\n'
+HOP_ENDED_OPENAI = (b'data: {"id":"keepalive","object":"chat.completion.chunk","created":0,"model":"keepalive",'
+                    b'"choices":[],"x_alzeo_ended":"order"}\n\n')
+HOP_ENDED_RE = re.compile(rb'"x_alzeo_ended":\s?"order"')     # JSON structure: model output has its quotes escaped
 
 
 def sse_error(msg):
@@ -5574,6 +5585,8 @@ class H(BaseHTTPRequestHandler):
     def _begin(self, status, headers):
         if getattr(self, "_held_sse", False):
             return                      # the hold already sent this stream's 200 and headers
+        self._out_begun = True          # decision 1031: what an ordered end can still say (_say_ended_by_order)
+        self._out_sse = any(k.lower() == "content-type" and "text/event-stream" in str(v) for k, v in headers.items())
         self.close_connection = True
         self.send_response(status)
         for k, v in headers.items():
@@ -5907,6 +5920,31 @@ class H(BaseHTTPRequestHandler):
         self._abort_upstream(self._stop_label())
         self._shut_upstream()
 
+    def _say_ended_by_order(self):
+        """Decision 1031: this request, which the other box of a pair sent on, ends here by order; that box is told
+        before the cut, and binds nothing. A 503 with PAIR_ENDED when no byte of an answer went out, the stream's own
+        keepalive event with "x_alzeo_ended" in a stream open, nothing in an answer begun that is not a stream."""
+        if not self._pair_hop():
+            return
+        try:
+            if getattr(self, "_held_sse", False) or getattr(self, "_out_sse", False):
+                self._chunk(HOP_ENDED_ANTHROPIC if self.path.startswith("/v1/messages") else HOP_ENDED_OPENAI)
+            elif not getattr(self, "_out_begun", False):
+                body = json.dumps({"error": {"type": "engine_unavailable", "message": "keepalive-proxy: this box "
+                                   "ended the request by order (its Abort all, its memory floor or a stop of its "
+                                   "lane); send it again"}}).encode()
+                self.send_response(503)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header(PAIR_ENDED, "order")
+                self.send_header("Connection", "close")
+                self.end_headers()
+                self.wfile.write(body)
+                self.wfile.flush()
+                self._out_begun = True
+        except OSError:
+            pass
+
     def _cut_stopped(self):
         """The client of a generation the cockpit stopped (v6.47): its connection is cut, with no end
         to its stream and no last chunk, so it reads the incomplete answer it is and retries, as the
@@ -5914,6 +5952,7 @@ class H(BaseHTTPRequestHandler):
         floor = getattr(self, "_stop_floor", True)
         log(f"{self._peer} stopped by the {'memory floor' if floor else 'cockpit'} ({self._stop_why}): "
             f"the client's connection is cut, not ended, so it does not take what it got for an answer")
+        self._say_ended_by_order()          # a request the other box sent on: it is told (decision 1031)
         self.close_connection = True
         try: self.connection.shutdown(socket.SHUT_RDWR)
         except Exception: pass
@@ -6469,6 +6508,8 @@ class H(BaseHTTPRequestHandler):
                 # stream, held in silence, which it gave up on after about 330 s, three
                 # times over one restart, and it ended with no answer (the reference box,
                 # 2026-10-01).
+                if self._pair_hop() and unit_stopping_by_order():
+                    self._say_ended_by_order()  # its lane stopped by order: the other box binds nothing (1031)
                 self.close_connection = True
                 try: self.connection.shutdown(socket.SHUT_RDWR)
                 except Exception: pass
@@ -7354,6 +7395,13 @@ class H(BaseHTTPRequestHandler):
                 if e.code == 409 and b'"model_not_served"' in data:
                     log(f"{self._peer} pair: {peer['name']} serves another model now; the lists are read again")
                     return "moved"
+                if e.code == 503 and (e.headers.get(PAIR_ENDED) or "").strip().lower() == "order":
+                    # it ended it there by order (its Abort all, its floor): not run here too (decision 1017), not bound
+                    # to it (1031), and that box is no box that fails: no pause, nothing on the tile
+                    log(f"{self._peer} pair: {peer['name']} ended this request by order: its client is told 503")
+                    self._plain(503, {k: v for k, v in e.headers.items() if k.lower() not in PAIR_DROP_IN}, data)
+                    self._done("503 pair stopped there")
+                    return None
                 refused = _pair_refused_here(e.code, data) if fallback else None
                 if refused:
                     return "fallback" if refused == "away" else "too long"
@@ -7434,6 +7482,7 @@ class H(BaseHTTPRequestHandler):
                     except OSError: pass
                 sse, tail, anthropic = "text/event-stream" in ctype, b"", self.path.startswith("/v1/messages")
                 died = False                # its engine closed on it or died during it: no "ok pair" (review, 2026-11-04)
+                ordered = False             # it said it ends the request by order: nothing is bound (decision 1031)
                 while True:
                     try:
                         b = resp.read1(65536)
@@ -7445,8 +7494,10 @@ class H(BaseHTTPRequestHandler):
                         # reads the incomplete answer it is and retries (role 3's contract; found in
                         # review, 2026-11-02: a closing chunk here made a cut answer look whole)
                         log(f"{self._peer} pair: the stream from {peer['name']} was cut ({type(e).__name__}); "
-                            f"the client's is cut too, not ended")
-                        killer_note(self._killer_fp, peer["name"])          # it died during its answer (1019)
+                            f"the client's is cut too, not ended"
+                            + (f"; {peer['name']} ended it by order, nothing is bound (decision 1031)" if ordered else ""))
+                        if not ordered:
+                            killer_note(self._killer_fp, peer["name"])      # it died during its answer (1019)
                         self.close_connection = True
                         try: self.connection.shutdown(socket.SHUT_RDWR)
                         except Exception: pass
@@ -7454,6 +7505,8 @@ class H(BaseHTTPRequestHandler):
                     if not b:
                         break
                     seen = tail + b
+                    if b"x_alzeo_ended" in seen and HOP_ENDED_RE.search(seen):
+                        ordered = True
                     if HOP_CLOSED_B in seen or (b"EngineCore" in seen and ENGINE_DIED_RE.search(seen)):
                         # its engine closed on it after its hold opened the stream, or vLLM's died during it (1019)
                         killer_note(self._killer_fp, peer["name"])

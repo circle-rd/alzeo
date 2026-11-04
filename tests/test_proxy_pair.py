@@ -42,6 +42,9 @@ KEY_1, KEY_2 = "k-entry-111", "k-peer-222"
 TEST_REV = "1a2b3c4d5e" * 4            # the checkpoint every test box says it serves (PAIR_CHECKPOINT, decision 1018)
 # What vllm 0.29.0 (the pinned image) answers when its EngineCore died: rendered from its own code on the reference box
 # (create_error_response of an EngineDeadError, by starlette's JSONResponse; a stream's event by json.dumps)
+# What a box says before it cuts a request the other box sent on, which it ends by order (decision 1031)
+HOP_ENDED_OPENAI = (b'data: {"id":"keepalive","object":"chat.completion.chunk","created":0,"model":"keepalive",'
+                    b'"choices":[],"x_alzeo_ended":"order"}\n\n')
 VLLM_DEAD_500 = (b'{"error":{"message":"EngineCore encountered an issue. See stack trace (above) for the root cause.",'
                  b'"type":"InternalServerError","param":null,"code":500}}')
 VLLM_DEAD_EVENT = json.dumps({"error": {"message": "EngineCore encountered an issue. See stack trace (above) for the "
@@ -2259,6 +2262,77 @@ class TwoBoxesServeOneModel(PairFixture, unittest.TestCase):
                     th.join(30)
                 self.E1.users.clear()
 
+    def test_a_stream_the_other_box_ends_by_order_binds_nothing(self):
+        # decision 1031: the other box's Load, Abort all or floor cut a stream it served: the entry bound the request to
+        # it for 10 minutes, and its retries got 503s while that box was away (review, 2026-11-04)
+        Base = fake_peer(["qwen3.8-27b", "marker-ended"], PEER_ANSWER)
+
+        class EndsByOrder(Base):
+            def do_POST(self):
+                self.rfile.read(int(self.headers.get("Content-Length") or 0))
+                Base.seen.append(self.path)
+                if Base.state.get("away"):
+                    return self.reply(503, {"error": {"type": "engine_unavailable", "message": "its engine is away"}})
+                self.send_response(200)
+                self.send_header("Content-Type", "text/event-stream")
+                self.send_header("Transfer-Encoding", "chunked")
+                self.end_headers()
+                first = (b'data: {"id":"c","object":"chat.completion.chunk","model":"qwen3.8-27b","choices":[{"index":0,'
+                         b'"delta":{"content":"from the peer "}}]}\n\n')
+                for part in (first, HOP_ENDED_OPENAI):
+                    self.wfile.write(b"%x\r\n%s\r\n" % (len(part), part))
+                    self.wfile.flush()
+                self.close_connection = True
+                self.connection.shutdown(socket.SHUT_RDWR)                      # cut, not ended
+        entry = self.spare_proxy("spark1-ended", KEY_1, peers=(("spark2", tls_peer(self, EndsByOrder)),))
+        self.until_listed("marker-ended", port=entry)
+        held = self.busy(self.E1, entry, KEY_1, "local-only", 1, 4.0)          # one here, none there: it goes there
+        r = dict(self.turns("conv-ended", 1)[0], stream=True)
+        try:
+            self.call("/v1/chat/completions", r, port=entry)
+        except http.client.HTTPException:
+            pass                                                                # a cut stream, as the client reads it
+        self.assertEqual(len(Base.seen), 1)
+        Base.state["away"] = True                                               # that box's engine away now
+        st, out, _ = self.call("/v1/chat/completions", dict(r, stream=False), port=entry)
+        self.assertEqual(st, 200, out[:300])
+        self.assertIn(b"from spark1", out, "a request the other box ended by order was bound to it")
+        self.assert_said("spark1-ended", "ended it by order, nothing is bound")
+        for th in held:
+            th.join(30)
+
+    def test_a_503_the_other_box_says_is_an_order_is_not_run_here_nor_bound(self):
+        # decision 1031 with 1017: the other box's Abort all ended it before any answer; not run here too, nor bound
+        Base = fake_peer(["qwen3.8-27b", "marker-ended-503"], PEER_ANSWER)
+
+        class Ends503(Base):
+            def do_POST(self):
+                self.rfile.read(int(self.headers.get("Content-Length") or 0))
+                Base.seen.append(self.path)
+                out = json.dumps({"error": {"type": "engine_unavailable", "message": "keepalive-proxy: this box ended "
+                                            "the request by order"}}).encode()
+                self.send_response(503)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(out)))
+                if not Base.state.get("away"):
+                    self.send_header("X-Alzeo-Pair-Ended", "order")
+                self.end_headers()
+                self.wfile.write(out)
+        entry = self.spare_proxy("spark1-ended-503", KEY_1, peers=(("spark2", tls_peer(self, Ends503)),))
+        self.until_listed("marker-ended-503", port=entry)
+        held = self.busy(self.E1, entry, KEY_1, "local-only", 1, 4.0)          # one here, none there: it goes there
+        r = self.turns("conv-ended-503", 1)[0]
+        st, out, headers = self.call("/v1/chat/completions", r, port=entry)
+        self.assertEqual(st, 503, out[:300])
+        self.assertNotIn("conv-ended-503-0", self.E1.users, "an Abort all of the other box was undone here")
+        self.assertNotIn("X-Alzeo-Pair-Ended", headers)
+        Base.state["away"] = True                                               # a plain 503 now: its engine away
+        st, out, _ = self.call("/v1/chat/completions", r, port=entry)
+        self.assertEqual(st, 200, out[:300])
+        self.assertIn(b"from spark1", out, "a request the other box ended by order was bound to it")
+        for th in held:
+            th.join(30)
+
     def test_a_box_that_refuses_this_boxs_certificate_never_had_the_request(self):
         # decision 1017: under TLS 1.3 the other box refuses this box's certificate (re-paired, its entry of this box
         # replaced) at the first read, the request sent: it was said lost, bound there and that box paused, where its
@@ -2597,6 +2671,57 @@ class TwoBoxesServeOneModel(PairFixture, unittest.TestCase):
         self.assertEqual(st, 503, out[:300])
         self.assertIn(b"no longer in this pair", out)
         self.assertNotIn("conv-bound-left-0", self.E1.users + self.E2.users)
+
+    def test_a_hop_this_box_stops_by_order_before_any_answer_gets_a_503_that_says_so(self):
+        # decision 1031: this box's Abort all cut a request the other box sent on, with no answer: the other box took
+        # it for a request it lost (1017) and bound it to this box for 10 minutes (review, 2026-11-04)
+        if not self.INPROC:
+            self.skipTest("the Abort all runs in this test's process")
+        got = {}
+        hop = dict(self.chat("qwen3.8-27b"), user="hop-abort", x_delay=6.0)
+
+        def send():
+            c = http.client.HTTPSConnection("127.0.0.1", self.pport1, timeout=60, context=client_ctx("spark2", "spark1"))
+            try:
+                c.request("POST", "/v1/chat/completions", json.dumps(hop).encode(), {"Content-Type": "application/json"})
+                r = c.getresponse()
+                got.update(st=r.status, headers=dict(r.getheaders()), body=r.read())
+            except Exception as e:
+                got["err"] = repr(e)
+            finally:
+                c.close()
+        th = threading.Thread(target=send, daemon=True)
+        th.start()
+        deadline = time.monotonic() + 10
+        while "hop-abort" not in self.E1.users and time.monotonic() < deadline:
+            time.sleep(0.05)
+        self.mod.stop_generations("test: Abort all", floor=False)
+        th.join(30)
+        self.assertNotIn("err", got, "cut with no answer")
+        self.assertEqual(got["st"], 503, got.get("body", b"")[:300])
+        self.assertEqual(got["headers"].get("X-Alzeo-Pair-Ended"), "order")
+
+    def test_a_hop_this_box_stops_by_order_in_its_open_stream_says_so_before_the_cut(self):
+        # decision 1031, in a stream the hold opened: the other box read a cut and bound the request (review, 2026-11-04)
+        if not self.INPROC:
+            self.skipTest("the Abort all runs in this test's process")
+        hop = dict(self.chat("qwen3.8-27b"), user="hop-abort-stream", stream=True, x_delay=16.0)
+        c = http.client.HTTPSConnection("127.0.0.1", self.pport1, timeout=60, context=client_ctx("spark2", "spark1"))
+        self.addCleanup(c.close)
+        c.request("POST", "/v1/chat/completions", json.dumps(hop).encode(), {"Content-Type": "application/json"})
+        r = c.getresponse()                                                     # the hold opens it after KEEPALIVE_S
+        self.assertEqual(r.status, 200)
+        got = r.read1(65536)                                                    # its first keepalive
+        self.mod.stop_generations("test: Abort all", floor=False)
+        try:
+            while True:
+                b = r.read1(65536)
+                if not b:
+                    break
+                got += b
+        except (http.client.HTTPException, OSError):
+            pass                                                                # cut, not ended
+        self.assertIn(b'"x_alzeo_ended":"order"', got, got[-300:])
 
     def test_a_restart_binds_what_its_engine_closed_on(self):
         # decision 1030: only a stop is an order. The cockpit restarts an engine a request may have wedged (autoheal,
@@ -3164,6 +3289,18 @@ class TwoBoxesServeOneModelInProcess(TwoBoxesServeOneModel):
 
     def test_a_restart_binds_what_its_engine_closed_on(self):
         super().test_a_restart_binds_what_its_engine_closed_on()
+
+    def test_a_hop_this_box_stops_by_order_before_any_answer_gets_a_503_that_says_so(self):
+        super().test_a_hop_this_box_stops_by_order_before_any_answer_gets_a_503_that_says_so()
+
+    def test_a_hop_this_box_stops_by_order_in_its_open_stream_says_so_before_the_cut(self):
+        super().test_a_hop_this_box_stops_by_order_in_its_open_stream_says_so_before_the_cut()
+
+    def test_a_stream_the_other_box_ends_by_order_binds_nothing(self):
+        super().test_a_stream_the_other_box_ends_by_order_binds_nothing()
+
+    def test_a_503_the_other_box_says_is_an_order_is_not_run_here_nor_bound(self):
+        super().test_a_503_the_other_box_says_is_an_order_is_not_run_here_nor_bound()
 
     def test_this_engine_starting_its_lane_goes_to_no_other_checkpoint(self):
         super().test_this_engine_starting_its_lane_goes_to_no_other_checkpoint()
@@ -3933,6 +4070,18 @@ class ThePairsPieces(unittest.TestCase):
                 os.environ.clear()
                 os.environ.update(saved)
             self.assertEqual(getattr(mod, name), want, f"{name}={said}")
+
+    def test_the_end_by_order_is_said_in_events_every_client_takes(self):
+        m = self.mod
+        for event in (m.HOP_ENDED_ANTHROPIC, m.HOP_ENDED_OPENAI):
+            self.assertTrue(m.HOP_ENDED_RE.search(event))
+            data = [ln for ln in event.split(b"\n") if ln.startswith(b"data: ")]
+            self.assertEqual(len(data), 1)
+            json.loads(data[0][6:])                                             # one JSON event, not a comment
+            self.assertFalse(event.startswith(b":"), "a comment kills the Claude-family parsers (role 1)")
+        self.assertEqual(m.HOP_ENDED_OPENAI, HOP_ENDED_OPENAI)
+        quoted = ("data: " + json.dumps({"choices": [{"delta": {"content": '"x_alzeo_ended": "order"'}}]})).encode()
+        self.assertFalse(m.HOP_ENDED_RE.search(quoted), "model output quoting it")
 
     def test_only_a_stop_job_is_an_order_and_a_restart_is_on_its_way_back(self):
         m = self.mod
