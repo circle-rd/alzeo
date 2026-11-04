@@ -639,15 +639,15 @@ def unit_stopping_by_order():
 # whatever checkpoint it loads.
 RECOVERY_FILE = os.path.expanduser(os.environ.get("QWEN38_RECOVERY_FILE") or "~/.config/qwen38/recovery-restarts.json")
 RECOVERY_MARK_S = 600.0                 # a mark older than this is not the recovery under way
-RECOVERY_START_S = 120.0                # its unit's state changes this soon after the mark, or it is another restart's
+RECOVERY_START_S = 120.0                # its restart leaves active this soon after the mark, or it is another restart's
 
 
 def recovery_runs():
     """{unit: True} for each unit named in PROXY_HOLD_UNITS whose run the cockpit restarts now to recover its engine:
-    its mark names the unit's run and is younger than RECOVERY_MARK_S. A mark the cockpit left behind (its
-    restart refused) made a later Load of that run a recovery, and a run read after the jobs could be the restart's next
-    one, the recovery then an order (the 5th review of v1.43.0, 2026-11-04). {} when nothing says so; no systemctl
-    without a fresh mark."""
+    its mark names the unit's run, is younger than RECOVERY_MARK_S, and the unit left active, or changed state, within
+    RECOVERY_START_S of it. A mark the cockpit left behind (its restart refused) made a later Load of that run a
+    recovery, and a run read after the jobs could be the restart's next one, the recovery then an order (the 5th review
+    of v1.43.0, 2026-11-04). {} when nothing says so; no systemctl without a fresh mark."""
     try:
         with open(RECOVERY_FILE, encoding="utf-8") as f:
             marks = json.load(f)
@@ -659,19 +659,32 @@ def recovery_runs():
         if unit not in HOLD_UNITS or not isinstance(at, (int, float)) or not 0 <= now - at < RECOVERY_MARK_S:
             continue
         try:
-            out = subprocess.run(["systemctl", "show", unit, "-p", "InvocationID", "-p", "StateChangeTimestamp",
-                                  "--timestamp=unix"], capture_output=True, text=True, timeout=3).stdout
+            out = subprocess.run(["systemctl", "show", unit, "-p", "InvocationID", "-p", "ActiveExitTimestamp", "-p",
+                                  "StateChangeTimestamp", "--timestamp=unix"], capture_output=True, text=True,
+                                 timeout=3).stdout
             props = dict(ln.split("=", 1) for ln in out.splitlines() if "=" in ln)
-            changed = float(props.get("StateChangeTimestamp", "").lstrip("@"))
         except Exception:
             continue
-        # the restart it was written for: the unit's state changed after the mark, within RECOVERY_START_S. A mark the
-        # cockpit left behind (stopped between the mark and the restart, a removal that failed) counted for the next
-        # restart of that run, and the Load of another checkpoint then bound what it ended (the 7th review of v1.43.0)
+        # the restart it was written for: the unit left active (ActiveExitTimestamp, set once as the restart begins),
+        # or changed state, after the mark and within RECOVERY_START_S. A mark the cockpit left behind (stopped between
+        # the mark and the restart, a removal that failed) counted for the next restart of that run, and the Load of
+        # another checkpoint then bound what it ended (the 7th review of v1.43.0). The last change alone moves with each
+        # step of a stop (systemd's unit_notify stamps every low-level state), and a stop slower than RECOVERY_START_S
+        # outlived its mark (the 8th review, 2026-11-05)
         if props.get("InvocationID") and mark.get("invocation") == props["InvocationID"] \
-                and at - 2 <= changed <= at + RECOVERY_START_S:
+                and any(at - 2 <= t <= at + RECOVERY_START_S
+                        for t in (unix_stamp(props.get("ActiveExitTimestamp")),
+                                  unix_stamp(props.get("StateChangeTimestamp"))) if t is not None):
             found[unit] = True
     return found
+
+
+def unix_stamp(value):
+    """A timestamp systemctl show printed with --timestamp=unix ("@1730757600"), or None (empty, "n/a", missing)."""
+    try:
+        return float(str(value).strip().lstrip("@"))
+    except (TypeError, ValueError):
+        return None
 
 
 def with_scripts(text):
@@ -6263,7 +6276,8 @@ class H(BaseHTTPRequestHandler):
         """POST STOP_PATH (v6.47): the cockpit stops every generation through this proxy, for its
         memory floor or its operator's Abort all. Its operator's only: from this machine, with the key
         the engine checks, never a client key. Body (optional): {"why", "kind": "floor" (the default)
-        or "operator", "floor_gib", "hold_s"}; answer {"stopped", "abort_all"}."""
+        or "operator", "floor_gib", "hold_s"}; answer {"stopped", "abort_all", "finishing"}: the generations it
+        stopped, whether SGLang's abort_all went, and the answers relayed whole it left to go out (no stop target)."""
         refuse = None
         if self.command != "POST":
             refuse = (405, "takes POST")
@@ -6822,14 +6836,21 @@ class H(BaseHTTPRequestHandler):
                 # stream, held in silence, which it gave up on after about 330 s, three
                 # times over one restart, and it ended with no answer (the reference box,
                 # 2026-10-01).
-                if self._pair_hop() and unit_stopping_by_order():
+                # read once, and only where it says something: a hop's box tells the other box, and this box's own
+                # client's request, bound at a death by a read of systemd that saw no stop yet, is unbound when the
+                # stop shows at the cut, as at a clean end (the 8th review of v1.43.0, 2026-11-05)
+                ordered = bool(self._pair_hop() or getattr(self, "_killer_fp", None)) and unit_stopping_by_order()
+                if ordered and self._pair_hop():
                     self._say_ended_by_order()  # its lane stopped by order: the other box binds nothing (1031)
+                elif ordered and died:
+                    killer_forget(self._killer_fp, "")
                 self.close_connection = True
                 try: self.connection.shutdown(socket.SHUT_RDWR)
                 except Exception: pass
                 try: resp.close()
                 except Exception: pass
-                self._killed_here()             # it died during its answer (decision 1019)
+                if not ordered:
+                    self._killed_here()         # it died during its answer (decision 1019)
                 self._done("UPSTREAM CUT"); return
             now = time.time() - self._t0
             if self._first is None: self._first = now
@@ -6869,11 +6890,13 @@ class H(BaseHTTPRequestHandler):
             try: self._chunk(val)
             except Exception:
                 drop_upstream(); self._done("CLIENT GONE on write"); return
-        if died and not getattr(self, "_said_ended", False) and unit_stopping_by_order():
+        if died and not getattr(self, "_said_ended", False) \
+                and (self._pair_hop() or getattr(self, "_killer_fp", None)) and unit_stopping_by_order():
             # read again at the stream's clean end: vLLM ends a dead stream cleanly ([DONE]), and a stop job not seen yet
             # at the death went unsaid, the other box binding the request 10 minutes (the 6th review of v1.43.0): a hop's
             # box is told before the end; this box's own client's request, bound at the death by the same early read
-            # (_killed_here), is unbound (the 7th review). An order said already costs no second read
+            # (_killed_here), is unbound (the 7th review). An order said already costs no second read, and a box alone,
+            # with nothing to say or undo, none at all (the 8th review)
             if self._pair_hop():
                 self._say_ended_by_order()
             else:
@@ -7665,8 +7688,9 @@ class H(BaseHTTPRequestHandler):
                       checkpoint=None):
         """Role 10: the request to the peer's pair port as the client wrote it, without its credentials
         (the certificate is the pair's: the peer admits it with its own key); its answer relayed as it
-        comes. "moved" when the peer answers that it serves another model now (409 model_not_served),
-        None once the caller has its answer. With fallback (this box serves the model too, decision 998),
+        comes. "moved" when the peer answers that it serves another model now (409 model_not_served), "moved
+        checkpoint" when it serves the model still, from another checkpoint (PAIR_MOVED holds both), None once the
+        caller has its answer. With fallback (this box serves the model too, decision 998),
         "lost" when the peer had it whole and closed the connection with no answer (decision 1017), "gone" when its
         client left before the peer took the connection, "left" when it left while its body was still on its way there,
         "fallback" when the peer does not answer, or refuses it as away (503, 529), and "too long" when its pool is too
@@ -7674,7 +7698,7 @@ class H(BaseHTTPRequestHandler):
         (_pair_spread). count: what the tile counts it as (decision 996), once the other box's answer came, never for one
         that came back here (the tile said "sent there" of requests that bounced, found in review, 2026-11-03).
         checkpoint: the one the other box must serve the model from (PAIR_CKPT, decision 1018), when this box serves it
-        too; it answers 409 otherwise, which is "moved" here."""
+        too; it answers 409 otherwise, which is "moved checkpoint" here."""
         if not reserved:
             pair_sent(peer["name"], 1)
         self._pair_count = (peer["name"], count) if count else None
@@ -8187,7 +8211,10 @@ class H(BaseHTTPRequestHandler):
             keeper.start()
         try:
             resp, herr, cerr = self._open(body)
-            self._take_whole_answer(resp or herr)
+            # its answer only: an error (herr) is no answer relayed whole, and on a 502, 503 or 504 the request is held
+            # and sent again (role 6), its retried generation then out of every stop's reach, a cut answer reaching an
+            # Anthropic client as whole (v6.47's bug; the 8th review of v1.43.0, 2026-11-05)
+            self._take_whole_answer(resp)
         finally:
             done.set()                      # headers, or an error: the generation is over
             if keeper is not None:

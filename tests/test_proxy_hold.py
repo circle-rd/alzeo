@@ -38,8 +38,9 @@ UNITS = "qwen38-sglang.service qwen38-flash.service"
 class Engine(http.server.BaseHTTPRequestHandler):
     """SGLang as the proxy sees it: its info route, a generation in both dialects, /tokenize.
     The server's `mode` is "up" or "starting" (503, as SGLang answers while it loads) for
-    its generations, `info_mode` the same for its info route; `pool` is what that route
-    reports; `generations` lists what it was asked to generate."""
+    its generations, or "vllm-dead" (a stream whose EngineCore died: vLLM's error event, then its
+    clean end), `info_mode` the same for its info route; `pool` is what that route reports;
+    `generations` lists what it was asked to generate."""
     protocol_version = "HTTP/1.1"
 
     def log_message(self, *a):
@@ -90,7 +91,12 @@ class Engine(http.server.BaseHTTPRequestHandler):
         self.send_header("Transfer-Encoding", "chunked"); self.end_headers()
         def c(b):
             self.wfile.write(b"%x\r\n" % len(b) + b + b"\r\n"); self.wfile.flush()
-        if self.path.startswith("/v1/messages"):
+        if self.server.mode == "vllm-dead":
+            c(b'data: {"id":"g1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"fo"}}]}\n\n')
+            c(b'data: {"error": {"message": "EngineCore encountered an issue. See stack trace (above) for the root '
+              b'cause.", "type": "InternalServerError", "param": null, "code": 500}}\n\n')
+            c(b"data: [DONE]\n\n")
+        elif self.path.startswith("/v1/messages"):
             for name, data in (("message_start", {"type": "message_start", "message": {"id": "m1", "type": "message",
                                 "role": "assistant", "content": [], "usage": {"input_tokens": 1, "output_tokens": 0}}}),
                                ("content_block_delta", {"type": "content_block_delta", "index": 0,
@@ -340,6 +346,46 @@ class ANonStreamedRequestWaitsInSilence(unittest.TestCase):
         self.assertTrue(reply.done.wait(15))
         self.assertEqual(reply.status, 200)
         self.assertEqual(json.loads(reply.raw)["choices"][0]["message"]["content"], "four")
+
+
+class AStopReachesWhatItShould(unittest.TestCase):
+    """The stop (the memory floor, Abort all) and what a box alone reads of systemd around an engine's death."""
+    INPROC = False
+
+    def box(self, **kw):
+        return Box(self, inproc=self.INPROC, **kw)
+
+    def test_a_request_sent_again_after_the_engines_503_is_still_a_stop_target(self):
+        # its first try got the engine's 503: the flag of an answer relayed whole was set on that error, the request held
+        # and sent again, and its generation was then out of every stop's reach, a cut answer reaching an Anthropic
+        # client as whole (v6.47's bug back; the 8th review of v1.43.0, 2026-11-05)
+        if not self.INPROC:
+            self.skipTest("the stop is made in this test's process")
+        box = self.box()
+        box.start_engine(mode="starting")                   # 503 to its generations and to its info route
+        reply = box.send(stream=False)
+        box.journal_with("-> POST /v1/chat/completions")
+        time.sleep(1.5)                                     # its first try got the 503: it is held
+        self.assertIsNone(reply.status, "the test needs the request held")
+        box.start_engine(mode="up", delay=4.0)              # back: the generation sent again takes 4 s
+        time.sleep(1.5)                                     # the hold sees it back and sends it (polls of 0.2 s)
+        stopped, _ = box.mod.stop_generations("this test's Abort all", floor=False)
+        self.assertEqual(stopped, 1, "the generation sent again after the engine's 503 was out of the stop's reach")
+        self.assertTrue(reply.done.wait(15))
+
+    def test_a_box_alone_reads_no_order_at_a_dead_streams_end(self):
+        # nothing to tell and nothing to undo without a pair: every stream at a vLLM death read systemd at its end, all at
+        # once (the 8th review of v1.43.0, 2026-11-05)
+        if not self.INPROC:
+            self.skipTest("systemd's reads are counted in this test's process")
+        box = self.box(state="active")
+        reads = []
+        box.mod.unit_stopping_by_order = lambda: reads.append(1) or False
+        box.start_engine(mode="vllm-dead")
+        reply = box.send(stream=True)
+        self.assertTrue(reply.done.wait(15))
+        self.assertIn(b"EngineCore", reply.raw)
+        self.assertEqual(reads, [], "a box alone read systemd at a dead stream's end")
 
 
 class AnAnswerIsRelayedTheMomentItComes(unittest.TestCase):
@@ -719,6 +765,16 @@ class ANonStreamedRequestWaitsInSilenceInProcess(ANonStreamedRequestWaitsInSilen
         super().test_it_gets_its_answer_when_the_engine_is_back()
 
 
+class AStopReachesWhatItShouldInProcess(AStopReachesWhatItShould):
+    INPROC = True
+
+    def test_a_request_sent_again_after_the_engines_503_is_still_a_stop_target(self):
+        super().test_a_request_sent_again_after_the_engines_503_is_still_a_stop_target()
+
+    def test_a_box_alone_reads_no_order_at_a_dead_streams_end(self):
+        super().test_a_box_alone_reads_no_order_at_a_dead_streams_end()
+
+
 class AnAnswerIsRelayedTheMomentItComesInProcess(AnAnswerIsRelayedTheMomentItComes):
     INPROC = True
 
@@ -796,7 +852,7 @@ class EveryCaseHasItsInProcessTwin(unittest.TestCase):
     def test_each_twin_declares_every_case_of_its_class(self):
         for twin in (AStreamedRequestWaitsForItsEngineInProcess, ANonStreamedRequestWaitsInSilenceInProcess,
                      AnAnswerIsRelayedTheMomentItComesInProcess, ARequestInFlightHoldsItsSocketsAloneInProcess,
-                     WhatIsNotWaitedForInProcess, AHoldEndsInProcess):
+                     WhatIsNotWaitedForInProcess, AHoldEndsInProcess, AStopReachesWhatItShouldInProcess):
             base = twin.__bases__[0]
             cases = {n for n in vars(base) if n.startswith("test_")}
             self.assertTrue(cases, base.__name__)

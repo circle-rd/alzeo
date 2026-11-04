@@ -176,12 +176,13 @@ def fake_engine(name, model):
         bodies: list = []           # every POST's body, parsed
         gets: list = []             # the path of every GET
         delay = 0.0
-        ordered_now = False         # "vllm_dead_late_order": its lane's stop job, seen only once it is set
+        ordered_now = False         # "vllm_dead_late_order(_cut)": its lane's stop job, seen only once it is set
         mode = "ok"                 # "down": /v1/models answers 503 (a boot) ; "cut": a stream dies mid-way ;
                                     # "busy": every POST answers 503 ; "die": every POST is read, then the
                                     # connection closed without an answer (an engine that died on it) ;
                                     # "vllm_dead_more": a stream whose EngineCore died, more events after it ;
-                                    # "vllm_dead_late_order": its death, then ordered_now set, then a clean end
+                                    # "vllm_dead_late_order": its death, then ordered_now set, then a clean end ;
+                                    # "vllm_dead_late_order_cut": the same, then a cut, no end
 
         def log_message(self, *a):
             pass
@@ -272,12 +273,16 @@ def fake_engine(name, model):
                     part = b"data: " + VLLM_DEAD_EVENT + b"\n\n"
                     self.wfile.write(b"%x\r\n%s\r\n0\r\n\r\n" % (len(part), part)); self.wfile.flush()
                     return
-                if Handler.mode == "vllm_dead_late_order":   # its death; its stop job seen after it; a clean end
-                    part = b"data: " + VLLM_DEAD_EVENT + b"\n\n"
+                if Handler.mode in ("vllm_dead_late_order", "vllm_dead_late_order_cut"):
+                    part = b"data: " + VLLM_DEAD_EVENT + b"\n\n"   # its death; its stop job seen after it
                     self.wfile.write(b"%x\r\n%s\r\n" % (len(part), part)); self.wfile.flush()
                     time.sleep(0.4)
                     Handler.ordered_now = True
                     time.sleep(0.3)
+                    if Handler.mode == "vllm_dead_late_order_cut":  # its server killed: no clean end
+                        self.close_connection = True
+                        self.connection.shutdown(socket.SHUT_RDWR)
+                        return
                     part = b"data: [DONE]\n\n"
                     self.wfile.write(b"%x\r\n%s\r\n0\r\n\r\n" % (len(part), part)); self.wfile.flush()
                     return
@@ -3305,6 +3310,41 @@ class TwoBoxesServeOneModel(PairFixture, unittest.TestCase):
         self.assertIsNone(m.killer_box(m.body_fingerprint(json.dumps(r).encode(), "/v1/chat/completions")),
                           "an order shown at the stream's end left the request bound")
 
+    def test_a_death_here_whose_order_shows_before_a_cut_is_unbound(self):
+        # the same death, its stop job seen after it, then the server killed: the binding was undone at a clean end only,
+        # and the client's retries stayed bound 10 minutes (the 8th review of v1.43.0, 2026-11-05)
+        if not self.INPROC:
+            self.skipTest("the binding is read in this test's process")
+        m = self.mod
+        self.addCleanup(m._KILLERS.clear)
+        saved = m.unit_stopping_by_order
+        m.unit_stopping_by_order = lambda: self.E1.ordered_now                  # the stop job, seen after the death
+        self.addCleanup(setattr, m, "unit_stopping_by_order", saved)
+        self.E1.mode = "vllm_dead_late_order_cut"
+        r = dict(self.turns("conv-local-late-order-cut", 1)[0], stream=True)
+        raw = json.dumps(r).encode()
+        c = http.client.HTTPConnection("127.0.0.1", self.port1, timeout=30)
+        c.request("POST", "/v1/chat/completions", raw,
+                  {"Content-Type": "application/json", "Authorization": f"Bearer {KEY_1}"})
+        resp = c.getresponse()
+        got = b""
+        try:
+            while True:
+                b = resp.read1(65536)
+                if not b:
+                    break
+                got += b
+        except (OSError, http.client.HTTPException):
+            pass                                                                # cut, as its engine's end was
+        c.close()
+        self.assertIn(b"EngineCore", got)
+        self.assertIn("conv-local-late-order-cut-0", self.E1.users, "the test needs this box's engine to have it")
+        fp = m.body_fingerprint(raw, "/v1/chat/completions")
+        deadline = time.monotonic() + 3
+        while m.killer_box(fp) is not None and time.monotonic() < deadline:
+            time.sleep(0.1)
+        self.assertIsNone(m.killer_box(fp), "an order shown before the stream's cut left the request bound")
+
     def test_an_order_said_while_the_watch_binds_leaves_nothing_bound(self):
         # the watch read no order and bound; the order, read between the two, undid a binding not made yet, and the note
         # came after it: bound 10 minutes by an order (found re-reading the 7th review's fixes, 2026-11-04)
@@ -4127,6 +4167,9 @@ class TwoBoxesServeOneModelInProcess(TwoBoxesServeOneModel):
     def test_an_order_said_while_the_watch_binds_leaves_nothing_bound(self):
         super().test_an_order_said_while_the_watch_binds_leaves_nothing_bound()
 
+    def test_a_death_here_whose_order_shows_before_a_cut_is_unbound(self):
+        super().test_a_death_here_whose_order_shows_before_a_cut_is_unbound()
+
     def test_a_recovery_restart_to_a_staged_checkpoint_binds_what_its_engine_closed_on(self):
         super().test_a_recovery_restart_to_a_staged_checkpoint_binds_what_its_engine_closed_on()
 
@@ -4875,10 +4918,10 @@ class ThePairsPieces(unittest.TestCase):
         self.assertIsNone(m.unit_texts())
         self.assertEqual(len(calls), 2, "an empty command was kept 10 s")
 
-    def _systemd_answers(self, jobs, shown, starts, run=None, changed=None):
+    def _systemd_answers(self, jobs, shown, starts, run=None, changed=None, left=None):
         """systemctl stubbed: list-jobs says jobs, show -p ExecStart --value says starts, show -p InvocationID says run
-        (the unit's run, decision 1049) and changed (its last state change, unix time; now by default), any other show
-        says shown."""
+        (the unit's run, decision 1049), changed (its last state change, unix time; now by default) and left (when it
+        left active, unix time; not said by default), any other show says shown."""
         m = self.mod
 
         def answer(argv, **kw):
@@ -4889,6 +4932,7 @@ class ThePairsPieces(unittest.TestCase):
             elif "InvocationID" in argv:
                 at = (changed or {}).get("at", time.time())
                 out = f"InvocationID={(run or {'out': ''})['out'].strip()}\nStateChangeTimestamp=@{int(at)}\n"
+                out += f"ActiveExitTimestamp=@{int(left['at'])}\n" if left else "ActiveExitTimestamp=\n"
             else:
                 out = shown["out"]
             return subprocess.CompletedProcess(argv, 0, out, "")
@@ -5061,6 +5105,23 @@ class ThePairsPieces(unittest.TestCase):
         self.assertTrue(m.unit_stopping_by_order(), "a mark left behind counted for a later restart")
         self._marked(time.time() - 1)                                           # written for this one
         self.assertFalse(m.unit_stopping_by_order())
+
+    def test_a_recovery_mark_outlives_a_stop_slower_than_its_window(self):
+        # systemd stamps every step of a stop (its unit_notify): read alone, the last state change moved past
+        # RECOVERY_START_S while a slow stop went on, and the cockpit's recovery then read as an order. The moment the
+        # unit left active is set once (the 8th review of v1.43.0, 2026-11-05)
+        m = self.mod
+        jobs = {"out": "8 qwen38-sglang.service restart running\n"}
+        starts = {"out": f"{{ path=/usr/bin/docker ; argv[]=docker run x --served-model-name qwen3.8-27b --revision "
+                         f"{'ab' * 20} ; }}"}
+        now = time.time()
+        self._systemd_answers(jobs, {"out": ""}, starts, {"out": "run-1\n"}, {"at": now}, {"at": now - 199})
+        m._LAST_LANE["lane"] = (frozenset({"qwen3.8-27b"}), "cd" * 20)
+        self._marked(now - 200)                                                 # its stop began a second after it
+        self.assertFalse(m.unit_stopping_by_order(), "a slow stop outlived the recovery's mark")
+        self.assertEqual(m.unix_stamp("@1730757600"), 1730757600.0)
+        self.assertIsNone(m.unix_stamp(""))
+        self.assertIsNone(m.unix_stamp("n/a"))
 
     def test_an_answer_relayed_whole_leaves_the_stops_reach_at_once(self):
         # set at its relay, the keeper's join left a window where a stop cut a finished answer, and on vLLM shut its
