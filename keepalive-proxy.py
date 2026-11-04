@@ -4831,8 +4831,8 @@ def names_in(texts):
 def lane_away():
     """(names, checkpoint) of the lane this box serves while its engine does not answer: what the command of its
     engine says (a start under way: an update restarts this proxy and an engine of minutes of loading together), else,
-    while a text lane is on its way back (a crash), what this proxy saw it serve last, else nothing. A client of the stock 27B got the uncensored one from the
-    other box while this box restarted (found in review, 2026-11-04)."""
+    while a text lane is on its way back (a crash), what this proxy saw it serve last, else nothing. A client of the
+    stock 27B got the uncensored one from the other box while this box restarted (found in review, 2026-11-04)."""
     texts = unit_texts()
     names = names_in(texts) if texts else frozenset()
     if names:
@@ -6887,9 +6887,9 @@ class H(BaseHTTPRequestHandler):
             bound = killer_box(self._killer_fp)
             if bound is not None:
                 peer = next((p for p in conf["peers"] if p["name"] == bound), None)
-                if peer is None and bound != (conf.get("name") or ""):
+                if peer is None and bound not in ("", conf.get("name") or ""):
                     # bound to a box that left the pair since: served here, it was the fallback 1019 rules out (found
-                    # in review, 2026-11-04)
+                    # in review, 2026-11-04). "" is this box, alone when it noted it (killer_note's box alone)
                     self._pair_refuse(503, "engine_unavailable", f"box {bound}, whose engine or connection closed on "
                                       f"this request moments ago, is no longer in this pair: this request is served "
                                       f"nowhere else for a while; send it again later", pair_served_map(conf, local))

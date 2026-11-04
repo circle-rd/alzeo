@@ -2567,6 +2567,23 @@ class TwoBoxesServeOneModel(PairFixture, unittest.TestCase):
         self.assertEqual(st, 502, out[:300])
         self.assertIn(b"upstream_closed", out)
 
+    def test_a_request_bound_while_this_box_was_alone_is_this_boxs(self):
+        # a box alone notes "" for itself: paired within the 10 minutes, it took that for a box that left the pair and
+        # served the request nowhere (found re-reading the rule, 2026-11-04)
+        if not self.INPROC:
+            self.skipTest("the binding is set in this test's process")
+        m = self.mod
+        self.addCleanup(m._KILLERS.clear)
+        r = self.turns("conv-bound-alone", 1)[0]
+        m.killer_note(m.body_fingerprint(json.dumps(r).encode(), "/v1/chat/completions"), "")
+        held = self.busy(self.E1, self.port1, KEY_1, "local-only", 5, 4.0)     # far apart: it would go there
+        st, out, _ = self.call("/v1/chat/completions", r)
+        self.assertEqual(st, 200, out[:300])
+        self.assertIn(b"from spark1", out, "a request bound while this box was alone was not served here")
+        self.assertNotIn("conv-bound-alone-0", self.E2.users)
+        for th in held:
+            th.join(30)
+
     def test_a_request_bound_to_a_box_that_left_the_pair_goes_nowhere(self):
         # decision 1019: bound to a box no longer in pair.json, it was served here, the fallback 1019 rules out
         # (review, 2026-11-04)
@@ -3136,6 +3153,9 @@ class TwoBoxesServeOneModelInProcess(TwoBoxesServeOneModel):
 
     def test_a_request_bound_to_a_box_that_left_the_pair_goes_nowhere(self):
         super().test_a_request_bound_to_a_box_that_left_the_pair_goes_nowhere()
+
+    def test_a_request_bound_while_this_box_was_alone_is_this_boxs(self):
+        super().test_a_request_bound_while_this_box_was_alone_is_this_boxs()
 
     def test_a_box_that_refuses_this_boxs_certificate_never_had_the_request(self):
         super().test_a_box_that_refuses_this_boxs_certificate_never_had_the_request()
