@@ -7328,8 +7328,8 @@ class H(BaseHTTPRequestHandler):
         """A 503 for a request box pick had whole and closed the connection on with no answer: it is not run here
         too (decision 1017)."""
         self._pair_refuse(503, "engine_unavailable", f"box {pick}, which serves {name}, had this request and closed "
-                          "the connection without an answer (an Abort all there, its memory floor, a restart, its "
-                          "power): it is not run on this box too; send it again", pair_served_map(conf, local))
+                          "the connection without an answer (a restart of its proxy, its power): it is not run on this "
+                          "box too; send it again", pair_served_map(conf, local))
         self._done("503 pair request lost")
 
     def _pair_take_over(self, asked, why="this box's engine does not answer"):

@@ -40,11 +40,11 @@ import localports  # noqa: E402
 REPO = pathlib.Path(__file__).resolve().parents[1]
 KEY_1, KEY_2 = "k-entry-111", "k-peer-222"
 TEST_REV = "1a2b3c4d5e" * 4            # the checkpoint every test box says it serves (PAIR_CHECKPOINT, decision 1018)
-# What vllm 0.29.0 (the pinned image) answers when its EngineCore died: rendered from its own code on the reference box
-# (create_error_response of an EngineDeadError, by starlette's JSONResponse; a stream's event by json.dumps)
 # What a box says before it cuts a request the other box sent on, which it ends by order (decision 1031)
 HOP_ENDED_OPENAI = (b'data: {"id":"keepalive","object":"chat.completion.chunk","created":0,"model":"keepalive",'
                     b'"choices":[],"x_alzeo_ended":"order"}\n\n')
+# What vllm 0.29.0 (the pinned image) answers when its EngineCore died: rendered from its own code on the reference box
+# (create_error_response of an EngineDeadError, by starlette's JSONResponse; a stream's event by json.dumps)
 VLLM_DEAD_500 = (b'{"error":{"message":"EngineCore encountered an issue. See stack trace (above) for the root cause.",'
                  b'"type":"InternalServerError","param":null,"code":500}}')
 VLLM_DEAD_EVENT = json.dumps({"error": {"message": "EngineCore encountered an issue. See stack trace (above) for the "
