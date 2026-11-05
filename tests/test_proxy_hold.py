@@ -38,8 +38,9 @@ UNITS = "qwen38-sglang.service qwen38-flash.service"
 class Engine(http.server.BaseHTTPRequestHandler):
     """SGLang as the proxy sees it: its info route, a generation in both dialects, /tokenize.
     The server's `mode` is "up" or "starting" (503, as SGLang answers while it loads) for
-    its generations, or "vllm-dead" (a stream whose EngineCore died: vLLM's error event, then its
-    clean end), `info_mode` the same for its info route; `pool` is what that route reports;
+    its generations, "vllm-dead" (a stream whose EngineCore died: vLLM's error event, then its
+    clean end), or "slow400" (a 400 whose body comes 2 s after its headers, /abort_request a 404),
+    `info_mode` the same for its info route; `pool` is what that route reports;
     `generations` lists what it was asked to generate."""
     protocol_version = "HTTP/1.1"
 
@@ -67,6 +68,16 @@ class Engine(http.server.BaseHTTPRequestHandler):
         body = self.rfile.read(int(self.headers.get("Content-Length") or 0))
         if self.server.mode == "starting":
             return self._empty(503)
+        if self.server.mode == "slow400":
+            if self.path == "/abort_request":
+                return self._empty(404)
+            out = json.dumps({"object": "error", "message": "bad request", "type": "BadRequestError",
+                              "code": 400}).encode()
+            self.send_response(400); self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(out))); self.end_headers(); self.wfile.flush()
+            time.sleep(2.0)                 # its headers out, its body late: the error's relay under way
+            self.wfile.write(out); self.wfile.flush()
+            return
         time.sleep(getattr(self.server, "delay", 0))
         if self.path == "/tokenize":
             return self._json(200, {"count": len(body) // 4})
@@ -372,6 +383,22 @@ class AStopReachesWhatItShould(unittest.TestCase):
         stopped, _ = box.mod.stop_generations("this test's Abort all", floor=False)
         self.assertEqual(stopped, 1, "the generation sent again after the engine's 503 was out of the stop's reach")
         self.assertTrue(reply.done.wait(15))
+
+    def test_an_engine_error_being_relayed_is_no_stop_target(self):
+        # its error's relay under way when a floor stop came: counted as stopped, it started the floor's episode, new
+        # generations held back 60 s for nothing, and its client got no answer (the 9th review of v1.43.0, 2026-11-05)
+        if not self.INPROC:
+            self.skipTest("the stop is made in this test's process")
+        box = self.box(state="active")
+        box.start_engine(mode="slow400")
+        reply = box.send(stream=False)
+        time.sleep(1.0)                                     # the 400's headers came, its body 1 s away
+        stopped, _ = box.mod.stop_generations("this test's memory floor", floor=True)
+        self.assertEqual(stopped, 0, "an engine's error being relayed was stopped")
+        self.assertIsNone(box.mod.floor_refusal(), "a floor that stopped nothing held new generations back")
+        self.assertTrue(reply.done.wait(15))
+        self.assertEqual(reply.status, 400, reply.raw[:200])
+        self.assertIn(b"bad request", reply.raw)
 
     def test_a_box_alone_reads_no_order_at_a_dead_streams_end(self):
         # nothing to tell and nothing to undo without a pair: every stream at a vLLM death read systemd at its end, all at
@@ -773,6 +800,9 @@ class AStopReachesWhatItShouldInProcess(AStopReachesWhatItShould):
 
     def test_a_box_alone_reads_no_order_at_a_dead_streams_end(self):
         super().test_a_box_alone_reads_no_order_at_a_dead_streams_end()
+
+    def test_an_engine_error_being_relayed_is_no_stop_target(self):
+        super().test_an_engine_error_being_relayed_is_no_stop_target()
 
 
 class AnAnswerIsRelayedTheMomentItComesInProcess(AnAnswerIsRelayedTheMomentItComes):

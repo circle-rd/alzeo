@@ -182,7 +182,9 @@ def fake_engine(name, model):
                                     # connection closed without an answer (an engine that died on it) ;
                                     # "vllm_dead_more": a stream whose EngineCore died, more events after it ;
                                     # "vllm_dead_late_order": its death, then ordered_now set, then a clean end ;
-                                    # "vllm_dead_late_order_cut": the same, then a cut, no end
+                                    # "vllm_dead_late_order_cut": the same, then a cut, no end ;
+                                    # "vllm_dead_ordered_then_cut": its death while its stop job runs, the job over
+                                    # (ordered_now False), then a cut
 
         def log_message(self, *a):
             pass
@@ -272,6 +274,16 @@ def fake_engine(name, model):
                 if Handler.mode == "vllm_dead_stream":  # its EngineCore died during the stream: its error event
                     part = b"data: " + VLLM_DEAD_EVENT + b"\n\n"
                     self.wfile.write(b"%x\r\n%s\r\n0\r\n\r\n" % (len(part), part)); self.wfile.flush()
+                    return
+                if Handler.mode == "vllm_dead_ordered_then_cut":
+                    Handler.ordered_now = True                  # its stop job runs at its death
+                    part = b"data: " + VLLM_DEAD_EVENT + b"\n\n"
+                    self.wfile.write(b"%x\r\n%s\r\n" % (len(part), part)); self.wfile.flush()
+                    time.sleep(0.4)
+                    Handler.ordered_now = False                 # the job over, the unit inactive
+                    time.sleep(0.3)
+                    self.close_connection = True
+                    self.connection.shutdown(socket.SHUT_RDWR)
                     return
                 if Handler.mode in ("vllm_dead_late_order", "vllm_dead_late_order_cut"):
                     part = b"data: " + VLLM_DEAD_EVENT + b"\n\n"   # its death; its stop job seen after it
@@ -3303,12 +3315,27 @@ class TwoBoxesServeOneModel(PairFixture, unittest.TestCase):
         self.addCleanup(setattr, m, "unit_stopping_by_order", saved)
         self.E1.mode = "vllm_dead_late_order"
         r = dict(self.turns("conv-local-late-order", 1)[0], stream=True)
-        st, out, _ = self.call("/v1/chat/completions", r)
-        self.assertEqual(st, 200, out[:300])
-        self.assertIn(b"EngineCore", out)
+        raw = json.dumps(r).encode()
+        fp = m.body_fingerprint(raw, "/v1/chat/completions")
+        c = http.client.HTTPConnection("127.0.0.1", self.port1, timeout=30)
+        self.addCleanup(c.close)
+        c.request("POST", "/v1/chat/completions", raw,
+                  {"Content-Type": "application/json", "Authorization": f"Bearer {KEY_1}"})
+        resp = c.getresponse()
+        self.assertEqual(resp.status, 200)
+        got = b""
+        while b"EngineCore" not in got:
+            b = resp.read1(65536)
+            if not b:
+                break
+            got += b
+        self.assertIn(b"EngineCore", got)
+        # the premise: bound at the death, its order not seen yet; unread, the test passed whenever the death came after
+        # the order (the 9th review of v1.43.0, 2026-11-05)
+        self.assertEqual(m.killer_box(fp), "", "the test needs the request bound at the death")
+        got += resp.read()                                                      # its clean end
         self.assertIn("conv-local-late-order-0", self.E1.users, "the test needs this box's engine to have it")
-        self.assertIsNone(m.killer_box(m.body_fingerprint(json.dumps(r).encode(), "/v1/chat/completions")),
-                          "an order shown at the stream's end left the request bound")
+        self.assertIsNone(m.killer_box(fp), "an order shown at the stream's end left the request bound")
 
     def test_a_death_here_whose_order_shows_before_a_cut_is_unbound(self):
         # the same death, its stop job seen after it, then the server killed: the binding was undone at a clean end only,
@@ -3327,6 +3354,45 @@ class TwoBoxesServeOneModel(PairFixture, unittest.TestCase):
         c.request("POST", "/v1/chat/completions", raw,
                   {"Content-Type": "application/json", "Authorization": f"Bearer {KEY_1}"})
         resp = c.getresponse()
+        fp = m.body_fingerprint(raw, "/v1/chat/completions")
+        got = b""
+        try:
+            while True:
+                b = resp.read1(65536)
+                if not b:
+                    break
+                got += b
+                if b"EngineCore" in b:
+                    # the premise: bound at the death, its order not seen yet (the 9th review of v1.43.0)
+                    self.assertEqual(m.killer_box(fp), "", "the test needs the request bound at the death")
+        except (OSError, http.client.HTTPException):
+            pass                                                                # cut, as its engine's end was
+        c.close()
+        self.assertIn(b"EngineCore", got)
+        self.assertIn("conv-local-late-order-cut-0", self.E1.users, "the test needs this box's engine to have it")
+        deadline = time.monotonic() + 3
+        while m.killer_box(fp) is not None and time.monotonic() < deadline:
+            time.sleep(0.1)
+        self.assertIsNone(m.killer_box(fp), "an order shown before the stream's cut left the request bound")
+
+    def test_a_death_whose_own_read_saw_the_order_stays_unbound_at_the_cut(self):
+        # its death came while its stop job ran (nothing bound), the cut was read once the job was over: the cut bound
+        # it 10 minutes, as if an engine had died on it (the 9th review of v1.43.0, 2026-11-05)
+        if not self.INPROC:
+            self.skipTest("the binding is read in this test's process")
+        m = self.mod
+        self.addCleanup(m._KILLERS.clear)
+        saved = m.unit_stopping_by_order
+        m.unit_stopping_by_order = lambda: self.E1.ordered_now
+        self.addCleanup(setattr, m, "unit_stopping_by_order", saved)
+        self.E1.mode = "vllm_dead_ordered_then_cut"
+        r = dict(self.turns("conv-ordered-then-cut", 1)[0], stream=True)
+        raw = json.dumps(r).encode()
+        c = http.client.HTTPConnection("127.0.0.1", self.port1, timeout=30)
+        self.addCleanup(c.close)
+        c.request("POST", "/v1/chat/completions", raw,
+                  {"Content-Type": "application/json", "Authorization": f"Bearer {KEY_1}"})
+        resp = c.getresponse()
         got = b""
         try:
             while True:
@@ -3335,15 +3401,47 @@ class TwoBoxesServeOneModel(PairFixture, unittest.TestCase):
                     break
                 got += b
         except (OSError, http.client.HTTPException):
-            pass                                                                # cut, as its engine's end was
-        c.close()
+            pass                                                                # cut
         self.assertIn(b"EngineCore", got)
-        self.assertIn("conv-local-late-order-cut-0", self.E1.users, "the test needs this box's engine to have it")
+        self.assertIn("conv-ordered-then-cut-0", self.E1.users, "the test needs this box's engine to have it")
+        time.sleep(0.5)
+        self.assertIsNone(m.killer_box(m.body_fingerprint(raw, "/v1/chat/completions")),
+                          "a death its own read saw ordered was bound at the cut")
+
+    def test_a_cut_is_bound_before_its_client_sees_it(self):
+        # an engine that dies with no death event (a crash): its connection was shut, then systemd read again and the
+        # request bound, a quick retry arriving unbound meanwhile, free to reach the other box (decision 1019; the 9th
+        # review of v1.43.0, 2026-11-05). systemd is slow here, as under the memory pressure that ends engines
+        if not self.INPROC:
+            self.skipTest("the binding is read in this test's process")
+        m = self.mod
+        self.addCleanup(m._KILLERS.clear)
+        saved = m.unit_stopping_by_order
+        reads = []
+
+        def slow():
+            reads.append(1)
+            time.sleep(1.0)
+            return False
+        m.unit_stopping_by_order = slow
+        self.addCleanup(setattr, m, "unit_stopping_by_order", saved)
+        self.E1.mode = "cut"
+        r = dict(self.turns("conv-cut-bound", 1)[0], stream=True)
+        raw = json.dumps(r).encode()
         fp = m.body_fingerprint(raw, "/v1/chat/completions")
-        deadline = time.monotonic() + 3
-        while m.killer_box(fp) is not None and time.monotonic() < deadline:
-            time.sleep(0.1)
-        self.assertIsNone(m.killer_box(fp), "an order shown before the stream's cut left the request bound")
+        c = http.client.HTTPConnection("127.0.0.1", self.port1, timeout=30)
+        self.addCleanup(c.close)
+        c.request("POST", "/v1/chat/completions", raw,
+                  {"Content-Type": "application/json", "Authorization": f"Bearer {KEY_1}"})
+        resp = c.getresponse()
+        try:
+            while resp.read1(65536):
+                pass
+        except (OSError, http.client.HTTPException):
+            pass                                                                # cut: its client retries now
+        self.assertIn("conv-cut-bound-0", self.E1.users, "the test needs this box's engine to have it")
+        self.assertEqual(m.killer_box(fp), "", "the cut reached its client before the request was bound")
+        self.assertEqual(len(reads), 1, "the cut read systemd more than once")
 
     def test_an_order_said_while_the_watch_binds_leaves_nothing_bound(self):
         # the watch read no order and bound; the order, read between the two, undid a binding not made yet, and the note
@@ -4166,6 +4264,12 @@ class TwoBoxesServeOneModelInProcess(TwoBoxesServeOneModel):
 
     def test_an_order_said_while_the_watch_binds_leaves_nothing_bound(self):
         super().test_an_order_said_while_the_watch_binds_leaves_nothing_bound()
+
+    def test_a_death_whose_own_read_saw_the_order_stays_unbound_at_the_cut(self):
+        super().test_a_death_whose_own_read_saw_the_order_stays_unbound_at_the_cut()
+
+    def test_a_cut_is_bound_before_its_client_sees_it(self):
+        super().test_a_cut_is_bound_before_its_client_sees_it()
 
     def test_a_death_here_whose_order_shows_before_a_cut_is_unbound(self):
         super().test_a_death_here_whose_order_shows_before_a_cut_is_unbound()

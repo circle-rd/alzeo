@@ -6205,8 +6205,8 @@ class H(BaseHTTPRequestHandler):
         self._shut_upstream()
 
     def _take_whole_answer(self, resp):
-        """A finished answer that is not a stream (not SSE, not NDJSON) is no stop target from the moment the engine gives
-        it (stop_generations): set under _GEN_LOCK, where the stop marks its targets, so a stop either marked it before
+        """A finished answer that is not a stream (not SSE, not NDJSON), the engine's error included, is no stop target
+        from the moment the engine gives it, until the request's next try (_forward) (stop_generations): set under _GEN_LOCK, where the stop marks its targets, so a stop either marked it before
         or never will. Set at its relay, the keeper's join left a window where a floor stop cut a finished answer and
         started its episode, and a stop on vLLM shut its upstream mid-body (the 7th review of v1.43.0, 2026-11-04)."""
         ctype = (resp.headers.get("Content-Type") or "") if resp is not None else ""
@@ -6838,19 +6838,22 @@ class H(BaseHTTPRequestHandler):
                 # 2026-10-01).
                 # read once, and only where it says something: a hop's box tells the other box, and this box's own
                 # client's request, bound at a death by a read of systemd that saw no stop yet, is unbound when the
-                # stop shows at the cut, as at a clean end (the 8th review of v1.43.0, 2026-11-05)
+                # stop shows at the cut, as at a clean end (the 8th review of v1.43.0, 2026-11-05). With no death
+                # before, it is bound here, before the cut its client sees and retries on at once (1019): bound after
+                # it, on a second read, a retry could reach the other box meanwhile; and a death read already decided,
+                # its order seen then binding nothing whatever the read at the cut says (the 9th review)
                 ordered = bool(self._pair_hop() or getattr(self, "_killer_fp", None)) and unit_stopping_by_order()
                 if ordered and self._pair_hop():
                     self._say_ended_by_order()  # its lane stopped by order: the other box binds nothing (1031)
                 elif ordered and died:
                     killer_forget(self._killer_fp, "")
+                elif not died:
+                    self._killed_here(ordered)  # it died during its answer (decision 1019)
                 self.close_connection = True
                 try: self.connection.shutdown(socket.SHUT_RDWR)
                 except Exception: pass
                 try: resp.close()
                 except Exception: pass
-                if not ordered:
-                    self._killed_here()         # it died during its answer (decision 1019)
                 self._done("UPSTREAM CUT"); return
             now = time.time() - self._t0
             if self._first is None: self._first = now
@@ -7569,14 +7572,15 @@ class H(BaseHTTPRequestHandler):
         self._done("503 pair own key unreadable")
         return True
 
-    def _killed_here(self):
+    def _killed_here(self, ordered=None):
         """This box's engine closed the connection on this request, before its answer or during it (decision 1019):
         a request that took it down, sent again, goes nowhere else for PAIR_KILLER_KEEP_S. Its death during the
-        answer bound nothing, and the client's retry went to the other engine (found in review, 2026-11-04)."""
+        answer bound nothing, and the client's retry went to the other engine (found in review, 2026-11-04). ordered:
+        what the caller read of systemd just before (unit_stopping_by_order), read here when not given."""
         fp = getattr(self, "_killer_fp", None)
         if not fp or PAIR_KILLER_KEEP_S <= 0 or getattr(self, "_stop_why", None):
             return                          # nothing to note (a hop, a box alone), or stopped by this proxy (Abort all, the floor)
-        if unit_stopping_by_order():
+        if unit_stopping_by_order() if ordered is None else ordered:
             return                          # stopped by an order to its unit (decisions 1030 and 1041)
         # "" is this box, whatever its pair.json says: its name, read here, made a binding of its own a box that left
         # the pair once pair.json was gone (the delta's 3rd review, 2026-11-04)
@@ -8101,6 +8105,10 @@ class H(BaseHTTPRequestHandler):
             # while the box is short of memory (floor_refusal)
             with _GEN_LOCK:
                 _GENERATIONS.add(self)
+                # each try a stop target again, until its answer: the flag an error of the try before set (a 503 held,
+                # then sent again) kept the generation sent again out of every stop's reach, and on SGLang a stopped
+                # Anthropic stream ended in end_turn as if whole (the 8th and 9th reviews of v1.43.0, 2026-11-05)
+                self._relaying_whole = False
             if (floor_refusal() is not None and getattr(self, "_pair_alt", None)
                     and self._pair_take_over(body, "this box is short of memory")):
                 return None                 # the other box of a pair that serves its model took it (v6.52)
@@ -8211,10 +8219,10 @@ class H(BaseHTTPRequestHandler):
             keeper.start()
         try:
             resp, herr, cerr = self._open(body)
-            # its answer only: an error (herr) is no answer relayed whole, and on a 502, 503 or 504 the request is held
-            # and sent again (role 6), its retried generation then out of every stop's reach, a cut answer reaching an
-            # Anthropic client as whole (v6.47's bug; the 8th review of v1.43.0, 2026-11-05)
-            self._take_whole_answer(resp)
+            # the engine's answer, or its error: neither generates any more. A stop that cut an error's relay held new
+            # generations back 60 s for nothing and gave its client no answer (the 9th review of v1.43.0, 2026-11-05);
+            # the flag is reset at each try (_forward), where on a 503 held and sent again it outlived its answer
+            self._take_whole_answer(resp or herr)
         finally:
             done.set()                      # headers, or an error: the generation is over
             if keeper is not None:
