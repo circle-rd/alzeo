@@ -312,6 +312,7 @@ class FloorStop(unittest.TestCase):
         mod = self.mod
         mod._rid_override_honoured = True
         mod._SERVED.update(names=(), engine="", ts=0.0)
+        mod._STOP_WINDOW["until"] = 0.0     # no stop under way left by the test before (v1.44.0)
         # The box's own memory never decides here: the floor is off unless a test sets it. Read with
         # getattr, so that on a proxy without the stop each test fails on what it checks, not here.
         if hasattr(mod, "_FLOOR"):

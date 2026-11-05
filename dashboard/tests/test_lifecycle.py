@@ -715,6 +715,7 @@ class FeedOutcomes(unittest.TestCase):
         "ok non-sse": "ok",
         "ok non-sse CORRUPTED": "ok",
         "CLIENT GONE on write": "gone",
+        "CLIENT TOO SLOW": "fail",           # v1.44.0: its client read nothing while 32 MiB waited
         "CLIENT GONE during keepalive": "gone",
         # v6.25: the caller of a non-streamed answer left while the engine worked; the
         # proxy ended the upstream and the engine dropped the request itself
