@@ -6736,6 +6736,7 @@ class H(BaseHTTPRequestHandler):
 
         q = queue.Queue(maxsize=1024)
         self._relay_q = q                   # v6.47: a stop wakes the loop below through it
+        self._end_read = None               # "death" or "cut" once the pump read it (the 13th review of v1.43.0)
         stop = threading.Event()
         drain = threading.Event()
         drain_t0 = [0.0]
@@ -6744,9 +6745,9 @@ class H(BaseHTTPRequestHandler):
             # keepalive can therefore never land in the middle of an event
             # (v6.4 bug: keepalive chunk injected mid-JSON-line, corrupt stream)
             buf = b""
-            def put(rec):
+            def put(rec, kind="d"):
                 while not stop.is_set() and not drain.is_set():
-                    try: q.put(("d", rec), timeout=2); return True
+                    try: q.put((kind, rec), timeout=2); return True
                     except queue.Full: continue
                 return False
             try:
@@ -6771,16 +6772,24 @@ class H(BaseHTTPRequestHandler):
                         i = buf.find(b"\n\n")
                         if i < 0: break
                         rec = buf[:i+2]; buf = buf[i+2:]
+                        # its engine's end out of every stop's reach as it is read here, not once the relay takes it
+                        # from the queue, behind as many events as a slow client left there: a death then reached its
+                        # client as a stop and stayed unbound, a hop's said to be an order, and an answer whole at its
+                        # engine was cut (the 13th review of v1.43.0, 2026-11-05)
+                        if b"EngineCore" in rec and ENGINE_DIED_RE.search(rec):
+                            self._end_read = "death"
+                            self._generates_no_more()
+                        elif rec.startswith((b"data: [DONE]", b"event: message_stop")):
+                            self._generates_no_more()
                         if not put(rec): break
             except Exception as e:
                 if not stop.is_set() and not drain.is_set():
+                    self._end_read = "cut"
                     self._generates_no_more()       # cut by its engine: out of every stop's reach from now
-                    # put until the relay takes it, as the end below is: put once with 5 s to wait, it was dropped
-                    # when the queue stayed full that long (a client that read nothing), and the end that followed
-                    # closed the client's stream as whole on a cut answer (the 12th review of v1.43.0, 2026-11-05)
-                    while not stop.is_set() and not drain.is_set():
-                        try: q.put(("e", str(e).encode()), timeout=2); break
-                        except queue.Full: pass
+                    # put until the relay takes it, as every event is: put once with 5 s to wait, it was dropped when
+                    # the queue stayed full that long (a client that read nothing), and the end that followed closed
+                    # the client's stream as whole on a cut answer (the 12th review of v1.43.0, 2026-11-05)
+                    put(str(e).encode(), "e")
             finally:
                 # an if and its else, not a return: a return in a finally swallows what is
                 # raising, and Python 3.14 warns of it at compile time (PEP 765)
@@ -6816,6 +6825,21 @@ class H(BaseHTTPRequestHandler):
         ka_bytes = KA_ANTHROPIC if anthropic else KA_OPENAI
         silence = 0.0
         died = False                        # vLLM ended the stream on its engine's death: no "ok" (the delta's review)
+
+        def client_gone(outcome):
+            # gone before the relay reached a death or a cut the pump read, still in the queue behind what its client
+            # did not read: decided now, as it would have been there, or a real death stayed unbound and the client's
+            # retry was free to reach the other box (decision 1019; the 13th review of v1.43.0, 2026-11-05)
+            nonlocal died
+            read = getattr(self, "_end_read", None)
+            if read == "death" and not died:
+                self._killed_here()
+                died = True
+            elif read == "cut":
+                self._engine_cut(died)
+            if died:
+                self._unbind_if_ordered_later()
+            drop_upstream(); self._done(outcome)
         while True:
             if getattr(self, "_stop_why", None):
                 # v6.47: the memory floor stopped this generation: stopped upstream, its client cut
@@ -6837,9 +6861,7 @@ class H(BaseHTTPRequestHandler):
                     self._finish(); self._done("DROPPED upstream silent"); return
                 try: self._chunk(ka_bytes)
                 except Exception:
-                    if died:
-                        self._unbind_if_ordered_later()
-                    drop_upstream(); self._done("CLIENT GONE during keepalive"); return
+                    client_gone("CLIENT GONE during keepalive"); return
                 continue
             if kind == "f":
                 break
@@ -6864,7 +6886,6 @@ class H(BaseHTTPRequestHandler):
             if self._first is None: self._first = now
             self._last = now; self._bytes += len(val)
             if b"EngineCore" in val and ENGINE_DIED_RE.search(val):
-                self._generates_no_more()   # dead: out of every stop's reach before systemd is read below
                 self._killed_here()         # vLLM's engine died during this answer (decision 1019)
                 died = True
                 if self._pair_hop() and unit_stopping_by_order():
@@ -6898,9 +6919,7 @@ class H(BaseHTTPRequestHandler):
             self._watch_tools(val, anthropic)
             try: self._chunk(val)
             except Exception:
-                if died:
-                    self._unbind_if_ordered_later()
-                drop_upstream(); self._done("CLIENT GONE on write"); return
+                client_gone("CLIENT GONE on write"); return
         if died and not getattr(self, "_said_ended", False) \
                 and (self._pair_hop() or getattr(self, "_killer_fp", None)) and unit_stopping_by_order():
             # read again at the stream's clean end: vLLM ends a dead stream cleanly ([DONE]), and a stop job not seen yet
@@ -7606,8 +7625,9 @@ class H(BaseHTTPRequestHandler):
             self._killed_here(ordered)      # it died during its answer (decision 1019)
 
     def _generates_no_more(self):
-        """Its engine's end is known (its death said in its stream, its cut, its stream's end): out of every stop's reach
-        from here, where a stop counted it as stopped, started the floor's episode for nothing, and cut it as stopped.
+        """Its engine's end is known (its death said in its stream, its cut, its stream's end, read as the SSE pump reads
+        them): out of every stop's reach from here, where a stop counted it as stopped, started the floor's episode for
+        nothing, and cut it as stopped.
         Left in until the cut was handled (the 11th review), it was still in reach during the systemd reads at a death
         and at a dead stream's clean end, and while the relay wrote the last events to a slow client: an engine's cut
         then reached its client as a stop, and was left unbound; a hop's real death relayed, a floor stop after it had
