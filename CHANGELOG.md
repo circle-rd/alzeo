@@ -113,11 +113,15 @@ the order's line on the Ollama routes could follow a line over 64 KiB with no li
 fixed here too. A request whose first try got the engine's 503, held and sent again, was out of every stop's reach:
 the engine's error took it for an answer relayed whole, and on SGLang a stopped Anthropic stream then ended as if
 whole, the fault v1.40.3 fixed. The cockpit removed a recovery's mark when systemd did not answer, the very case the
-mark is kept for, and once the restart's stop was done, when systemd's job reads "start". A mark expired during a stop
-slower than 2 minutes: it counts now from the moment the unit left active, which systemd sets once. A request of the
-box's own client stayed bound when its dead stream ended cut after the stop showed, not cleanly. And a box alone read
-systemd at the end of each dead stream, for nothing. tests/test_proxy_pair.py has two boxes that serve the 27B from
-their start, each rule its test, and each test fails on v1.42.1 or on the commit before its fix.
+mark is kept for, and once the restart's stop was done, when systemd's job reads "start". A mark stopped counting
+during a stop slower than 2 minutes: the moment the unit left active, which systemd sets once, counts now beside its
+last state change. A request of the box's own client stayed bound when its dead stream ended cut after the stop
+showed, not cleanly. And a box alone read systemd at the end of each dead stream, for nothing. A ninth review found
+three more faults in the binding at a cut, fixed here too: a cut bound its request only after its client saw it, a
+quick retry free to reach the other box meanwhile, read systemd twice for it, and bound a death whose own read had
+seen its lane's stop. tests/test_proxy_pair.py has two boxes that serve the 27B from their start, each rule its test
+there or in the proxy's and the cockpit's other test files, and each test fails on v1.42.1 or on the commit before its
+fix.
 
 **Ollama clients get their stream as it comes.** The proxy relayed every answer that is not SSE in blocks of 64 KiB,
 so a client of the Ollama routes (`/api/chat`, `/api/generate`) got its NDJSON stream in bursts, most answers whole at

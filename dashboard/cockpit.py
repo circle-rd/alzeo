@@ -2367,7 +2367,7 @@ def restart_due(unit: str, invocation: str) -> bool:
     systemctl that failed after PID 1 took the job (sd-bus's timeout under memory pressure) restarted it all the same, and
     its mark, removed, let that restart read as an order (the 7th review of v1.43.0, 2026-11-04). Its silence read as no
     restart removed the mark in that very case (the 8th review, 2026-11-05): kept, a mark counts only for a restart that
-    leaves active within RECOVERY_START_S of it (keepalive-proxy.py)."""
+    leaves active, or changes the unit's state, within RECOVERY_START_S of it (keepalive-proxy.py)."""
     jobs = run(["systemctl", "list-jobs", "--no-legend", "--no-pager", unit])
     if not answered(jobs):
         return True

@@ -132,7 +132,8 @@ list was read): the entry then serves it itself.
     run it restarts to recover it, in ~/.config/qwen38/recovery-restarts.json (decision 1049): the job that runs
     the restart writes it just before its systemctl and removes it when that fails, unless systemd took the
     restart all the same or does not answer. The proxy takes a mark for the restart it was written for only,
-    the unit leaving active within 2 minutes of it, and none older than 10 minutes (decision 1062). A request whose client
+    the unit leaving active, or changing state, within 2 minutes of it, and none older than 10 minutes
+    (decision 1062). A request whose client
     left at a death the other box relayed is bound at once, and unbound if that box says within 5 s that it
     ended the request by order (decisions 1054 and 1061), which it says at the stream's end too when its lane's
     stop showed only then. A request of the entry's own client, bound at a death of its engine, is unbound the
