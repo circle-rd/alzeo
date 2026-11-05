@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Keepalive proxy in front of SGLang or vLLM (v6.52). No content logging, and the only
+"""Keepalive proxy in front of SGLang or vLLM (v6.53). No content logging, and the only
 rewriting is the tool-schema guard (role 4); two routes, POST /v1/systemone (role 5) and the
 operator's POST /proxy/stop (role 7), are answered here instead of relayed.
 
@@ -59,6 +59,12 @@ Ten roles, nothing else:
    lists every box's models (see "Two boxes behind one endpoint" below). A model both boxes serve is
    shared: a conversation stays on the box that holds its prefix, a new one goes to the box with the
    fewest requests in flight (v6.52, docs/pair.md).
+
+v6.53: a request's binding (decision 1019) undone by an order said after the death gives back the binding its
+fingerprint had before, where it erased the one an earlier death of the same body had made; a death the other box
+relays is bound as it is relayed, where the watch bound it once it saw the client gone, a retry within its second
+unbound; on the Ollama routes, an order line split where the client left is read whole, and the line end the other
+box puts before its order line stays at the entry (the 8th review of v1.43.0, 2026-11-05).
 
 v6.52: two boxes that serve one model share its requests (role 10, decisions 996 to 998). A request
 for a model this box serves, which the other box of its pair serves too, goes to the box it shares its
@@ -991,27 +997,34 @@ def killer_note(fp, box):
     """The engine of box ("" for this box, whatever its pair.json says: _killed_here) closed the connection on the
     request of fingerprint fp: its body as routing saw it (_pair_routed), never a body this proxy rewrote since (a tool
     schema, a reasoning effort, the served name), whose fingerprint the client's retry never matched (found in review,
-    2026-11-04)."""
+    2026-11-04). Returns the binding it replaced, (box, until) or None: what undoing this one gives back
+    (killer_forget)."""
     if not fp or PAIR_KILLER_KEEP_S <= 0:
-        return
+        return None
     now = time.monotonic()
     with _KILLERS_LOCK:
         for old in [k for k, (_, until) in _KILLERS.items() if until <= now]:
             del _KILLERS[old]               # ended: they only took room among the PAIR_KILLER_MAX kept
-        _KILLERS.pop(fp, None)
+        before = _KILLERS.pop(fp, None)
         _KILLERS[fp] = (box, now + PAIR_KILLER_KEEP_S)
         while len(_KILLERS) > PAIR_KILLER_MAX:
             _KILLERS.popitem(last=False)
+    return before
 
 
-def killer_forget(fp, box):
+def killer_forget(fp, box, before=None):
     """The binding of fingerprint fp to box undone: an order said after the death that made it (decisions 1054 and 1061),
-    an order a clean end showed after a death here (_relay_inner)."""
+    an order a clean end or a cut showed after a death here (_relay_inner). before: the binding fp had before the
+    request undone now first bound it (killer_note), given back while it lasts: an order that ended a retry erased the
+    binding an earlier real death of the same body had made, and the next retry could take this box's engine down too
+    (decision 1019; the 8th review of v1.43.0, 2026-11-05)."""
     if not fp:
         return
     with _KILLERS_LOCK:
         if (_KILLERS.get(fp) or (None,))[0] == box:
             del _KILLERS[fp]
+            if before is not None and before[1] > time.monotonic():
+                _KILLERS[fp] = before
 
 
 def peer_may_serve(conf, name):
@@ -6893,7 +6906,7 @@ class H(BaseHTTPRequestHandler):
             if self._pair_hop():
                 self._say_ended_by_order()
             else:
-                killer_forget(getattr(self, "_killer_fp", None), "")
+                self._unbind_killer("")
         self._finish()
         try: resp.close()          # the pump thread already ended at EOF; without this
         except Exception: pass    # the socket waits for the refcount (or cyclic GC)
@@ -6909,6 +6922,7 @@ class H(BaseHTTPRequestHandler):
         self._prompt_fp = None                                                         # role 9
         self._pair_alt = None                                                          # role 10, decision 998
         self._killer_fp = None                                                         # role 10, decision 1019
+        self._killer_bound, self._killer_before = False, None                         # and what it was bound to before
         self._pair_here_count = None                                                   # role 10, the tile
         self._answer_hit = False; self._answer_tail = b""; self._tool_last = {}; self._tool_seq = 0
         n0 = self.headers.get("Content-Length") or "0"
@@ -7586,7 +7600,7 @@ class H(BaseHTTPRequestHandler):
         if ordered and hop:
             self._say_ended_by_order()      # its lane stopped by order: the other box binds nothing (1031)
         elif ordered and died:
-            killer_forget(fp, "")
+            self._unbind_killer("")         # the binding before it given back (decision 1019)
         elif not died:
             self._killed_here(ordered)      # it died during its answer (decision 1019)
 
@@ -7602,7 +7616,18 @@ class H(BaseHTTPRequestHandler):
             return                          # stopped by an order to its unit (decisions 1030 and 1041)
         # "" is this box, whatever its pair.json says: its name, read here, made a binding of its own a box that left
         # the pair once pair.json was gone (the delta's 3rd review, 2026-11-04)
-        killer_note(fp, "")
+        self._bind_killer("")
+
+    def _bind_killer(self, box):
+        """Decision 1019 for this request: its fingerprint bound to box, and what it was bound to before this request's
+        first binding kept, which _unbind_killer gives back (the 8th review of v1.43.0, 2026-11-05)."""
+        before = killer_note(self._killer_fp, box)
+        if not self._killer_bound:
+            self._killer_bound, self._killer_before = True, before
+
+    def _unbind_killer(self, box):
+        """This request's binding to box undone, an order said after it: the binding before it comes back."""
+        killer_forget(self._killer_fp, box, self._killer_before)
 
     def _pair_lost(self, pick, name, conf, local):
         """A 503 for a request box pick had whole and closed the connection on with no answer: it is not run here
@@ -7746,7 +7771,6 @@ class H(BaseHTTPRequestHandler):
         log(f"{self._peer} -> pair {peer['name']} for {name}")
         done, left = threading.Event(), threading.Event()
         self._pair_drain = False            # set once the other box relayed its engine's death (decision 1054)
-        self._pair_ordered = False          # set once it said it ended the request by order (decision 1031)
 
         def watch():
             # the caller of an answer that is not streamed yet hears nothing: when it leaves,
@@ -7758,18 +7782,14 @@ class H(BaseHTTPRequestHandler):
                 if left.is_set() or self._client_left():
                     left.set()
                     if self._pair_drain:
-                        # a death relayed to it, its client gone: bound now, its retry comes within a second (1019),
-                        # and the relay reads on up to PAIR_ORDER_GRACE_S for an order the other box says after the
-                        # death, which undoes the binding (decisions 1054 and 1061). Shut at once, the order was never
-                        # read (the 6th review); left open with no bound and unbound, a box gone silent kept it 60 s
-                        # while its retry ran on this box's engine (the 7th review of v1.43.0, 2026-11-04)
+                        # a death relayed to it, bound as it was relayed (1019), its client gone: the relay reads on up
+                        # to PAIR_ORDER_GRACE_S for an order the other box says after the death, which undoes the
+                        # binding (decisions 1054 and 1061). Shut at once, the order was never read (the 6th review);
+                        # left open with no bound, a box gone silent kept it 60 s (the 7th review of v1.43.0). Bound
+                        # here when the client's leaving was seen, a retry within the second of this watch went
+                        # unbound (the 8th review, 2026-11-05)
                         if seen_gone is None:
                             seen_gone = time.monotonic()
-                            if not self._pair_ordered:
-                                killer_note(self._killer_fp, peer["name"])
-                                if self._pair_ordered:
-                                    # said between the read and the note: the relay's undoing came first
-                                    killer_forget(self._killer_fp, peer["name"])
                         if time.monotonic() - seen_gone < PAIR_ORDER_GRACE_S:
                             continue
                     sock = getattr(getattr(req, "upstream", None), "kept_sock", None)
@@ -7825,7 +7845,7 @@ class H(BaseHTTPRequestHandler):
                     self._done("502 pair answer too large"); return None
                 if not ordered and ((e.code == 502 and b'"upstream_closed"' in data)
                                     or (e.code == 500 and ENGINE_DIED_RE.search(data))):
-                    killer_note(self._killer_fp, peer["name"])                          # decision 1019
+                    self._bind_killer(peer["name"])                                     # decision 1019
                 if e.code == 409 and b'"model_not_served"' in data:
                     # another model, or the same one from another checkpoint (1018), which it still serves: its row
                     # keeps the name then; dropped, peer_may_serve said no box served it (the 6th review of v1.43.0)
@@ -7865,7 +7885,7 @@ class H(BaseHTTPRequestHandler):
                 refused = isinstance(e, ssl.SSLError) and bool(_TLS_REFUSED.search(str(getattr(e, "reason", "") or "")))
                 had = not isinstance(e, urllib.error.URLError) and not refused
                 if had:
-                    killer_note(self._killer_fp, peer["name"])                          # decision 1019
+                    self._bind_killer(peer["name"])                                     # decision 1019
                 log(f"{self._peer} pair: {peer['name']} "
                     + (f"had the request and closed the connection with no answer ({why})" if had
                        else f"refused this box's certificate: is this box still in its pair.json? ({why})" if refused
@@ -7891,7 +7911,7 @@ class H(BaseHTTPRequestHandler):
                         if left.is_set():
                             self._done("CLIENT GONE during pair"); return None
                         log(f"{self._peer} pair: {peer['name']} cut its answer short ({type(e).__name__})")
-                        killer_note(self._killer_fp, peer["name"])          # it died during its answer (1019)
+                        self._bind_killer(peer["name"])                     # it died during its answer (1019)
                         self._pair_refuse(502, "upstream_cut", f"box {peer['name']} cut its answer short",
                                           pair_served_map(conf, local))
                         self._done("UPSTREAM CUT pair"); return None
@@ -7927,27 +7947,27 @@ class H(BaseHTTPRequestHandler):
                 recent = b""                # the last bytes read: an order split across two reads is read whole
 
                 def undone():
-                    killer_forget(self._killer_fp, peer["name"])
-                    log(f"{self._peer} pair: its client gone at a death {peer['name']} relayed, which {peer['name']} "
-                        f"said it ended by order: its binding is undone (decision 1054)")
+                    self._unbind_killer(peer["name"])
+                    log(f"{self._peer} pair: a death {peer['name']} relayed, which {peer['name']} said it ended by "
+                        f"order: its binding is undone (decision 1054)")
 
                 def said_order():
                     nonlocal ordered
                     if not ordered:
-                        ordered = self._pair_ordered = True
-                        if died and left.is_set():
-                            undone()        # the watch bound it when its client left (decision 1061)
+                        ordered = True
+                        if died:
+                            undone()        # bound as the death was relayed (decision 1061)
 
                 def gone():
                     nonlocal ordered
                     if died and not ordered:
-                        # its client gone at the death it relayed (the SDKs raise on that event): bound at once, its retry
-                        # comes within a second (1019), then what the other box still sends is read, never relayed, up to
-                        # PAIR_ORDER_GRACE_S, and an order it says after the death undoes the binding (decisions 1054 and
-                        # 1061). Waiting to bind let the retry run on this box's engine (the 7th review of v1.43.0)
-                        killer_note(self._killer_fp, peer["name"])
-                        if self._order_after(resp, sock, recent):
-                            ordered = self._pair_ordered = True
+                        # its client gone at the death it relayed (the SDKs raise on that event), bound as it was
+                        # relayed (1019): what the other box still sends is read, never relayed, up to
+                        # PAIR_ORDER_GRACE_S, and an order it says after the death undoes the binding (decisions 1054
+                        # and 1061). An NDJSON line held back (part) is read with it: an order line split there went
+                        # unread (the 8th review of v1.43.0, 2026-11-05)
+                        if self._order_after(resp, sock, recent + part):
+                            ordered = True
                             undone()
                     self._done("CLIENT GONE during pair")
                 while True:
@@ -7964,7 +7984,7 @@ class H(BaseHTTPRequestHandler):
                             f"the client's is cut too, not ended"
                             + (f"; {peer['name']} ended it by order, nothing is bound (decision 1031)" if ordered else ""))
                         if not ordered:
-                            killer_note(self._killer_fp, peer["name"])      # it died during its answer (1019)
+                            self._bind_killer(peer["name"])                 # it died during its answer (1019)
                         self.close_connection = True
                         try: self.connection.shutdown(socket.SHUT_RDWR)
                         except Exception: pass
@@ -7978,8 +7998,13 @@ class H(BaseHTTPRequestHandler):
                         b, part = whole_lines(part, b)
                         if HOP_ENDED_NDJSON in b:
                             pieces = b.split(b"\n")    # its last piece: b"", or a line that never ends
-                            kept = [ln for ln in pieces[:-1] if ln + b"\n" != HOP_ENDED_NDJSON]
-                            if len(kept) < len(pieces) - 1:
+                            orders = {i for i, ln in enumerate(pieces[:-1]) if ln + b"\n" == HOP_ENDED_NDJSON}
+                            # and the line end that box puts before its order line after a line of the answer it relayed
+                            # unended (over 64 KiB): relayed, it gave the client half a line as whole (the 8th review of
+                            # v1.43.0, 2026-11-05)
+                            kept = [ln for i, ln in enumerate(pieces[:-1])
+                                    if i not in orders and not (ln == b"" and i + 1 in orders)]
+                            if orders:
                                 said_order()
                             b = b"".join(ln + b"\n" for ln in kept) + pieces[-1]
                         if not b:
@@ -7992,8 +8017,13 @@ class H(BaseHTTPRequestHandler):
                     # words inside an Ollama tool call's arguments, a raw object (the 7th review of v1.43.0)
                     if (HOP_CLOSED_B in seen or (b"EngineCore" in seen and ENGINE_DIED_RE.search(seen))) if sse \
                             else ndjson_death(b):
+                        if not died and not ordered:
+                            # bound as it is relayed (1019): bound when its client's leaving was seen, a retry within the
+                            # second of the watch went unbound (the 8th review of v1.43.0, 2026-11-05); an order the
+                            # other box says after the death undoes it (said_order, gone)
+                            self._bind_killer(peer["name"])
                         died = True         # its engine closed on it after its hold opened the stream, or vLLM's died
-                        self._pair_drain = True     # its client's leaving binds it at once (1061)
+                        self._pair_drain = True     # its client's leaving keeps the connection open for an order (1054)
                     if sse:                         # role 8, line by line: a read may end in the middle of one
                         lines = tail + b
                         cut = lines.rfind(b"\n")
@@ -8013,9 +8043,9 @@ class H(BaseHTTPRequestHandler):
                     except OSError:
                         gone(); return None
                 if died and not ordered:
-                    # bound at the stream's end, once an order said before or after the death would have come (1019,
-                    # 1031): a death vLLM relayed during an ordered stop was bound (the delta's 3rd review, 2026-11-04)
-                    killer_note(self._killer_fp, peer["name"])
+                    # bound again at the stream's end, once an order said before or after the death would have come
+                    # (1019, 1031): its binding lasts PAIR_KILLER_KEEP_S from there
+                    self._bind_killer(peer["name"])
                 self._finish()
                 self._done("502 pair upstream" if died else "ok pair")
                 return None

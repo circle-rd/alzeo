@@ -25,6 +25,7 @@ import shutil
 import socket
 import socketserver
 import ssl
+import struct
 import subprocess
 import sys
 import tempfile
@@ -3569,36 +3570,49 @@ class TwoBoxesServeOneModel(PairFixture, unittest.TestCase):
         self.assertEqual(m.killer_box(fp), "", "an Ollama stream's cut reached its client before the binding")
         self.assertEqual(len(reads), 1, "the cut read systemd more than once")
 
-    def test_an_order_said_while_the_watch_binds_leaves_nothing_bound(self):
-        # the watch read no order and bound; the order, read between the two, undid a binding not made yet, and the note
-        # came after it: bound 10 minutes by an order (found re-reading the 7th review's fixes, 2026-11-04)
+    def _ndjson_peer(self, marker, script):
+        """The other box serving the 27B, whose /api/chat streams NDJSON as script(chunk, handler) writes it."""
+        Base = fake_peer(["qwen3.8-27b", marker], PEER_ANSWER)
+
+        class Peer(Base):
+            def do_POST(self):
+                self.rfile.read(int(self.headers.get("Content-Length") or 0))
+                Base.seen.append(self.path)
+                self.send_response(200)
+                self.send_header("Content-Type", "application/x-ndjson")
+                self.send_header("Transfer-Encoding", "chunked")
+                self.end_headers()
+
+                def chunk(part):
+                    self.wfile.write(b"%x\r\n%s\r\n" % (len(part), part))
+                    self.wfile.flush()
+                try:
+                    script(chunk)
+                except OSError:
+                    return
+                self.close_connection = True
+                self.connection.shutdown(socket.SHUT_RDWR)                      # cut, not ended
+        self.repoint(tls_peer(self, Peer))
+        self.until_listed(marker)
+
+    NDJSON_LINE = (b'{"model": "qwen3.8-27b", "message": {"role": "assistant", "content": "from the peer "}, '
+                   b'"done": false}\n')
+    NDJSON_DEATH = (b'{"error": {"message": "EngineCore encountered an issue. See stack trace (above) for the root '
+                    b'cause."}}\n')
+
+    def test_a_death_relayed_is_bound_as_it_is_relayed(self):
+        # bound when the watch saw its client gone, a retry within that watch's second went unbound, free to take this
+        # box's engine down too (the 8th review of v1.43.0, 2026-11-05): bound as the death is relayed, its client still
+        # there
         if not self.INPROC:
             self.skipTest("the binding is read in this test's process")
         m = self.mod
         self.addCleanup(m._KILLERS.clear)
-        noting, forgot, noted = threading.Event(), threading.Event(), threading.Event()
-        note, forget = m.killer_note, m.killer_forget
-
-        def watch_slow(fp, box):
-            by_watch = sys._getframe(1).f_code.co_name == "watch"
-            if by_watch:
-                noting.set()                    # it read no order: the order comes now, and is undone first
-                forgot.wait(5)
-            note(fp, box)
-            if by_watch:
-                noted.set()
-
-        def forget_seen(fp, box):
-            forget(fp, box)
-            forgot.set()
-        m.killer_note, m.killer_forget = watch_slow, forget_seen
-        self.addCleanup(setattr, m, "killer_note", note)
-        self.addCleanup(setattr, m, "killer_forget", forget)
-        Base = fake_peer(["qwen3.8-27b", "marker-race"], PEER_ANSWER)
+        Base = fake_peer(["qwen3.8-27b", "marker-bound-at-death"], PEER_ANSWER)
         event = (b'data: {"id":"c","object":"chat.completion.chunk","model":"qwen3.8-27b","choices":[{"index":0,'
                  b'"delta":{"content":"from the peer "}}]}\n\n')
 
-        class DeadThenOrderOnCue(Base):
+        class DeadThenQuiet(Base):
             def do_POST(self):
                 self.rfile.read(int(self.headers.get("Content-Length") or 0))
                 Base.seen.append(self.path)
@@ -3610,19 +3624,15 @@ class TwoBoxesServeOneModel(PairFixture, unittest.TestCase):
                     for part in (event, b"data: " + VLLM_DEAD_EVENT + b"\n\n"):
                         self.wfile.write(b"%x\r\n%s\r\n" % (len(part), part))
                         self.wfile.flush()
-                    noting.wait(8)
-                    self.wfile.write(b"%x\r\n%s\r\n" % (len(HOP_ENDED_OPENAI), HOP_ENDED_OPENAI))
-                    self.wfile.flush()
-                    time.sleep(1.0)
+                    time.sleep(4.0)                                             # quiet, its connection open
                 except OSError:
                     return
-                self.close_connection = True
-                self.connection.shutdown(socket.SHUT_RDWR)
-        self.repoint(tls_peer(self, DeadThenOrderOnCue))
-        self.until_listed("marker-race")
+        self.repoint(tls_peer(self, DeadThenQuiet))
+        self.until_listed("marker-bound-at-death")
         held = self.busy(self.E1, self.port1, KEY_1, "local-only", 2, 6.0)    # this box busy: a new one goes there
-        raw = json.dumps(dict(self.turns("conv-race", 1)[0], stream=True)).encode()
+        raw = json.dumps(dict(self.turns("conv-bound-at-death", 1)[0], stream=True)).encode()
         c = http.client.HTTPConnection("127.0.0.1", self.port1, timeout=30)
+        self.addCleanup(c.close)
         c.request("POST", "/v1/chat/completions", raw,
                   {"Content-Type": "application/json", "Authorization": f"Bearer {KEY_1}"})
         resp = c.getresponse()
@@ -3633,12 +3643,86 @@ class TwoBoxesServeOneModel(PairFixture, unittest.TestCase):
                 break
             got += b
         self.assertIn(b"from the peer", got, "served here: the test needs the other box's stream")
+        fp = m.body_fingerprint(raw, "/v1/chat/completions")
+        self.assertEqual(m.killer_box(fp), "spark2", "a death relayed was not bound while its client stayed")
+        resp.close()
+        for th in held:
+            th.join(30)
+
+    def test_an_order_line_split_where_its_client_leaves_is_read_whole(self):
+        # the other box's NDJSON: a line and the first half of its order line in one read, the write of that line
+        # failing (its client gone at the death): the half held back was not read with the rest, and the request stayed
+        # bound 10 minutes (the 8th review of v1.43.0, 2026-11-05)
+        if not self.INPROC:
+            self.skipTest("the binding is read in this test's process")
+        m = self.mod
+        self.addCleanup(m._KILLERS.clear)
+        order = HOP_ENDED_NDJSON
+
+        def script(chunk):
+            chunk(self.NDJSON_LINE)
+            chunk(self.NDJSON_DEATH)
+            time.sleep(1.0)                                                     # its client reads the death and leaves
+            chunk(self.NDJSON_LINE + order[:10])
+            time.sleep(0.3)
+            chunk(order[10:])
+            time.sleep(1.0)
+        self._ndjson_peer("marker-nd-split", script)
+        held = self.busy(self.E1, self.port1, KEY_1, "local-only", 2, 6.0)    # this box busy: a new one goes there
+        raw = json.dumps(dict(self.turns("conv-nd-split", 1)[0], stream=True)).encode()
+        c = http.client.HTTPConnection("127.0.0.1", self.port1, timeout=30)
+        c.connect()
+        c.sock.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))   # it leaves with a reset
+        c.request("POST", "/api/chat", raw, {"Content-Type": "application/json", "Authorization": f"Bearer {KEY_1}"})
+        resp = c.getresponse()
+        got = b""
+        while b"EngineCore" not in got:
+            b = resp.read1(65536)
+            if not b:
+                break
+            got += b
+        self.assertIn(b"from the peer", got, "served here: the test needs the other box's stream")
         resp.close()
         c.close()
-        self.assertTrue(noted.wait(10), "the watch never bound it")
-        time.sleep(0.3)                                                         # its reading again, just after
-        self.assertIsNone(m.killer_box(m.body_fingerprint(raw, "/v1/chat/completions")),
-                          "an order read while the watch bound left it bound")
+        fp = m.body_fingerprint(raw, "/api/chat")
+        # past the order's second half (1.3 s after the death) and its read: read before, a binding not made yet passed
+        # for one undone (the 9th review of v1.43.0, 2026-11-05)
+        time.sleep(2.5)
+        self.assertIsNone(m.killer_box(fp), "an order line split where its client left was not read whole")
+        for th in held:
+            th.join(30)
+
+    def test_the_line_end_before_an_order_line_stays_at_the_entry(self):
+        # after a line over 64 KiB relayed unended, the other box puts a line end before its order line: relayed to the
+        # client, it ended half a line as if whole (the 8th review of v1.43.0, 2026-11-05)
+        if not self.INPROC:
+            self.skipTest("the entry's relay is read in this test's process")
+        long_line = b'{"model": "qwen3.8-27b", "message": {"role": "assistant", "content": "' + b"x" * 70000
+
+        def script(chunk):
+            chunk(long_line)                                                    # over 64 KiB, unended
+            time.sleep(0.3)
+            chunk(b"\n" + HOP_ENDED_NDJSON)
+            time.sleep(0.5)
+        self._ndjson_peer("marker-nd-sep", script)
+        held = self.busy(self.E1, self.port1, KEY_1, "local-only", 2, 6.0)    # this box busy: a new one goes there
+        raw = json.dumps(dict(self.turns("conv-nd-sep", 1)[0], stream=True)).encode()
+        c = http.client.HTTPConnection("127.0.0.1", self.port1, timeout=30)
+        self.addCleanup(c.close)
+        c.request("POST", "/api/chat", raw, {"Content-Type": "application/json", "Authorization": f"Bearer {KEY_1}"})
+        resp = c.getresponse()
+        got = b""
+        try:
+            while True:
+                b = resp.read1(65536)
+                if not b:
+                    break
+                got += b
+        except (OSError, http.client.HTTPException):
+            pass                                                                # cut, as the other box's was
+        self.assertTrue(got.startswith(long_line), got[:120])
+        self.assertNotIn(b"x_alzeo_ended", got)
+        self.assertFalse(got.endswith(b"\n"), "the line end before the order line reached the client")
         for th in held:
             th.join(30)
 
@@ -4388,8 +4472,14 @@ class TwoBoxesServeOneModelInProcess(TwoBoxesServeOneModel):
     def test_a_death_here_whose_order_shows_at_the_streams_end_is_unbound(self):
         super().test_a_death_here_whose_order_shows_at_the_streams_end_is_unbound()
 
-    def test_an_order_said_while_the_watch_binds_leaves_nothing_bound(self):
-        super().test_an_order_said_while_the_watch_binds_leaves_nothing_bound()
+    def test_a_death_relayed_is_bound_as_it_is_relayed(self):
+        super().test_a_death_relayed_is_bound_as_it_is_relayed()
+
+    def test_an_order_line_split_where_its_client_leaves_is_read_whole(self):
+        super().test_an_order_line_split_where_its_client_leaves_is_read_whole()
+
+    def test_the_line_end_before_an_order_line_stays_at_the_entry(self):
+        super().test_the_line_end_before_an_order_line_stays_at_the_entry()
 
     def test_an_ndjson_cut_is_bound_before_its_client_sees_it(self):
         super().test_an_ndjson_cut_is_bound_before_its_client_sees_it()
@@ -5361,6 +5451,32 @@ class ThePairsPieces(unittest.TestCase):
         self.assertEqual(m.unix_stamp("@1730757600"), 1730757600.0)
         self.assertIsNone(m.unix_stamp(""))
         self.assertIsNone(m.unix_stamp("n/a"))
+
+    def test_undoing_a_requests_binding_gives_back_the_one_before(self):
+        # an order that ended a retry erased the binding an earlier real death of the same body had made, and the next
+        # retry could take this box's engine down too (decision 1019; the 8th review of v1.43.0, 2026-11-05)
+        m = self.mod
+        self.addCleanup(m._KILLERS.clear)
+
+        def request(fp):
+            h = object.__new__(m.H)
+            h._killer_fp, h._killer_bound, h._killer_before = fp, False, None
+            return h
+        m.killer_note("f" * 16, "spark2")                                       # an earlier death of that body there
+        h = request("f" * 16)
+        h._bind_killer("spark2")                                                # this request's own, at its death
+        h._bind_killer("spark2")                                                # and again at its stream's end
+        h._unbind_killer("spark2")                                              # the order said after it
+        self.assertEqual(m.killer_box("f" * 16), "spark2", "an order erased the binding of an earlier death")
+        h = request("e" * 16)
+        h._bind_killer("")
+        h._unbind_killer("")
+        self.assertIsNone(m.killer_box("e" * 16), "nothing was bound before it: nothing is left")
+        m.killer_note("d" * 16, "spark2")                                       # bound to the other box before
+        h = request("d" * 16)
+        h._bind_killer("")                                                      # this box's engine died on it since
+        h._unbind_killer("")
+        self.assertEqual(m.killer_box("d" * 16), "spark2")
 
     def test_an_answer_relayed_whole_leaves_the_stops_reach_at_once(self):
         # set at its relay, the keeper's join left a window where a stop cut a finished answer, and on vLLM shut its
