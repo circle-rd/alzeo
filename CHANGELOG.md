@@ -121,10 +121,12 @@ three more faults in the binding at a cut, fixed here too: a cut bound its reque
 quick retry free to reach the other box meanwhile, read systemd twice for it, and bound a death whose own read had
 seen its lane's stop. A tenth review found the first fixed on SSE streams alone: an Ollama stream or a non-streamed
 answer cut by its engine is bound before its client sees the cut too. And a stop no longer counts a request whose
-engine answered an error, or refused or dropped its connection: v1.42.1 counted such a request as stopped and cut its
-client, and after a floor stop held new generations back while nothing was generating. tests/test_proxy_pair.py has
-two boxes that serve the 27B from their start, each rule its test there or in the proxy's and the cockpit's other test
-files, and each test fails on v1.42.1 or on the commit before its fix.
+engine answered an error, refused or dropped its connection before answering, or cut its answer: an eleventh review
+found a stream cut by its engine still counted by a stop that landed during the read of systemd at the cut, and left
+unbound: v1.42.1 counted such a request as stopped and cut its client, and after a floor stop held new generations
+back while nothing was generating. tests/test_proxy_pair.py has two boxes that serve the 27B from their start, each
+rule its test there or in the proxy's and the cockpit's other test files, and each test fails on v1.42.1 or on the
+commit before its fix.
 
 **Ollama clients get their stream as it comes.** The proxy relayed every answer that is not SSE in blocks of 64 KiB,
 so a client of the Ollama routes (`/api/chat`, `/api/generate`) got its NDJSON stream in bursts, most answers whole at
