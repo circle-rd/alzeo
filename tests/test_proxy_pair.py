@@ -659,6 +659,10 @@ class PairFixture:
         self.E1.ordered_now = self.E2.ordered_now = False
         if getattr(self, "mod", None) is not None:
             getattr(self.mod, "forget_unit_reads", lambda: None)()          # lane_away keeps systemd's answer a second
+            # no binding of an earlier test: two left theirs (a request bound at a vLLM death, a hop's engine death in an
+            # open stream), and a test that counts every binding failed after either, in an order other than the
+            # alphabet's (the 11th review of v1.43.0, 2026-11-05)
+            self.mod._KILLERS.clear()
         # where each journal stood: a line asserted is one this test wrote, never one of an earlier test (review,
         # 2026-11-03)
         self.journal_at = {label: len(self.journal_of(label)) for label in ("spark1", "spark2")}

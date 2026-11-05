@@ -419,7 +419,8 @@ class AStopReachesWhatItShould(unittest.TestCase):
         self.addCleanup(setattr, m.H, "_take_whole_answer", took)
         reply = box.send(stream=False)
         self.assertTrue(reply.done.wait(20))
-        self.assertEqual(stops and stops[0][0], 0, "a request whose engine refused its connection was stopped")
+        self.assertEqual(len(stops), 1, "the test needs its stop")
+        self.assertEqual(stops[0][0], 0, "a request whose engine refused its connection was stopped")
         self.assertIsNone(m.floor_refusal(), "a floor that stopped nothing held new generations back")
 
     def test_a_box_alone_reads_no_order_at_a_dead_streams_end(self):
