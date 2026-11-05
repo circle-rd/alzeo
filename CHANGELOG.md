@@ -145,15 +145,18 @@ other box was then said there to be an order, which undid its binding. A stream 
 engine's end is known now: its death said in the stream, its cut, its end. And the engine's cut was dropped when the
 client read nothing for 5 s while 1,024 events waited for it, the stream's end then closing the client's stream as
 whole on a cut answer: the cut waits for room now, as the end does. A thirteenth review found the same windows open
-behind such a client (decision 1083): a death or an answer's end was out of reach only once the relay took it from the
-queue, behind up to 1,024 events, a death then reaching its client as a stop and staying unbound, a hop's said to be
-an order, and an answer whole at its engine cut. The proxy takes a stream out of every stop's reach as it reads its
-engine's death or end now. A fourteenth review found what stays open, left for v1.44.0, where the relay decides an
-engine's end as it reads it (decision 1088): behind a client more than 1,024 events late, the proxy reads nothing more
-of the engine, its end included, until the client takes some, and a death or a cut is bound, its order read, only once
-the relay reaches it, not at all when the client leaves first. tests/test_proxy_pair.py has two boxes that serve the
-27B from their start, each rule its test there or in the proxy's and the cockpit's other test files, and each test
-fails on v1.42.1 or on the commit before its fix.
+behind such a client (decision 1083): a death or an answer's end that came while the queue was full stayed in reach
+until it could be put there, a death then reaching its client as a stop and staying unbound, a hop's said to be an
+order, and an answer whole at its engine cut. The proxy takes a stream out of every stop's reach as it reads vLLM's
+death or the answer's end (data: [DONE], event: message_stop) now. A fourteenth and a fifteenth review found what
+stays open, left for v1.44.0, where the relay decides an engine's end as it reads it (decisions 1088 to 1091): once
+the queue is full behind a client, the proxy looks at nothing more the engine sends, its end included, until the
+client takes some; a death or a cut is bound, its order read, only once the relay reaches it, and not at all when the
+client leaves first; the end of a /v1/responses stream and the Ollama routes' last line are not taken out of reach as
+they are read; and vLLM's death on /v1/messages, which its Anthropic route says without the words the proxy looks for,
+is not recognized as one, and not bound. tests/test_proxy_pair.py has two boxes that serve the 27B from their start,
+each rule its test there or in the proxy's and the cockpit's other test files, and each test fails on v1.42.1 or on
+the commit before its fix.
 
 **Ollama clients get their stream as it comes.** The proxy relayed every answer that is not SSE in blocks of 64 KiB,
 so a client of the Ollama routes (`/api/chat`, `/api/generate`) got its NDJSON stream in bursts, most answers whole at
