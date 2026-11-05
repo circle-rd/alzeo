@@ -6826,10 +6826,11 @@ class H(BaseHTTPRequestHandler):
         silence = 0.0
         died = False                        # vLLM ended the stream on its engine's death: no "ok" (the delta's review)
 
-        def client_gone(outcome):
+        def client_gone():
             # gone before the relay reached a death or a cut the pump read, still in the queue behind what its client
             # did not read: decided now, as it would have been there, or a real death stayed unbound and the client's
-            # retry was free to reach the other box (decision 1019; the 13th review of v1.43.0, 2026-11-05)
+            # retry was free to reach the other box (decision 1019; the 13th review of v1.43.0, 2026-11-05). Each
+            # caller writes its own outcome, which the cockpit's tests read in this file (dashboard/tests/test_lifecycle.py)
             nonlocal died
             read = getattr(self, "_end_read", None)
             if read == "death" and not died:
@@ -6839,7 +6840,6 @@ class H(BaseHTTPRequestHandler):
                 self._engine_cut(died)
             if died:
                 self._unbind_if_ordered_later()
-            drop_upstream(); self._done(outcome)
         while True:
             if getattr(self, "_stop_why", None):
                 # v6.47: the memory floor stopped this generation: stopped upstream, its client cut
@@ -6861,7 +6861,7 @@ class H(BaseHTTPRequestHandler):
                     self._finish(); self._done("DROPPED upstream silent"); return
                 try: self._chunk(ka_bytes)
                 except Exception:
-                    client_gone("CLIENT GONE during keepalive"); return
+                    client_gone(); drop_upstream(); self._done("CLIENT GONE during keepalive"); return
                 continue
             if kind == "f":
                 break
@@ -6919,7 +6919,7 @@ class H(BaseHTTPRequestHandler):
             self._watch_tools(val, anthropic)
             try: self._chunk(val)
             except Exception:
-                client_gone("CLIENT GONE on write"); return
+                client_gone(); drop_upstream(); self._done("CLIENT GONE on write"); return
         if died and not getattr(self, "_said_ended", False) \
                 and (self._pair_hop() or getattr(self, "_killer_fp", None)) and unit_stopping_by_order():
             # read again at the stream's clean end: vLLM ends a dead stream cleanly ([DONE]), and a stop job not seen yet
