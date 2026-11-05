@@ -6204,13 +6204,17 @@ class H(BaseHTTPRequestHandler):
         self._abort_upstream(self._stop_label())
         self._shut_upstream()
 
-    def _take_whole_answer(self, resp):
-        """A finished answer that is not a stream (not SSE, not NDJSON), the engine's error included, is no stop target
-        from the moment the engine gives it, until the request's next try (_forward) (stop_generations): set under _GEN_LOCK, where the stop marks its targets, so a stop either marked it before
-        or never will. Set at its relay, the keeper's join left a window where a floor stop cut a finished answer and
-        started its episode, and a stop on vLLM shut its upstream mid-body (the 7th review of v1.43.0, 2026-11-04)."""
+    def _take_whole_answer(self, resp, gone=False):
+        """A finished answer that is not a stream (not SSE, not NDJSON), the engine's error included, or no answer at all
+        (gone: the engine refused or dropped the connection), is no stop target from the moment _open returns, until the
+        request's next try (_forward) (stop_generations): set under _GEN_LOCK, where the stop marks its targets, so a
+        stop either marked it before or never will. Set at its relay, the keeper's join left a window where a floor stop
+        cut a finished answer and started its episode, and a stop on vLLM shut its upstream mid-body (the 7th review of
+        v1.43.0, 2026-11-04); a connection error in that window was counted as stopped, the floor's episode started,
+        and its client cut (the 10th review, 2026-11-05). A stop that closed it itself marked it before: it stays its
+        stop."""
         ctype = (resp.headers.get("Content-Type") or "") if resp is not None else ""
-        if resp is None or "text/event-stream" in ctype or "application/x-ndjson" in ctype:
+        if not gone and (resp is None or "text/event-stream" in ctype or "application/x-ndjson" in ctype):
             return
         with _GEN_LOCK:
             if not getattr(self, "_stop_why", None):
@@ -6708,11 +6712,9 @@ class H(BaseHTTPRequestHandler):
                 # incomplete transfer it is, as it would talking to the engine directly.
                 log(f"{self._peer} the engine cut a non-streamed answer short "
                     f"({type(cut).__name__}); relayed without its end")
-                if self._pair_hop() and unit_stopping_by_order():
-                    self._say_ended_by_order()  # an Ollama route's NDJSON stream, its lane stopped by order (1031)
+                self._engine_cut()              # before the cut its client sees (decisions 1019 and 1031)
                 try: self.connection.shutdown(socket.SHUT_RDWR)
                 except Exception: pass
-                self._killed_here()             # it died during its answer (decision 1019)
                 self._done("UPSTREAM CUT non-sse"); return
             if part:
                 try:
@@ -6836,19 +6838,7 @@ class H(BaseHTTPRequestHandler):
                 # stream, held in silence, which it gave up on after about 330 s, three
                 # times over one restart, and it ended with no answer (the reference box,
                 # 2026-10-01).
-                # read once, and only where it says something: a hop's box tells the other box, and this box's own
-                # client's request, bound at a death by a read of systemd that saw no stop yet, is unbound when the
-                # stop shows at the cut, as at a clean end (the 8th review of v1.43.0, 2026-11-05). With no death
-                # before, it is bound here, before the cut its client sees and retries on at once (1019): bound after
-                # it, on a second read, a retry could reach the other box meanwhile; and a death read already decided,
-                # its order seen then binding nothing whatever the read at the cut says (the 9th review)
-                ordered = bool(self._pair_hop() or getattr(self, "_killer_fp", None)) and unit_stopping_by_order()
-                if ordered and self._pair_hop():
-                    self._say_ended_by_order()  # its lane stopped by order: the other box binds nothing (1031)
-                elif ordered and died:
-                    killer_forget(self._killer_fp, "")
-                elif not died:
-                    self._killed_here(ordered)  # it died during its answer (decision 1019)
+                self._engine_cut(died)          # before the cut its client sees (decisions 1019 and 1031)
                 self.close_connection = True
                 try: self.connection.shutdown(socket.SHUT_RDWR)
                 except Exception: pass
@@ -7572,6 +7562,25 @@ class H(BaseHTTPRequestHandler):
         self._done("503 pair own key unreadable")
         return True
 
+    def _engine_cut(self, died=False):
+        """This box's engine cut this request's answer: what decisions 1019 and 1031 make of it, before the cut its client
+        sees and retries on at once. systemd is read once, and only where the read says something: a hop whose box was
+        not told yet, a request this box routed with bindings on. A hop's box is told an order; this box's own client's
+        request is bound, or, bound at a death here by a read that saw no stop yet, unbound when the stop shows now; a
+        death read already decided, its order seen then binding nothing whatever the read at the cut says. One place
+        for the SSE and the other answers: the 9th review's fix reached the SSE path alone, and an Ollama stream or a
+        non-streamed answer was still cut before it was bound, its retry free to reach the other box (the 10th review
+        of v1.43.0, 2026-11-05)."""
+        hop = self._pair_hop()
+        fp = getattr(self, "_killer_fp", None) if PAIR_KILLER_KEEP_S > 0 else None
+        ordered = bool((hop and not getattr(self, "_said_ended", False)) or fp) and unit_stopping_by_order()
+        if ordered and hop:
+            self._say_ended_by_order()      # its lane stopped by order: the other box binds nothing (1031)
+        elif ordered and died:
+            killer_forget(fp, "")
+        elif not died:
+            self._killed_here(ordered)      # it died during its answer (decision 1019)
+
     def _killed_here(self, ordered=None):
         """This box's engine closed the connection on this request, before its answer or during it (decision 1019):
         a request that took it down, sent again, goes nowhere else for PAIR_KILLER_KEEP_S. Its death during the
@@ -8222,7 +8231,7 @@ class H(BaseHTTPRequestHandler):
             # the engine's answer, or its error: neither generates any more. A stop that cut an error's relay held new
             # generations back 60 s for nothing and gave its client no answer (the 9th review of v1.43.0, 2026-11-05);
             # the flag is reset at each try (_forward), where on a 503 held and sent again it outlived its answer
-            self._take_whole_answer(resp or herr)
+            self._take_whole_answer(resp or herr, gone=cerr is not None)
         finally:
             done.set()                      # headers, or an error: the generation is over
             if keeper is not None:

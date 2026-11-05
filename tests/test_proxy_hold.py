@@ -400,6 +400,28 @@ class AStopReachesWhatItShould(unittest.TestCase):
         self.assertEqual(reply.status, 400, reply.raw[:200])
         self.assertIn(b"bad request", reply.raw)
 
+    def test_an_engine_that_refuses_the_connection_is_no_stop_target(self):
+        # no engine where it should be (refused, or reset under the memory pressure that also fires the floor): a floor
+        # stop in the keeper's join counted the request as stopped, started its episode, new generations held back 60 s
+        # while nothing generated, and its client was cut (the 10th review of v1.43.0, 2026-11-05)
+        if not self.INPROC:
+            self.skipTest("the stop is made in this test's process")
+        box = self.box(state="active", hold_max="2")        # no engine: the connection is refused, held 2 s
+        m = box.mod
+        took = m.H._take_whole_answer
+        stops = []
+
+        def then_a_stop(h, *a, **k):
+            took(h, *a, **k)
+            if not stops:                                   # a floor stop lands as _open returns
+                stops.append(m.stop_generations("this test's memory floor", floor=True))
+        m.H._take_whole_answer = then_a_stop
+        self.addCleanup(setattr, m.H, "_take_whole_answer", took)
+        reply = box.send(stream=False)
+        self.assertTrue(reply.done.wait(20))
+        self.assertEqual(stops and stops[0][0], 0, "a request whose engine refused its connection was stopped")
+        self.assertIsNone(m.floor_refusal(), "a floor that stopped nothing held new generations back")
+
     def test_a_box_alone_reads_no_order_at_a_dead_streams_end(self):
         # nothing to tell and nothing to undo without a pair: every stream at a vLLM death read systemd at its end, all at
         # once (the 8th review of v1.43.0, 2026-11-05)
@@ -803,6 +825,9 @@ class AStopReachesWhatItShouldInProcess(AStopReachesWhatItShould):
 
     def test_an_engine_error_being_relayed_is_no_stop_target(self):
         super().test_an_engine_error_being_relayed_is_no_stop_target()
+
+    def test_an_engine_that_refuses_the_connection_is_no_stop_target(self):
+        super().test_an_engine_that_refuses_the_connection_is_no_stop_target()
 
 
 class AnAnswerIsRelayedTheMomentItComesInProcess(AnAnswerIsRelayedTheMomentItComes):
