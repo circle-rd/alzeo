@@ -114,7 +114,7 @@ $GPU_APPS"
 # the key reaches the server through a file SGLang merges in memory, never the command line
 bash "$REPO_DIR/engine-secrets.sh" "$CONFIG_DIR" || die "could not write the engine's key file from $CONFIG_DIR/api-key"
 mkdir -p "$CONFIG_DIR/sglang-cache"
-echo "Starting in the foreground (first boot ≈ 9 min: torch.compile + CUDA graph capture)."
+echo "Starting in the foreground (≈ 3.5 min on the reference box: the weights, then CUDA graph capture)."
 echo "  Ready when the log says:  The server is fired up and ready to roll!"
 echo "  Config: native 262144 window, template defaults (memory fraction 0.50)."
 echo "  A hand-tuned service unit may serve a different fraction: compare like with like."
@@ -149,7 +149,6 @@ exec docker run --rm --name qwen38-sglang-run --gpus all \
     --speculative-num-draft-tokens "$DRAFT2_TOKENS" --speculative-draft-model-quantization "$DRAFT2_QUANT" \
     --mamba-radix-cache-strategy extra_buffer --mamba-ssm-dtype bfloat16 \
     --max-mamba-cache-size 96 --max-running-requests 8 \
-    --enable-torch-compile --torch-compile-max-bs 4 \
     --num-continuous-decode-steps 2 \
     --reasoning-parser qwen3 --tool-call-parser qwen3_coder \
     --chat-template /out/chat-template-sglang.jinja \

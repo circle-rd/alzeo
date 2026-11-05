@@ -44,7 +44,10 @@ The two levers that matter are **bytes per step** (NVFP4 = the quality floor, do
 
 Config details that came out of a full tuning sweep (deterministic greedy A/B, ±0.2 tok/s reproducibility):
 
-- `--enable-torch-compile --torch-compile-max-bs 4` → +1 tok/s
+- `--enable-torch-compile --torch-compile-max-bs 4` → +1 tok/s on bench.sh's short greedy prompts in this sweep;
+  removed in v1.44.0 (decision 1102): on 2026-11-05, the same day, it gave nothing on the official benchmark's
+  8,192-token prompts (2.6 % slower at one request, 4.7 % at four), bench.sh's spreads overlapped, and the engine
+  was ready 163 s later (371 s against 208)
 - `--num-continuous-decode-steps 2` → less scheduler overhead per token
 - Checkpoints: [RadixArk/Qwen3.8-27B-NVFP4](https://huggingface.co/RadixArk/Qwen3.8-27B-NVFP4) + [RadixArk/Qwen3.8-27B-DSpark](https://huggingface.co/RadixArk/Qwen3.8-27B-DSpark) (bf16 draft; an fp8 draft measures *slower*: acceptance drops more than the bandwidth saved)
 - Tested and rejected: DSpark `compact` ragged-verify + a GB10-profiled SPS cost table (needs triton attention, -8 %; the ragged scheduler only pays off at high batch sizes), draft block 9 (out-of-training-distribution), single-batch-overlap (neutral)

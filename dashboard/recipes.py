@@ -112,7 +112,7 @@ FLAGS = {
 SWITCHES = (
     "--sleep-on-idle",              # park the scheduler instead of busy-spinning a core
     "--allow-auto-truncate",        # truncate an oversize prompt instead of erroring
-    "--enable-torch-compile",       # 27B lane: compiled decode
+    "--enable-torch-compile",       # the 27B lane until v1.44.0: a unit still written with it reads right
     "--disable-flashinfer-autotune",
     "--enable-metrics",              # Prometheus counters on /metrics: the scrape
                                     # endpoint every fleet asks for; unauthenticated

@@ -3407,7 +3407,7 @@ if [ "$ENGINE_KEEP" -eq 1 ]; then
 elif [ "$LANE" = "flash" ]; then
   step "9/10 Starting (every boot ≈ 12-15 min: the weight load writes the whole 47.7 GiB PLE table into its file, then CUDA graph capture)"
 else
-  step "9/10 Starting (first boot ≈ 9 min: torch.compile + CUDA graph capture; later boots are faster)"
+  step "9/10 Starting (≈ 3.5 min on the reference box: the weights, then CUDA graph capture)"
 fi
 [ "$ENGINE_KEEP" -eq 0 ] && [ "$ENGINE_RUNNING_IT" != "no: not installed yet" ] && echo "why: $ENGINE_WHY"
 if [ -n "$OTHER_UNIT" ] && systemctl is-active --quiet "$OTHER_UNIT" 2>/dev/null; then
