@@ -1,6 +1,6 @@
 # Changelog
 
-## v1.44.0 (2026-11-05): the 27B lane starts without torch.compile, ready in about half the time
+## v1.44.0 (2026-11-06): an answer's end is read as its engine sends it, and the 27B starts without torch.compile
 
 **The 27B lane starts without torch.compile.** Its units and run.sh started SGLang with `--enable-torch-compile
 --torch-compile-max-bs 4`. Measured on the reference box on 2026-11-05, one after the other within the hour on the
@@ -11,9 +11,31 @@ spreads that overlap. It also kept the lane from SGLang v0.5.23, which decodes t
 (3.6 against 37.3 tok/s) and as fast as v0.5.22 without it (decision 1102). The 64 GB unit follows without a measure
 of its own: no 64 GB box was at hand.
 
-**What an update does.** The 27B's unit changes. A box that serves the 27B restarts it during the update, about 3.5
-minutes on the reference box, the proxy holding requests meanwhile. A box that serves another lane starts the 27B
-without torch.compile at its next Load.
+**An answer's end is read as its engine sends it, whatever its client's pace.** The proxy read an SSE answer from the
+engine into a queue of 1,024 events, and its reader waited when the queue was full: behind a client that read nothing,
+it read nothing more of the engine, its end included, and what the proxy decides at an engine's end (out of a stop's
+reach, the order read in systemd, the binding of decision 1019, the order told to the other box) was decided once the
+client's relay reached it, behind up to 1,024 events, as the fourteenth and fifteenth reviews of v1.43.0 found. Its
+reader never waits now: the answer waits in a spool bounded at 32 MiB (PROXY_SPOOL_MAX_MIB), past which the generation
+is stopped and the client cut (CLIENT TOO SLOW in the journal), and the engine's death, cut or end is decided as it is
+read, the order read in systemd once then, and a binding's 3 s of reads started at once. A death or a cut is bound
+when its client leaves first, an order seen at the death binds nothing however late the relay gets there, the end of a
+/v1/responses stream (response.completed, .incomplete or .failed) and an Ollama stream's last line take it out of
+reach as they are read, and vLLM's death on its Anthropic route, which it says without the engine's words, counts as
+one when the engine no longer answers.
+
+**A stop reaches what it should.** A stop counted again a generation another stop had marked (an Abort all, then the
+floor, which started its episode for it). On vLLM, a running answer's engine connection ended only at its relay's next
+event, after a write to a slow client returned, up to 900 s, the generation going on meanwhile: it ends at once. A
+generation that starts while a stop is under way is that stop's, refused or cut as a new one is: abort_all ended it
+unmarked, and SGLang ends an aborted Anthropic stream as end_turn, its client taking the part it got for the whole
+answer; the window closes once the proxy's abort_all went, and stays open 8 s more when it did not, the cockpit then
+sending its own. And the stop's answer counts as finishing a stream whose end was read and still goes out, where the
+cockpit said no generation ran.
+
+**What an update does.** The proxy (v6.53) and the cockpit restart. The 27B's unit changes. A box that serves the 27B
+restarts it during the update, about 3.5 minutes on the reference box, the proxy holding requests meanwhile. A box
+that serves another lane starts the 27B without torch.compile at its next Load.
 
 **Tests.** tests/test_27b_no_torch_compile.py: none of the 27B's launches (its three units and run.sh) passes either
 flag. It fails on v1.43.0.
