@@ -45,6 +45,7 @@ TEST_REV = "1a2b3c4d5e" * 4            # the checkpoint every test box says it s
 HOP_ENDED_OPENAI = (b'data: {"id":"keepalive","object":"chat.completion.chunk","created":0,"model":"keepalive",'
                     b'"choices":[],"x_alzeo_ended":"order"}\n\n')
 HOP_ENDED_NDJSON = b'{"x_alzeo_ended": "order"}\n'      # on the Ollama routes' NDJSON
+PAIR_GRACE_READ_S = 6.0           # the 5 s an entry reads on after its client left (PAIR_ORDER_GRACE_S), and 1
 # What vllm 0.29.0 (the pinned image) answers when its EngineCore died: rendered from its own code on the reference box
 # (create_error_response of an EngineDeadError, by starlette's JSONResponse; a stream's event by json.dumps)
 VLLM_DEAD_500 = (b'{"error":{"message":"EngineCore encountered an issue. See stack trace (above) for the root cause.",'
@@ -186,7 +187,9 @@ def fake_engine(name, model):
                                     # "vllm_dead_late_order_cut": the same, then a cut, no end ;
                                     # "vllm_dead_ordered_then_cut": its death while its stop job runs, the job over
                                     # (ordered_now False) a second later, then a cut ;
-                                    # "ndjson_cut": an Ollama stream (/api/chat) cut after its first line
+                                    # "ndjson_cut": an Ollama stream (/api/chat) cut after its first line ;
+                                    # "vllm_dead_after_1s": an event a second after its first, then its death ;
+                                    # "slow_10s": five more events two seconds apart, then its end
 
         def log_message(self, *a):
             pass
@@ -285,6 +288,21 @@ def fake_engine(name, model):
                 part = f"data: {ev}\n\n".encode()
                 self.wfile.write(b"%x\r\n%s\r\n" % (len(part), part)); self.wfile.flush()
                 time.sleep(0.05)
+                if Handler.mode == "slow_10s":          # five events two seconds apart, no death (1112)
+                    for _ in range(5):
+                        time.sleep(2.0)
+                        more = b'data: {"choices":[{"index":0,"delta":{"content":"x"}}]}\n\n'
+                        self.wfile.write(b"%x\r\n%s\r\n" % (len(more), more)); self.wfile.flush()
+                    self.wfile.write(b"%x\r\n%s\r\n0\r\n\r\n" % (14, b"data: [DONE]\n\n")); self.wfile.flush()
+                    return
+                if Handler.mode == "vllm_dead_after_1s":    # an event a second on, then its death (1112)
+                    time.sleep(1.0)
+                    more = b'data: {"choices":[{"index":0,"delta":{"content":"x"}}]}\n\n'
+                    self.wfile.write(b"%x\r\n%s\r\n" % (len(more), more)); self.wfile.flush()
+                    time.sleep(0.3)
+                    part = b"data: " + VLLM_DEAD_EVENT + b"\n\n"
+                    self.wfile.write(b"%x\r\n%s\r\n0\r\n\r\n" % (len(part), part)); self.wfile.flush()
+                    return
                 if Handler.mode == "vllm_dead_stream":  # its EngineCore died during the stream: its error event
                     part = b"data: " + VLLM_DEAD_EVENT + b"\n\n"
                     self.wfile.write(b"%x\r\n%s\r\n0\r\n\r\n" % (len(part), part)); self.wfile.flush()
@@ -3629,6 +3647,67 @@ class TwoBoxesServeOneModel(PairFixture, unittest.TestCase):
         self.assertIn(b"EngineCore", got.get("out", b""))
         self.assertNotIn(b"x_alzeo_ended", got["out"], "a real death relayed was then said an order")
 
+    def _left_after_its_first_event(self, tag):
+        """A stream this box sends to the other box (one generation here, none there), its client gone after the first
+        event it got: the request's fingerprint, and the generation that kept this box busy."""
+        m = self.mod
+        held = self.busy(self.E1, self.port1, KEY_1, "local-only", 1, 6.0)     # one here, none there: it goes there
+        raw = json.dumps(dict(self.turns(tag, 1)[0], stream=True)).encode()
+        c = http.client.HTTPConnection("127.0.0.1", self.port1, timeout=30)
+        c.connect()
+        c.sock.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))   # it leaves with a reset
+        c.request("POST", "/v1/chat/completions", raw,
+                  {"Content-Type": "application/json", "Authorization": f"Bearer {KEY_1}"})
+        resp = c.getresponse()
+        resp.read1(65536)                       # its first event
+        resp.close()
+        c.close()                               # gone: the next event's write fails, before the death comes
+        return m.body_fingerprint(raw, "/v1/chat/completions"), held
+
+    def test_a_death_the_other_box_sends_after_this_boxs_client_left_is_bound(self):
+        # the other box's engine died on the request just after this box's client left, the death unrelayed: the watch
+        # shut the connection at once, the death went unread, and the request unbound, its retry free to run on this
+        # box's engine too (decision 1019; the 14th review of v1.43.0, decision 1112)
+        if not self.INPROC:
+            self.skipTest("the binding is read in this test's process")
+        m = self.mod
+        self.E2.mode = "vllm_dead_after_1s"
+        fp, held = self._left_after_its_first_event("conv-entry-left-dead")
+        deadline = time.monotonic() + 10
+        while m.killer_box(fp) is None and time.monotonic() < deadline:
+            time.sleep(0.05)
+        self.assertIn("conv-entry-left-dead-0", self.E2.users, "the test needs the other box's engine to have it")
+        self.assertEqual(m.killer_box(fp), "spark2", "a death sent after this box's client left was left unbound")
+        for th in held:
+            th.join(30)
+
+    def test_a_stream_that_ends_after_this_boxs_client_left_binds_nothing(self):
+        # read on after its client left (decision 1112), a stream that ends as streams do binds nothing
+        if not self.INPROC:
+            self.skipTest("the binding is read in this test's process")
+        m = self.mod
+        self.E2.mode = "ok"
+        fp, held = self._left_after_its_first_event("conv-entry-left-ok")
+        time.sleep(PAIR_GRACE_READ_S)
+        self.assertIn("conv-entry-left-ok-0", self.E2.users, "the test needs the other box's engine to have it")
+        self.assertIsNone(m.killer_box(fp), "a stream that ended as streams do was bound")
+        for th in held:
+            th.join(30)
+
+    def test_this_boxs_own_end_of_the_connection_is_no_death_of_the_other_boxs_engine(self):
+        # its client gone, seen first by the watch, which ends the connection once its grace is over: the read under way
+        # then fails, which read as the other box's engine cutting its stream, and bound the request (decision 1112)
+        if not self.INPROC:
+            self.skipTest("the binding is read in this test's process")
+        m = self.mod
+        self.E2.mode = "slow_10s"
+        fp, held = self._left_after_its_first_event("conv-entry-left-slow")
+        time.sleep(PAIR_GRACE_READ_S + 3)
+        self.assertIn("conv-entry-left-slow-0", self.E2.users, "the test needs the other box's engine to have it")
+        self.assertIsNone(m.killer_box(fp), "this box ending the connection was read as the other box's engine's death")
+        for th in held:
+            th.join(30)
+
     def test_a_cut_during_a_floor_stop_is_bound_and_no_stop_counts_it(self):
         # the cockpit's floor stop landed during the systemd read of an engine's cut: it counted the stream, cut by its
         # engine, as stopped, started the floor's episode for nothing, and the stream was left unbound, its retry free to
@@ -4642,6 +4721,15 @@ class TwoBoxesServeOneModelInProcess(TwoBoxesServeOneModel):
 
     def test_a_cut_during_a_floor_stop_is_bound_and_no_stop_counts_it(self):
         super().test_a_cut_during_a_floor_stop_is_bound_and_no_stop_counts_it()
+
+    def test_a_death_the_other_box_sends_after_this_boxs_client_left_is_bound(self):
+        super().test_a_death_the_other_box_sends_after_this_boxs_client_left_is_bound()
+
+    def test_a_stream_that_ends_after_this_boxs_client_left_binds_nothing(self):
+        super().test_a_stream_that_ends_after_this_boxs_client_left_binds_nothing()
+
+    def test_this_boxs_own_end_of_the_connection_is_no_death_of_the_other_boxs_engine(self):
+        super().test_this_boxs_own_end_of_the_connection_is_no_death_of_the_other_boxs_engine()
 
     def test_a_retry_that_bound_nothing_keeps_the_binding_a_death_before_it_made(self):
         super().test_a_retry_that_bound_nothing_keeps_the_binding_a_death_before_it_made()
@@ -6128,8 +6216,8 @@ class ThePairsPieces(unittest.TestCase):
         h = object.__new__(m.H)
         h._peer = "test"
         half = len(HOP_ENDED_OPENAI) // 2
-        self.assertTrue(h._order_after(Stream([HOP_ENDED_OPENAI[half:]]), None, HOP_ENDED_OPENAI[:half]))
-        self.assertFalse(h._order_after(Stream([b'data: {"choices": []}\n\n']), None, b""))
+        self.assertEqual(h._end_after(Stream([HOP_ENDED_OPENAI[half:]]), None, HOP_ENDED_OPENAI[:half]), (False, True))
+        self.assertEqual(h._end_after(Stream([b'data: {"choices": []}\n\n']), None, b""), (False, False))
 
     def test_the_ndjson_order_line_starts_a_line_of_its_own(self):
         # after a line over 64 KiB relayed unended, the order line glued to it went unread at the entry, which bound the

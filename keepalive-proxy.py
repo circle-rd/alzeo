@@ -7985,7 +7985,7 @@ class H(BaseHTTPRequestHandler):
         req = urllib.request.Request(peer["proxy"] + self.path, data=body, headers=h, method=self.command)
         log(f"{self._peer} -> pair {peer['name']} for {name}")
         done, left = threading.Event(), threading.Event()
-        self._pair_drain = False            # set once the other box relayed its engine's death (decision 1054)
+        self._pair_watch_shut = False       # the watch below ended the connection: no death of the other box's engine
 
         def watch():
             # the caller of an answer that is not streamed yet hears nothing: when it leaves,
@@ -7996,19 +7996,20 @@ class H(BaseHTTPRequestHandler):
             while not done.wait(1.0):
                 if left.is_set() or self._client_left():
                     left.set()
-                    if self._pair_drain:
-                        # a death relayed to it, bound as it was relayed (1019), its client gone: the relay reads on up
-                        # to PAIR_ORDER_GRACE_S for an order the other box says after the death, which undoes the
-                        # binding (decisions 1054 and 1061). Shut at once, the order was never read (the 6th review);
-                        # left open with no bound, a box gone silent kept it 60 s (the 7th review of v1.43.0). Bound
-                        # here when the client's leaving was seen, a retry within the second of this watch went
-                        # unbound (the 8th review, 2026-11-05)
-                        if seen_gone is None:
-                            seen_gone = time.monotonic()
-                        if time.monotonic() - seen_gone < PAIR_ORDER_GRACE_S:
-                            continue
+                    # its client gone: the relay reads on up to PAIR_ORDER_GRACE_S what the other box still sends, for
+                    # a death on its way, which binds the request (1019), and an order, which binds nothing (decisions
+                    # 1054 and 1061). Shut at once, the order was never read (the 6th review); left open with no bound,
+                    # a box gone silent kept it 60 s (the 7th review of v1.43.0). Kept only after a death relayed until
+                    # v1.44.0: a death the other box sent while this box's client read behind went unread when that
+                    # client left first, and unbound (the 14th review of v1.43.0, decision 1112). The other box
+                    # generates for nobody up to that long, the cost of reading it
+                    if seen_gone is None:
+                        seen_gone = time.monotonic()
+                    if time.monotonic() - seen_gone < PAIR_ORDER_GRACE_S:
+                        continue
                     sock = getattr(getattr(req, "upstream", None), "kept_sock", None)
                     if sock is not None:
+                        self._pair_watch_shut = True
                         # the TCP side under TLS: SSLSocket.shutdown takes TLS off the socket under the reading
                         # thread's feet, whose read then fails with a ValueError no except here takes
                         try: socket.socket.shutdown(sock, socket.SHUT_RDWR)
@@ -8174,16 +8175,24 @@ class H(BaseHTTPRequestHandler):
                             undone()        # bound as the death was relayed (decision 1061)
 
                 def gone():
-                    nonlocal ordered
-                    if died and not ordered:
-                        # its client gone at the death it relayed (the SDKs raise on that event), bound as it was
-                        # relayed (1019): what the other box still sends is read, never relayed, up to
-                        # PAIR_ORDER_GRACE_S, and an order it says after the death undoes the binding (decisions 1054
-                        # and 1061). An NDJSON line held back (part) is read with it: an order line split there went
-                        # unread (the 8th review of v1.43.0, 2026-11-05)
-                        if self._order_after(resp, sock, recent + part):
+                    nonlocal ordered, died
+                    if not ordered:
+                        # its client gone (the SDKs raise at a death's event; a client gives up): what the other box
+                        # still sends is read, never relayed, up to PAIR_ORDER_GRACE_S. An order there binds nothing,
+                        # and undoes the binding of a death relayed before it (decisions 1054 and 1061); a death on its
+                        # way, unrelayed, binds the request as a relayed one does (1019; the 14th review of v1.43.0,
+                        # decision 1112). An NDJSON line held back (part) is read with it: an order line split there
+                        # went unread (the 8th review of v1.43.0, 2026-11-05)
+                        death, order = self._end_after(resp, sock, recent + part, sse)
+                        if order:
                             ordered = True
-                            undone()
+                            if died:
+                                undone()
+                        elif death and not died:
+                            died = True
+                            self._bind_killer(peer["name"])
+                            log(f"{self._peer} pair: its client gone, {peer['name']} sent its engine's death after it: "
+                                f"bound (decision 1019)")
                     self._done("CLIENT GONE during pair")
                 while True:
                     try:
@@ -8238,7 +8247,6 @@ class H(BaseHTTPRequestHandler):
                             # other box says after the death undoes it (said_order, gone)
                             self._bind_killer(peer["name"])
                         died = True         # its engine closed on it after its hold opened the stream, or vLLM's died
-                        self._pair_drain = True     # its client's leaving keeps the connection open for an order (1054)
                     if sse:                         # role 8, line by line: a read may end in the middle of one
                         lines = tail + b
                         cut = lines.rfind(b"\n")
@@ -8270,26 +8278,38 @@ class H(BaseHTTPRequestHandler):
         finally:
             done.set()
 
-    def _order_after(self, resp, sock, recent=b""):
-        """True when the other box says within PAIR_ORDER_GRACE_S that it ended this request by order (decisions 1031 and
-        1054): what it sends is read up to that or its end, never relayed (its client left). recent: the bytes read just
-        before, where an order split across two reads began (the 7th review of v1.43.0)."""
-        deadline, tail = time.monotonic() + PAIR_ORDER_GRACE_S, recent[-4096:]
+    def _end_after(self, resp, sock, recent=b"", sse=True):
+        """(death, order): what the other box sends within PAIR_ORDER_GRACE_S of this request's client leaving, read up
+        to that or its end, never relayed: its engine's death (its error event, or its stream cut before its end), and
+        its saying it ended the request by order (decisions 1031 and 1054), which binds nothing whatever came before.
+        recent: the bytes read just before, where an event split across two reads began (the 7th review of v1.43.0).
+        Read for an order alone until v1.44.0, and only after a death relayed (decision 1112)."""
+        deadline, tail, part, death = time.monotonic() + PAIR_ORDER_GRACE_S, recent[-4096:], b"", False
         try:
             while True:
                 left_s = deadline - time.monotonic()
                 if left_s <= 0:
-                    return False
+                    return death, False
                 if sock is not None:
                     sock.settimeout(left_s)
                 b = resp.read1(65536)
                 if not b:
-                    return False
+                    return death, False
                 tail = (tail + b)[-(len(b) + 4096):]
                 if b"x_alzeo_ended" in tail and ended_by_order_in(tail):
-                    return True
-        except (OSError, ValueError, http.client.HTTPException):
-            return False
+                    return death, True
+                if not death:
+                    if sse:
+                        death = HOP_CLOSED_B in tail or (b"EngineCore" in tail and bool(ENGINE_DIED_RE.search(tail)))
+                    else:
+                        lines, part = whole_lines(part, b)
+                        death = bool(lines) and ndjson_death(lines)
+        except (OSError, ValueError, http.client.HTTPException) as e:
+            # cut before its end: its engine's death, as a cut is while its client reads (UPSTREAM CUT pair); the
+            # grace over, or this box's watch ending the connection, is no death
+            over = (isinstance(e, TimeoutError) or time.monotonic() >= deadline
+                    or getattr(self, "_pair_watch_shut", False))
+            return death or not over, False
 
     def _sampling_refused(self, body):
         """True when the sampling guard answered this body: a 400 for a field the engine dies on,
