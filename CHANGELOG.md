@@ -1,5 +1,23 @@
 # Changelog
 
+## v1.44.0 (2026-11-05): the 27B lane starts without torch.compile, ready in about half the time
+
+**The 27B lane starts without torch.compile.** Its units and run.sh started SGLang with `--enable-torch-compile
+--torch-compile-max-bs 4`. Measured on the reference box on 2026-11-05, one after the other within the hour on the
+same image (v0.5.22), three runs of the official benchmark each (8,192 tokens in, 1,024 out, medians): with it, 42.9
+tok/s at one request and 77.0 at four, and the engine ready in 371 s; without it, 44.0 and 80.6, ready in 208 s. GSM8K
+gave 0.992 against 0.988 on 250 questions, and bench.sh's short greedy prompts 65.2 and 68.5 against 71.0 and 67.4,
+spreads that overlap. It also kept the lane from SGLang v0.5.23, which decodes ten times slower with it at one request
+(3.6 against 37.3 tok/s) and as fast as v0.5.22 without it (decision 1102). The 64 GB unit follows without a measure
+of its own: no 64 GB box was at hand.
+
+**What an update does.** The 27B's unit changes. A box that serves the 27B restarts it during the update, about 3.5
+minutes on the reference box, the proxy holding requests meanwhile. A box that serves another lane starts the 27B
+without torch.compile at its next Load.
+
+**Tests.** tests/test_27b_no_torch_compile.py: none of the 27B's launches (its three units and run.sh) passes either
+flag. It fails on v1.43.0.
+
 ## v1.43.0 (2026-11-05): two boxes that serve one model share its requests, a conversation staying on the box that holds it
 
 **Two boxes that serve one model share its requests.** Until now, the box a request was sent to served every model it
