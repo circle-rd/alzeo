@@ -7570,7 +7570,16 @@ class H(BaseHTTPRequestHandler):
         death read already decided, its order seen then binding nothing whatever the read at the cut says. One place
         for the SSE and the other answers: the 9th review's fix reached the SSE path alone, and an Ollama stream or a
         non-streamed answer was still cut before it was bound, its retry free to reach the other box (the 10th review
-        of v1.43.0, 2026-11-05)."""
+        of v1.43.0, 2026-11-05). Cut by its engine, it generates no more: out of every stop's reach from here, where a
+        floor stop that landed during the read below counted it as stopped, started its episode for nothing, and left
+        it unbound; a stop of this proxy's that marked it first is an order, which binds nothing (the 11th review)."""
+        with _GEN_LOCK:
+            stopped = getattr(self, "_stop_why", None)
+            if not stopped:
+                _GENERATIONS.discard(self)
+        if stopped:
+            self._say_ended_by_order()      # a hop's box is told, as _cut_stopped tells it (decision 1031)
+            return
         hop = self._pair_hop()
         fp = getattr(self, "_killer_fp", None) if PAIR_KILLER_KEEP_S > 0 else None
         ordered = bool((hop and not getattr(self, "_said_ended", False)) or fp) and unit_stopping_by_order()

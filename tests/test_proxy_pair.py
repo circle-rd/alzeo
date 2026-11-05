@@ -3472,6 +3472,68 @@ class TwoBoxesServeOneModel(PairFixture, unittest.TestCase):
         self.assertEqual(m.killer_box(fp), "", "the cut reached its client before the request was bound")
         self.assertEqual(len(reads), 1, "the cut read systemd more than once")
 
+    def test_a_cut_during_a_floor_stop_is_bound_and_no_stop_counts_it(self):
+        # the cockpit's floor stop landed during the systemd read of an engine's cut: it counted the stream, cut by its
+        # engine, as stopped, started the floor's episode for nothing, and the stream was left unbound, its retry free to
+        # reach the other box's engine (decision 1019; the 11th review of v1.43.0, 2026-11-05)
+        if not self.INPROC:
+            self.skipTest("the stop is made in this test's process")
+        m = self.mod
+        saved = m.unit_stopping_by_order
+        stops = []
+
+        def a_stop_meanwhile():
+            if not stops:
+                stops.append(m.stop_generations("this test's memory floor", floor=True))
+            return False
+        m.unit_stopping_by_order = a_stop_meanwhile
+        self.addCleanup(setattr, m, "unit_stopping_by_order", saved)
+        floor = dict(m._FLOOR)                                                  # the floor's state, given back
+        self.addCleanup(lambda: (m._FLOOR.clear(), m._FLOOR.update(floor)))
+        self.E1.mode = "ndjson_cut"
+        body = {"model": "qwen3.8-27b", "messages": [{"role": "user", "content": "an ollama stream"}], "stream": True,
+                "user": "conv-cut-floor-0"}
+        raw = json.dumps(body).encode()
+        c = http.client.HTTPConnection("127.0.0.1", self.port1, timeout=30)
+        self.addCleanup(c.close)
+        c.request("POST", "/api/chat", raw, {"Content-Type": "application/json", "Authorization": f"Bearer {KEY_1}"})
+        resp = c.getresponse()
+        try:
+            while resp.read1(65536):
+                pass
+        except (OSError, http.client.HTTPException):
+            pass                                                                # cut
+        self.assertIn("conv-cut-floor-0", self.E1.users, "the test needs this box's engine to have it")
+        self.assertEqual(len(stops), 1, "the test needs its stop")
+        self.assertEqual(stops[0][0], 0, "a stream its engine had cut was counted as stopped")
+        self.assertEqual(m.killer_box(m.body_fingerprint(raw, "/api/chat")), "", "a cut during a stop was left unbound")
+
+    def test_a_cut_under_an_order_binds_nothing_and_tells_the_hops_box(self):
+        # the two ordered outcomes of an engine's cut with no death before it had no test (the 11th review of v1.43.0,
+        # 2026-11-05): this box's own client's request stays unbound (decisions 1030 and 1041), and a request the other
+        # box sent is said ended by order in its stream (decision 1031)
+        if not self.INPROC:
+            self.skipTest("the unit's job is said in this test's process")
+        m = self.mod
+        saved = m.unit_stopping_by_order
+        m.unit_stopping_by_order = lambda: True
+        self.addCleanup(setattr, m, "unit_stopping_by_order", saved)
+        self.E1.mode = "cut"
+        r = dict(self.turns("conv-cut-ordered", 1)[0], stream=True)
+        try:
+            self.call("/v1/chat/completions", r)
+        except http.client.IncompleteRead:
+            pass                                                                # cut, as its engine's end was
+        self.assertIn("conv-cut-ordered-0", self.E1.users, "the test needs this box's engine to have it")
+        self.assertIsNone(m.killer_box(m.body_fingerprint(json.dumps(r).encode(), "/v1/chat/completions")),
+                          "a cut under an order bound this box's own request")
+        try:
+            st, out, _ = self.tls_call(self.pport1, "/v1/chat/completions",
+                                       dict(self.chat("qwen3.8-27b"), user="hop-cut-ordered", stream=True))
+        except http.client.IncompleteRead as e:                                 # cut, its order said before
+            out = e.partial
+        self.assertIn(b'"x_alzeo_ended":"order"', out, out[-400:])
+
     def test_an_ndjson_cut_is_bound_before_its_client_sees_it(self):
         # the 9th review's fix reached SSE streams alone: an Ollama stream, or a non-streamed answer, was cut to its client
         # before its request was bound, and its retry went to the other box (decision 1019; the 10th review of v1.43.0,
@@ -4331,6 +4393,12 @@ class TwoBoxesServeOneModelInProcess(TwoBoxesServeOneModel):
 
     def test_an_ndjson_cut_is_bound_before_its_client_sees_it(self):
         super().test_an_ndjson_cut_is_bound_before_its_client_sees_it()
+
+    def test_a_cut_during_a_floor_stop_is_bound_and_no_stop_counts_it(self):
+        super().test_a_cut_during_a_floor_stop_is_bound_and_no_stop_counts_it()
+
+    def test_a_cut_under_an_order_binds_nothing_and_tells_the_hops_box(self):
+        super().test_a_cut_under_an_order_binds_nothing_and_tells_the_hops_box()
 
     def test_a_death_whose_own_read_saw_the_order_stays_unbound_at_the_cut(self):
         super().test_a_death_whose_own_read_saw_the_order_stays_unbound_at_the_cut()
