@@ -6774,8 +6774,13 @@ class H(BaseHTTPRequestHandler):
                         if not put(rec): break
             except Exception as e:
                 if not stop.is_set() and not drain.is_set():
-                    try: q.put(("e", str(e).encode()), timeout=5)
-                    except Exception: pass
+                    self._generates_no_more()       # cut by its engine: out of every stop's reach from now
+                    # put until the relay takes it, as the end below is: put once with 5 s to wait, it was dropped
+                    # when the queue stayed full that long (a client that read nothing), and the end that followed
+                    # closed the client's stream as whole on a cut answer (the 12th review of v1.43.0, 2026-11-05)
+                    while not stop.is_set() and not drain.is_set():
+                        try: q.put(("e", str(e).encode()), timeout=2); break
+                        except queue.Full: pass
             finally:
                 # an if and its else, not a return: a return in a finally swallows what is
                 # raising, and Python 3.14 warns of it at compile time (PEP 765)
@@ -6785,6 +6790,7 @@ class H(BaseHTTPRequestHandler):
                     try: resp.close()
                     except Exception: pass
                 else:
+                    self._generates_no_more()       # its engine's stream ended: nothing generates any more
                     if buf and not stop.is_set():
                         try: q.put(("d", buf), timeout=2)
                         except Exception: pass
@@ -6858,6 +6864,7 @@ class H(BaseHTTPRequestHandler):
             if self._first is None: self._first = now
             self._last = now; self._bytes += len(val)
             if b"EngineCore" in val and ENGINE_DIED_RE.search(val):
+                self._generates_no_more()   # dead: out of every stop's reach before systemd is read below
                 self._killed_here()         # vLLM's engine died during this answer (decision 1019)
                 died = True
                 if self._pair_hop() and unit_stopping_by_order():
@@ -7585,11 +7592,7 @@ class H(BaseHTTPRequestHandler):
         of v1.43.0, 2026-11-05). Cut by its engine, it generates no more: out of every stop's reach from here, where a
         floor stop that landed during the read below counted it as stopped, started its episode for nothing, and left
         it unbound; a stop of this proxy's that marked it first is an order, which binds nothing (the 11th review)."""
-        with _GEN_LOCK:
-            stopped = getattr(self, "_stop_why", None)
-            if not stopped:
-                _GENERATIONS.discard(self)
-        if stopped:
+        if self._generates_no_more():
             self._say_ended_by_order()      # a hop's box is told, as _cut_stopped tells it (decision 1031)
             return
         hop = self._pair_hop()
@@ -7601,6 +7604,20 @@ class H(BaseHTTPRequestHandler):
             self._unbind_killer("")         # the binding before it given back (decision 1019)
         elif not died:
             self._killed_here(ordered)      # it died during its answer (decision 1019)
+
+    def _generates_no_more(self):
+        """Its engine's end is known (its death said in its stream, its cut, its stream's end): out of every stop's reach
+        from here, where a stop counted it as stopped, started the floor's episode for nothing, and cut it as stopped.
+        Left in until the cut was handled (the 11th review), it was still in reach during the systemd reads at a death
+        and at a dead stream's clean end, and while the relay wrote the last events to a slow client: an engine's cut
+        then reached its client as a stop, and was left unbound; a hop's real death relayed, a floor stop after it had
+        that box told the request ended by order, which undid its binding there (the 12th review of v1.43.0,
+        2026-11-05). The stop that marked it first, if one did, is returned: that stop came before the end, an order."""
+        with _GEN_LOCK:
+            stopped = getattr(self, "_stop_why", None)
+            if not stopped:
+                _GENERATIONS.discard(self)
+        return stopped
 
     def _killed_here(self, ordered=None):
         """This box's engine closed the connection on this request, before its answer or during it (decision 1019):
@@ -7645,8 +7662,12 @@ class H(BaseHTTPRequestHandler):
         threading.Thread(target=later, daemon=True).start()
 
     def _unbind_killer(self, box):
-        """This request's binding to box undone, an order said after it: the binding before it comes back."""
-        killer_forget(self._killer_fp, box, getattr(self, "_killer_before", None))
+        """This try's binding to box undone, an order said after it: the binding before it comes back. A try that bound
+        nothing, its death read having seen the order already, undoes nothing: at its ordered end it erased the
+        binding an earlier real death of the same body had made, and the next retry was free to reach the other box
+        (the 12th review of v1.43.0, 2026-11-05)."""
+        if getattr(self, "_killer_bound", False):
+            killer_forget(self._killer_fp, box, getattr(self, "_killer_before", None))
 
     def _pair_lost(self, pick, name, conf, local):
         """A 503 for a request box pick had whole and closed the connection on with no answer: it is not run here
@@ -8167,6 +8188,10 @@ class H(BaseHTTPRequestHandler):
         # slip through unmeasured; _is_prompt_route adds them without changing the
         # /v1/ behavior that was already correct.
         gen = bool(body) and _is_prompt_route(self.path.split("?", 1)[0]) and not count_only
+        # what this try binds, and what that replaced, are its own (decision 1019): kept for the whole request, a try
+        # held and sent again that ended by order undid the binding the try before it had made at a real death, and
+        # so did the 3 s reads once its client left (the 12th review of v1.43.0, 2026-11-05)
+        self._killer_bound, self._killer_before = False, None
         if gen:
             # v6.47: a stop reaches this request from here on (STOP_PATH), and a new generation waits
             # while the box is short of memory (floor_refusal)

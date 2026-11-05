@@ -3508,6 +3508,127 @@ class TwoBoxesServeOneModel(PairFixture, unittest.TestCase):
         self.assertEqual(m.killer_box(fp), "", "the cut reached its client before the request was bound")
         self.assertEqual(len(reads), 1, "the cut read systemd more than once")
 
+    def _sent(self, raw):
+        """raw sent to this box as its own client's request: what it got, cut or ended."""
+        c = http.client.HTTPConnection("127.0.0.1", self.port1, timeout=30)
+        try:
+            c.request("POST", "/v1/chat/completions", raw,
+                      {"Content-Type": "application/json", "Authorization": f"Bearer {KEY_1}"})
+            try:
+                return c.getresponse().read()
+            except http.client.IncompleteRead as e:
+                return e.partial
+        finally:
+            c.close()
+
+    def test_a_retry_that_bound_nothing_keeps_the_binding_a_death_before_it_made(self):
+        # a retry whose death read saw its lane's stop bound nothing, and at its ordered end undid the binding an earlier
+        # real death of the same body had made, the next retry free to reach the other box (decision 1019; the 12th
+        # review of v1.43.0, 2026-11-05)
+        if not self.INPROC:
+            self.skipTest("the binding is read in this test's process")
+        m = self.mod
+        ordered = {"now": False}
+        saved = m.unit_stopping_by_order
+        m.unit_stopping_by_order = lambda: ordered["now"]
+        self.addCleanup(setattr, m, "unit_stopping_by_order", saved)
+        self.E1.mode = "vllm_dead_stream"
+        raw = json.dumps(dict(self.turns("conv-unbound-retry", 1)[0], stream=True)).encode()
+        fp = m.body_fingerprint(raw, "/v1/chat/completions")
+        self.assertIn(b"EngineCore", self._sent(raw))
+        self.assertEqual(m.killer_box(fp), "", "the test needs the first death bound here")
+        ordered["now"] = True                   # its lane's stop job: the retry's death is the order's, seen at once
+        self.assertIn(b"EngineCore", self._sent(raw))
+        self.assertEqual(self.E1.users.count("conv-unbound-retry-0"), 2, "the test needs the retry served here")
+        self.assertEqual(m.killer_box(fp), "", "a retry that bound nothing undid the binding of a death before it")
+
+    def test_a_try_ended_by_order_keeps_the_binding_its_first_try_made(self):
+        # its first try closed by its engine (a real death: bound), the request held and sent again: the second try's
+        # ordered end undid the first try's binding, the binding state kept for the whole request (decision 1019; the
+        # 12th review of v1.43.0, 2026-11-05)
+        if not self.INPROC:
+            self.skipTest("the binding is read in this test's process")
+        m = self.mod
+        ordered = {"now": False}
+        saved = m.unit_stopping_by_order
+        m.unit_stopping_by_order = lambda: ordered["now"]
+        self.addCleanup(setattr, m, "unit_stopping_by_order", saved)
+        held = m.H._hold
+
+        def back_at_once(h, why, streamed):
+            ordered["now"] = True               # the try sent again runs as its lane is stopped by order
+            self.E1.mode = "vllm_dead_stream"
+            return True
+        m.H._hold = back_at_once
+        self.addCleanup(setattr, m.H, "_hold", held)
+        self.E1.mode = "die"
+        raw = json.dumps(dict(self.turns("conv-two-tries", 1)[0], stream=True)).encode()
+        fp = m.body_fingerprint(raw, "/v1/chat/completions")
+        out = self._sent(raw)
+        self.assertEqual(self.E1.users.count("conv-two-tries-0"), 2, "the test needs both tries on this box's engine")
+        self.assertIn(b"EngineCore", out)
+        self.assertEqual(m.killer_box(fp), "", "a try ended by order undid the binding its first try made")
+
+    def test_a_stop_during_a_dead_streams_reads_counts_nothing_and_holds_nothing_back(self):
+        # dead, a vLLM stream stayed a stop target while systemd was read at its death and at its clean end: a floor stop
+        # that landed then counted it, started the floor's episode, and new generations were refused for nothing (the
+        # 12th review of v1.43.0, 2026-11-05)
+        if not self.INPROC:
+            self.skipTest("the stop is made in this test's process")
+        m = self.mod
+        saved = m.unit_stopping_by_order
+        self.addCleanup(setattr, m, "unit_stopping_by_order", saved)
+        floor = dict(m._FLOOR)                                                  # the floor's state, given back
+        self.addCleanup(lambda: (m._FLOOR.clear(), m._FLOOR.update(floor)))
+        self.E1.mode = "vllm_dead_more"         # its death said, its stream's end 2 s later
+        for which in (1, 2):                    # the read at its death, the read at its clean end
+            with self.subTest(read=which):
+                m._FLOOR.clear(); m._FLOOR.update(floor)                        # no episode of the read before
+                reads, stops = [], []
+
+                def a_stop_meanwhile():
+                    reads.append(1)
+                    if len(reads) == which:
+                        stops.append(m.stop_generations("this test's memory floor", floor=True))
+                    return False
+                m.unit_stopping_by_order = a_stop_meanwhile
+                out = self._sent(json.dumps(dict(self.turns(f"conv-dead-read-{which}", 1)[0], stream=True)).encode())
+                self.assertIn(b"EngineCore", out)
+                self.assertEqual(len(stops), 1, "the test needs its stop")
+                self.assertEqual(stops[0][0], 0, "a dead stream was counted as stopped")
+                self.assertIsNone(m.floor_refusal(), "a floor that stopped nothing held new generations back")
+
+    def test_a_hops_death_relayed_is_never_said_an_order_by_a_stop_after_it(self):
+        # this box's engine died on a request the other box sent, the death relayed to it, and a floor stop here before
+        # the stream's end counted the dead stream and cut it as stopped, telling that box the request ended by order,
+        # which undid the binding its real death had made there (decision 1019; the 12th review of v1.43.0, 2026-11-05)
+        if not self.INPROC:
+            self.skipTest("the stop is made in this test's process")
+        m = self.mod
+        floor = dict(m._FLOOR)
+        self.addCleanup(lambda: (m._FLOOR.clear(), m._FLOOR.update(floor)))
+        self.E1.mode = "vllm_dead_more"         # its death said, then more events for 2 s before its end
+        got = {}
+
+        def hop():
+            try:
+                got["out"] = self.tls_call(self.pport1, "/v1/chat/completions",
+                                           dict(self.chat("qwen3.8-27b"), user="hop-dead-then-stop", stream=True))[1]
+            except http.client.IncompleteRead as e:
+                got["out"] = e.partial
+        th = threading.Thread(target=hop, daemon=True)
+        th.start()
+        deadline = time.monotonic() + 10
+        while "hop-dead-then-stop" not in self.E1.users and time.monotonic() < deadline:
+            time.sleep(0.02)
+        self.assertIn("hop-dead-then-stop", self.E1.users, "the test needs this box's engine to have it")
+        time.sleep(0.6)                         # its death relayed (0.15 s in), its stream not over (2 s)
+        stopped = m.stop_generations("this test's memory floor", floor=True)
+        th.join(30)
+        self.assertEqual(stopped[0], 0, "a dead stream was counted as stopped")
+        self.assertIn(b"EngineCore", got.get("out", b""))
+        self.assertNotIn(b"x_alzeo_ended", got["out"], "a real death relayed was then said an order")
+
     def test_a_cut_during_a_floor_stop_is_bound_and_no_stop_counts_it(self):
         # the cockpit's floor stop landed during the systemd read of an engine's cut: it counted the stream, cut by its
         # engine, as stopped, started the floor's episode for nothing, and the stream was left unbound, its retry free to
@@ -4522,6 +4643,18 @@ class TwoBoxesServeOneModelInProcess(TwoBoxesServeOneModel):
     def test_a_cut_during_a_floor_stop_is_bound_and_no_stop_counts_it(self):
         super().test_a_cut_during_a_floor_stop_is_bound_and_no_stop_counts_it()
 
+    def test_a_retry_that_bound_nothing_keeps_the_binding_a_death_before_it_made(self):
+        super().test_a_retry_that_bound_nothing_keeps_the_binding_a_death_before_it_made()
+
+    def test_a_try_ended_by_order_keeps_the_binding_its_first_try_made(self):
+        super().test_a_try_ended_by_order_keeps_the_binding_its_first_try_made()
+
+    def test_a_stop_during_a_dead_streams_reads_counts_nothing_and_holds_nothing_back(self):
+        super().test_a_stop_during_a_dead_streams_reads_counts_nothing_and_holds_nothing_back()
+
+    def test_a_hops_death_relayed_is_never_said_an_order_by_a_stop_after_it(self):
+        super().test_a_hops_death_relayed_is_never_said_an_order_by_a_stop_after_it()
+
     def test_a_cut_under_an_order_binds_nothing_and_tells_the_hops_box(self):
         super().test_a_cut_under_an_order_binds_nothing_and_tells_the_hops_box()
 
@@ -4676,6 +4809,108 @@ class ThePairsPieces(unittest.TestCase):
         self.pair_file.write_text(json.dumps(conf))
         self.mod._PAIR["seen"] = 0.0
         return self.mod.pair_conf()
+
+    def _relayed_behind_a_frozen_client(self, n, fp=None, meanwhile=None, cut=True):
+        """A stream of n events relayed by a bare handler, its engine's cut after them (or its end, cut=False), its client
+        frozen at its 51st write until that was read and 5.5 s more (the queue of 1024 events full all that time with
+        n = 1075): meanwhile(h) runs during that freeze. What the relay ended with."""
+        m = self.mod
+        got, writes, cut_read = [], [], threading.Event()
+
+        class Resp:
+            status = 200
+            headers = {"Content-Type": "text/event-stream"}
+
+            def __init__(self):
+                self.n = 0
+
+            def read1(self, size):
+                self.n += 1
+                if self.n <= n:
+                    return b'data: {"choices":[{"index":0,"delta":{"content":"x"}}]}\n\n'
+                cut_read.set()
+                if not cut:
+                    return b""                                          # the engine's stream ends
+                raise http.client.IncompleteRead(b"", 10)              # the engine dies: its stream cut
+
+            def close(self):
+                pass
+
+        class Conn:
+            def shutdown(self, how):
+                got.append("shutdown")
+
+        def chunk(b):
+            if len(writes) == 50 and not cut_read.is_set():
+                cut_read.wait(10)
+                if meanwhile:
+                    meanwhile(h)
+                time.sleep(5.5)                 # past the 5 s a put of the cut waited before it was dropped
+            writes.append(b)
+        h = object.__new__(m.H)
+        h.path, h._t0, h._first, h._last, h._bytes = "/v1/chat/completions", time.time(), None, None, 0
+        h._stop_why, h._pair_box, h._killer_fp, h._killer_bound, h._killer_before = None, None, fp, False, None
+        h._peer, h._held_sse, h.connection = "test", True, Conn()     # a stream the hold opened: no headers to write
+        h._abort_upstream = lambda why: True
+        h._note_rid = lambda v: None
+        h._scan_corruption = lambda v: False
+        h._watch_tools = lambda v, a: None
+        h._chunk = chunk
+        h._finish = lambda: got.append("finish")
+        h._done = lambda outcome, quiet=False: got.append(outcome)
+        with m._GEN_LOCK:
+            m._GENERATIONS.add(h)               # as _forward adds it
+        self.addCleanup(m._gen_discard, h)
+        h._relay_inner(Resp())
+        return got
+
+    def test_an_engines_cut_behind_a_client_that_reads_nothing_is_never_a_whole_answer(self):
+        # the pump put the cut once, with 5 s to wait: the queue full that long behind a client that read nothing, it was
+        # dropped, the end that followed went in, and the client's stream was closed as whole on a cut answer (the 12th
+        # review of v1.43.0, 2026-11-05)
+        got = self._relayed_behind_a_frozen_client(1075)
+        self.assertNotIn("finish", got, "a cut answer was ended as whole")
+        self.assertEqual(got[-1], "UPSTREAM CUT", got)
+
+    def test_an_engines_cut_waiting_behind_a_slow_client_is_no_stop_target(self):
+        # cut by its engine while its relay wrote the events before the cut to a slow client: a stop then counted it and
+        # cut it as stopped, and the cut was left unbound, its retry free to reach the other box (decision 1019; the 12th
+        # review of v1.43.0, 2026-11-05)
+        m = self.mod
+        m._KILLERS.clear()
+        self.addCleanup(m._KILLERS.clear)
+        saved = m.unit_stopping_by_order
+        m.unit_stopping_by_order = lambda: False
+        self.addCleanup(setattr, m, "unit_stopping_by_order", saved)
+        reached = []
+
+        def a_stop(h):                          # what stop_generations marks, its engine's abort aside
+            with m._GEN_LOCK:
+                targets = [x for x in m._GENERATIONS if x is h and not getattr(x, "_relaying_whole", False)]
+                for x in targets:
+                    x._mark_stopped("this test's memory floor", True)
+            reached.append(len(targets))
+        got = self._relayed_behind_a_frozen_client(1075, fp="c" * 32, meanwhile=a_stop)
+        self.assertEqual(reached, [0], "an engine's cut waiting behind a slow client was a stop target")
+        self.assertEqual(got[-1], "UPSTREAM CUT", got)
+        self.assertEqual(m.killer_box("c" * 32), "", "an engine's cut was left unbound")
+
+    def test_a_stream_ended_while_its_relay_writes_to_a_slow_client_is_no_stop_target(self):
+        # its engine's stream over, its last events still on their way to a slow client: a stop counted it, started the
+        # floor's episode for nothing, and cut the client of an answer whole at its engine (the 12th review of v1.43.0,
+        # 2026-11-05)
+        m = self.mod
+        reached = []
+
+        def a_stop(h):                          # what stop_generations marks, its engine's abort aside
+            with m._GEN_LOCK:
+                targets = [x for x in m._GENERATIONS if x is h and not getattr(x, "_relaying_whole", False)]
+                for x in targets:
+                    x._mark_stopped("this test's memory floor", True)
+            reached.append(len(targets))
+        got = self._relayed_behind_a_frozen_client(1075, meanwhile=a_stop, cut=False)
+        self.assertEqual(reached, [0], "a stream its engine had ended was a stop target")
+        self.assertEqual(got[-2:], ["finish", "ok"], got)
 
     def test_what_pair_json_may_say(self):
         colons = ":".join(ident("spark3")[1][i:i + 2] for i in range(0, 64, 2)).upper()
