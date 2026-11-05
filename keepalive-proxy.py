@@ -7627,7 +7627,7 @@ class H(BaseHTTPRequestHandler):
         """Decision 1019 for this request: its fingerprint bound to box, and what it was bound to before this request's
         first binding kept, which _unbind_killer gives back (the 8th review of v1.43.0, 2026-11-05)."""
         before = killer_note(self._killer_fp, box)
-        if not self._killer_bound:
+        if not getattr(self, "_killer_bound", False):    # set per request (_handle_inner); a handler made otherwise has none
             self._killer_bound, self._killer_before = True, before
 
     def _unbind_if_ordered_later(self):
@@ -7639,7 +7639,7 @@ class H(BaseHTTPRequestHandler):
         fp = getattr(self, "_killer_fp", None)
         if not fp or not getattr(self, "_killer_bound", False):
             return
-        before, peer = self._killer_before, self._peer
+        before, peer = getattr(self, "_killer_before", None), self._peer
 
         def later():
             for wait in (0.5, 1.0, 1.5):    # 0.5, 1.5 and 3 s after its client left
@@ -7653,7 +7653,7 @@ class H(BaseHTTPRequestHandler):
 
     def _unbind_killer(self, box):
         """This request's binding to box undone, an order said after it: the binding before it comes back."""
-        killer_forget(self._killer_fp, box, self._killer_before)
+        killer_forget(self._killer_fp, box, getattr(self, "_killer_before", None))
 
     def _pair_lost(self, pick, name, conf, local):
         """A 503 for a request box pick had whole and closed the connection on with no answer: it is not run here
