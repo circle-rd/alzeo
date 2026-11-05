@@ -133,11 +133,12 @@ list was read): the entry then serves it itself.
     the restart writes it just before its systemctl and removes it when that fails, unless systemd took the
     restart all the same or does not answer. The proxy takes a mark for the restart it was written for only,
     the unit leaving active, or changing state, within 2 minutes of it, and none older than 10 minutes
-    (decision 1062). A request whose client
-    left at a death the other box relayed is bound at once, and unbound if that box says within 5 s that it
-    ended the request by order (decisions 1054 and 1061), which it says at the stream's end too when its lane's
-    stop showed only then. A request of the entry's own client, bound at a death of its engine, is unbound the
-    same way when its lane's stop shows at the stream's end.
+    (decision 1062). A death the other box relays is bound as it is relayed, and unbound if that box says
+    within 5 s that it ended the request by order (decisions 1054 and 1061), which it says at the stream's end
+    too when its lane's stop showed only then. A request of the entry's own client, bound at a death of its
+    engine, is unbound the same way when its lane's stop shows at the stream's end, at its cut, or within 3 s of
+    its client leaving before the end. Undoing a binding gives back the one the same body had before, from an
+    earlier death.
   - While the entry's engine is away (a crash, a restart), a model its lane serves (as the command of its
     engine says, what its unit starts, or as it served last) goes to the other box only from the same
     checkpoint (decision 1018): otherwise the entry holds it while its own engine comes back, as for a model no

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Keepalive proxy in front of SGLang or vLLM (v6.53). No content logging, and the only
+"""Keepalive proxy in front of SGLang or vLLM (v6.52). No content logging, and the only
 rewriting is the tool-schema guard (role 4); two routes, POST /v1/systemone (role 5) and the
 operator's POST /proxy/stop (role 7), are answered here instead of relayed.
 
@@ -59,13 +59,6 @@ Ten roles, nothing else:
    lists every box's models (see "Two boxes behind one endpoint" below). A model both boxes serve is
    shared: a conversation stays on the box that holds its prefix, a new one goes to the box with the
    fewest requests in flight (v6.52, docs/pair.md).
-
-v6.53: a request's binding (decision 1019) undone by an order said after the death gives back the binding its
-fingerprint had before, where it erased the one an earlier death of the same body had made; a death the other box
-relays is bound as it is relayed, where the watch bound it once it saw the client gone, a retry within its second
-unbound; on the Ollama routes, an order line split where the client left is read whole, and the line end the other
-box puts before its order line stays at the entry (the 8th review of v1.43.0, 2026-11-05). A request bound at a death
-here whose client left before the stream's end reads its lane's stop again, three times over 3 s (the 9th review).
 
 v6.52: two boxes that serve one model share its requests (role 10, decisions 996 to 998). A request
 for a model this box serves, which the other box of its pair serves too, goes to the box it shares its

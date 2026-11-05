@@ -110,15 +110,23 @@ slow to say the engine's run, and one the cockpit left behind counted for a late
 counts for the restart it was written for only now, the unit's state changing within 2 minutes of it. An order split
 across two reads went unread, the words of an engine's death inside an Ollama tool call's arguments read as one, and
 the order's line on the Ollama routes could follow a line over 64 KiB with no line end. An eighth review found more,
-fixed here too. A request whose first try got the engine's 503, held and sent again, was out of every stop's reach:
-the engine's error took it for an answer relayed whole, and on SGLang a stopped Anthropic stream then ended as if
-whole, the fault v1.40.3 fixed. The cockpit removed a recovery's mark when systemd did not answer, the very case the
-mark is kept for, and once the restart's stop was done, when systemd's job reads "start". A mark stopped counting
-during a stop slower than 2 minutes: the moment the unit left active, which systemd sets once, counts now beside its
-last state change. A request of the box's own client stayed bound when its dead stream ended cut after the stop
-showed, not cleanly. And a box alone read systemd at the end of each dead stream, for nothing. A ninth review found
-three more faults in the binding at a cut, fixed here too: a cut bound its request only after its client saw it, a
-quick retry free to reach the other box meanwhile, read systemd twice for it, and bound a death whose own read had
+fixed here too, the faults it left as minor with them. A request whose first try got the engine's 503, held and sent
+again, was out of every stop's reach: the engine's error took it for an answer relayed whole, and on SGLang a stopped
+Anthropic stream then ended as if whole, the fault v1.40.3 fixed. The cockpit removed a recovery's mark when systemd
+did not answer, the very case the mark is kept for, and once the restart's stop was done, when systemd's job reads
+"start". A mark stopped counting during a stop slower than 2 minutes: the moment the unit left active, which systemd
+sets once, counts now beside its last state change. A request of the box's own client stayed bound when its dead
+stream ended cut after the stop showed, not cleanly. And a box alone read systemd at the end of each dead stream, for
+nothing. Of the faults it left as minor, an order said after a death undid that request's binding and with it the one
+an earlier real death of the same body had made, the next retry free to run on this box's engine. A death the other
+box relayed was bound once a watch that looks once a second saw its client gone, a retry within that second unbound.
+The other box's order line split across two reads where the client left went unread, and the line end it puts before
+that line after a line over 64 KiB reached the client. Undoing a binding gives back the one before it now, a relayed
+death is bound as it is relayed, and the order line is read whole and kept at the entry. And a request of the box's
+own client, bound at its engine's death, stayed bound 10 minutes after its lane's stop showed when the client left
+before the stream's end, as the SDKs do at an error event: systemd is read again three times over 3 s. A ninth review
+found three more faults in the binding at a cut, fixed here too: a cut bound its request only after its client saw it,
+a quick retry free to reach the other box meanwhile, read systemd twice for it, and bound a death whose own read had
 seen its lane's stop. A tenth review found the first fixed on SSE streams alone: an Ollama stream or a non-streamed
 answer cut by its engine is bound before its client sees the cut too. And a stop no longer counts a request whose
 engine answered an error, refused or dropped its connection before answering, or cut its answer: an eleventh review
