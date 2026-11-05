@@ -3401,6 +3401,41 @@ class TwoBoxesServeOneModel(PairFixture, unittest.TestCase):
             time.sleep(0.1)
         self.assertIsNone(m.killer_box(fp), "an order shown before the stream's cut left the request bound")
 
+    def test_a_death_here_whose_client_leaves_before_its_order_shows_is_unbound(self):
+        # its client gone at the death (the SDKs raise on that event), before the stream's end: that end, where a stop job
+        # seen late undoes the binding, never came, and the request stayed bound 10 minutes after an order (the 9th review
+        # of v1.43.0, 2026-11-05)
+        if not self.INPROC:
+            self.skipTest("the binding is read in this test's process")
+        m = self.mod
+        self.addCleanup(m._KILLERS.clear)
+        saved = m.unit_stopping_by_order
+        m.unit_stopping_by_order = lambda: self.E1.ordered_now                  # the stop job, seen after the death
+        self.addCleanup(setattr, m, "unit_stopping_by_order", saved)
+        self.E1.mode = "vllm_dead_late_order"
+        r = dict(self.turns("conv-local-leaves-first", 1)[0], stream=True)
+        raw = json.dumps(r).encode()
+        fp = m.body_fingerprint(raw, "/v1/chat/completions")
+        c = http.client.HTTPConnection("127.0.0.1", self.port1, timeout=30)
+        c.connect()
+        c.sock.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))   # it leaves with a reset
+        c.request("POST", "/v1/chat/completions", raw,
+                  {"Content-Type": "application/json", "Authorization": f"Bearer {KEY_1}"})
+        resp = c.getresponse()
+        got = b""
+        while b"EngineCore" not in got:
+            b = resp.read1(65536)
+            if not b:
+                break
+            got += b
+        self.assertIn(b"EngineCore", got)
+        self.assertEqual(m.killer_box(fp), "", "the test needs the request bound at the death")
+        resp.close()
+        c.close()                                                               # before its order shows (0.4 s on)
+        time.sleep(3.5)
+        self.assertIn("conv-local-leaves-first-0", self.E1.users, "the test needs this box's engine to have it")
+        self.assertIsNone(m.killer_box(fp), "an order shown after its client left left the request bound")
+
     def test_a_death_whose_own_read_saw_the_order_stays_unbound_at_the_cut(self):
         # its death came while its stop job ran (nothing bound), the cut was read once the job was over: the cut bound
         # it 10 minutes, as if an engine had died on it (the 9th review of v1.43.0, 2026-11-05)
@@ -4492,6 +4527,9 @@ class TwoBoxesServeOneModelInProcess(TwoBoxesServeOneModel):
 
     def test_a_death_whose_own_read_saw_the_order_stays_unbound_at_the_cut(self):
         super().test_a_death_whose_own_read_saw_the_order_stays_unbound_at_the_cut()
+
+    def test_a_death_here_whose_client_leaves_before_its_order_shows_is_unbound(self):
+        super().test_a_death_here_whose_client_leaves_before_its_order_shows_is_unbound()
 
     def test_a_cut_is_bound_before_its_client_sees_it(self):
         super().test_a_cut_is_bound_before_its_client_sees_it()

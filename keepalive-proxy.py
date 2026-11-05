@@ -64,7 +64,8 @@ v6.53: a request's binding (decision 1019) undone by an order said after the dea
 fingerprint had before, where it erased the one an earlier death of the same body had made; a death the other box
 relays is bound as it is relayed, where the watch bound it once it saw the client gone, a retry within its second
 unbound; on the Ollama routes, an order line split where the client left is read whole, and the line end the other
-box puts before its order line stays at the entry (the 8th review of v1.43.0, 2026-11-05).
+box puts before its order line stays at the entry (the 8th review of v1.43.0, 2026-11-05). A request bound at a death
+here whose client left before the stream's end reads its lane's stop again, three times over 3 s (the 9th review).
 
 v6.52: two boxes that serve one model share its requests (role 10, decisions 996 to 998). A request
 for a model this box serves, which the other box of its pair serves too, goes to the box it shares its
@@ -6837,6 +6838,8 @@ class H(BaseHTTPRequestHandler):
                     self._finish(); self._done("DROPPED upstream silent"); return
                 try: self._chunk(ka_bytes)
                 except Exception:
+                    if died:
+                        self._unbind_if_ordered_later()
                     drop_upstream(); self._done("CLIENT GONE during keepalive"); return
                 continue
             if kind == "f":
@@ -6895,6 +6898,8 @@ class H(BaseHTTPRequestHandler):
             self._watch_tools(val, anthropic)
             try: self._chunk(val)
             except Exception:
+                if died:
+                    self._unbind_if_ordered_later()
                 drop_upstream(); self._done("CLIENT GONE on write"); return
         if died and not getattr(self, "_said_ended", False) \
                 and (self._pair_hop() or getattr(self, "_killer_fp", None)) and unit_stopping_by_order():
@@ -7624,6 +7629,27 @@ class H(BaseHTTPRequestHandler):
         before = killer_note(self._killer_fp, box)
         if not self._killer_bound:
             self._killer_bound, self._killer_before = True, before
+
+    def _unbind_if_ordered_later(self):
+        """A request of this box's own client, bound at a death of its engine (decision 1019), whose client left before
+        the stream's end: that end, or its cut, reads systemd again for a stop job seen late and undoes the binding
+        (_relay_inner), and left early it stayed bound 10 minutes after an order (the 9th review of v1.43.0,
+        2026-11-05). systemd is read again three times over 3 s, off this request's thread, the binding it had before
+        given back at the first order seen."""
+        fp = getattr(self, "_killer_fp", None)
+        if not fp or not getattr(self, "_killer_bound", False):
+            return
+        before, peer = self._killer_before, self._peer
+
+        def later():
+            for wait in (0.5, 1.0, 1.5):    # 0.5, 1.5 and 3 s after its client left
+                time.sleep(wait)
+                if unit_stopping_by_order():
+                    killer_forget(fp, "", before)
+                    log(f"{peer} its lane's stop showed after its client left at its engine's death: its binding is "
+                        f"undone")
+                    return
+        threading.Thread(target=later, daemon=True).start()
 
     def _unbind_killer(self, box):
         """This request's binding to box undone, an order said after it: the binding before it comes back."""
