@@ -142,8 +142,8 @@ list was read): the entry then serves it itself.
     a cut is decided as the proxy reads it from the engine, its order read then, however far behind its client
     reads (v1.44.0), and vLLM's death on /v1/messages, which its Anthropic route says without the engine's
     words, counts as one when the engine no longer answers. When the client of a request the entry sent on
-    leaves, the entry reads what the other box still sends for 5 s: a death there binds the request, an order
-    binds nothing (decision 1112).
+    leaves, streamed or not, the entry reads what the other box still sends for 5 s: a death there binds the
+    request, an order binds nothing (decision 1112).
   - While the entry's engine is away (a crash, a restart), a model its lane serves (as the command of its
     engine says, what its unit starts, or as it served last) goes to the other box only from the same
     checkpoint (decision 1018): otherwise the entry holds it while its own engine comes back, as for a model no
