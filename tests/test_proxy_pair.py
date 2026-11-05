@@ -4810,17 +4810,23 @@ class ThePairsPieces(unittest.TestCase):
         self.mod._PAIR["seen"] = 0.0
         return self.mod.pair_conf()
 
-    def _relayed_behind_a_frozen_client(self, n, fp=None, meanwhile=None, cut=True, tail=(), freeze=0.5,
+    def _relayed_behind_a_frozen_client(self, n, fp=None, meanwhile=None, cut=True, tail=(), freeze=0.0,
                                         path="/v1/chat/completions",
                                         event=b'data: {"choices":[{"index":0,"delta":{"content":"x"}}]}\n\n'):
         """A stream of n events relayed by a bare handler, then the event of tail if any, then its engine's cut (or its
         end, cut=False). Its client is frozen once, at its 51st write, until the pump has read all of it, and freeze
         seconds more: with n = 1075 the queue of 1024 events is full all that time, and the event of tail waits there to
         be put. meanwhile(h) runs during that freeze, once the proxy took the stream out of every stop's reach, or 2 s
-        on. What the relay ended with."""
+        on; a BrokenPipeError it raises is the client leaving. What the relay ended with; what the client got is in
+        self.relayed. The relay gives up past 20 s of silence: a test whose end never comes fails, never hangs for the
+        hour of MAX_SILENCE_S (the 15th review of v1.43.0, 2026-11-05)."""
         assert len(tail) <= 1, "the pump reads one event past a full queue"
         m = self.mod
-        got, writes, read_all, frozen = [], [], threading.Event(), []
+        got, writes, read_all, frozen, errors = [], [], threading.Event(), [], []
+        self.relayed = writes
+        silent = m.MAX_SILENCE_S
+        m.MAX_SILENCE_S = 20
+        self.addCleanup(setattr, m, "MAX_SILENCE_S", silent)
 
         class Resp:
             status = 200
@@ -4856,8 +4862,14 @@ class ThePairsPieces(unittest.TestCase):
                 until = time.monotonic() + 2
                 while h in m._GENERATIONS and time.monotonic() < until:
                     time.sleep(0.01)
+                frozen.append(h._relay_q.full())    # what the test is about: the queue full behind its client
                 if meanwhile:
-                    meanwhile(h)
+                    try:
+                        meanwhile(h)
+                    except BrokenPipeError:
+                        raise                       # the client leaves
+                    except Exception as e:          # noqa: BLE001 - said after the relay, not taken for a client gone
+                        errors.append(e)
                 time.sleep(freeze)
             writes.append(b)
         h = object.__new__(m.H)
@@ -4875,6 +4887,9 @@ class ThePairsPieces(unittest.TestCase):
             m._GENERATIONS.add(h)               # as _forward adds it
         self.addCleanup(m._gen_discard, h)
         h._relay_inner(Resp())
+        if errors:
+            raise errors[0]
+        self.assertEqual(frozen, [1, True], "the test needs its client frozen once, the queue full behind it")
         return got
 
     def _a_stop(self, reached):
@@ -4950,6 +4965,29 @@ class ThePairsPieces(unittest.TestCase):
                                                    tail=(b"data: [DONE]\n\n",))
         self.assertEqual(reached, [0], "an answer whose end the pump had read was a stop target")
         self.assertEqual(got[-2:], ["finish", "ok"], got)
+        self.assertEqual(self.relayed[-1], b"data: [DONE]\n\n", "the end did not reach the client")
+
+    def test_an_end_by_order_read_behind_a_client_that_leaves_once_the_order_is_over_binds_nothing(self):
+        # a death or a cut the pump read while the lane's stop job ran, the client gone once the job was over: decided
+        # when the client was found gone, systemd read then, it was bound 10 minutes, an order binding its request
+        # (decisions 1030 and 1041; the 14th review of v1.43.0, which withdrew that decision, decision 1088)
+        m = self.mod
+        self._bindings_read_here()
+        ordered = {"now": True}
+        m.unit_stopping_by_order = lambda: ordered["now"]
+
+        def the_job_over_then_the_client_gone(h):
+            ordered["now"] = False
+            raise BrokenPipeError("the client left")
+        for name, kw in (("death", {"cut": False, "tail": (b"data: " + VLLM_DEAD_EVENT + b"\n\n",)}),
+                         ("cut", {"cut": True})):
+            with self.subTest(end=name):
+                ordered["now"] = True
+                fp = ("o" if name == "death" else "p") * 32
+                got = self._relayed_behind_a_frozen_client(1075, fp=fp, meanwhile=the_job_over_then_the_client_gone,
+                                                           **kw)
+                self.assertEqual(got[-1], "CLIENT GONE on write", got)
+                self.assertIsNone(m.killer_box(fp), f"a {name} by order was bound once its client left")
 
     def test_an_anthropic_end_read_behind_a_client_that_reads_nothing_is_no_stop_target(self):
         # message_stop, the end of the Anthropic dialect Claude Code reads, read by the pump and waiting to be put in a
@@ -4963,6 +5001,8 @@ class ThePairsPieces(unittest.TestCase):
             tail=(b'event: message_stop\ndata: {"type":"message_stop"}\n\n',))
         self.assertEqual(reached, [0], "an Anthropic answer whose end the pump had read was a stop target")
         self.assertEqual(got[-2:], ["finish", "ok"], got)
+        self.assertEqual(self.relayed[-1], b'event: message_stop\ndata: {"type":"message_stop"}\n\n',
+                         "the end did not reach the client")
 
     def test_what_pair_json_may_say(self):
         colons = ":".join(ident("spark3")[1][i:i + 2] for i in range(0, 64, 2)).upper()
