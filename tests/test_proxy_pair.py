@@ -2923,9 +2923,15 @@ class TwoBoxesServeOneModel(PairFixture, unittest.TestCase):
             self.skipTest("the pair is read in this test's process")
         m = self.mod
         self.addCleanup(m._KILLERS.clear)
+        # the pair port's keeper waits while pair.json reads as dissolved here: seeing it (it looks every 2 s), it closed
+        # this box's pair port and opened another (PAIR_PORT=0), and the next tests' connections to the port they knew
+        # were refused (the whole file run alone, 2026-11-05)
+        m.PAIR_PORT_KEEPER._lock.acquire()
+        self.addCleanup(m.PAIR_PORT_KEEPER._lock.release)
         saved = m.pair_conf
         m.pair_conf = lambda: {"name": "spark1", "peers": []}
         self.addCleanup(setattr, m, "pair_conf", saved)
+        port = m.PAIR_PORT_KEEPER.srv.server_address[1]
         r = self.turns("conv-bound-dissolved", 1)[0]
         m.killer_note(m.body_fingerprint(json.dumps(r).encode(), "/v1/chat/completions"), "spark2")
         st, out, _ = self.call("/v1/chat/completions", r)
@@ -2934,6 +2940,8 @@ class TwoBoxesServeOneModel(PairFixture, unittest.TestCase):
         self.assertNotIn("conv-bound-dissolved-0", self.E1.users)
         st, out, _ = self.call("/v1/chat/completions", self.turns("conv-not-bound", 1)[0])
         self.assertEqual(st, 200, out[:300])                                    # an unbound one is served as on a box alone
+        time.sleep(2.5)                                                         # past a look of the keeper
+        self.assertEqual(m.PAIR_PORT_KEEPER.srv.server_address[1], port, "the pair port moved under the next tests")
 
     def test_a_request_bound_to_a_box_that_left_the_pair_goes_nowhere(self):
         # decision 1019: bound to a box no longer in pair.json, it was served here, the fallback 1019 rules out
