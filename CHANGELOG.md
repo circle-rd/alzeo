@@ -122,19 +122,31 @@ an earlier real death of the same body had made, the next retry free to run on t
 box relayed was bound once a watch that looks once a second saw its client gone, a retry within that second unbound.
 The other box's order line split across two reads where the client left went unread, and the line end it puts before
 that line after a line over 64 KiB reached the client. Undoing a binding gives back the one before it now, a relayed
-death is bound as it is relayed, and the order line is read whole and kept at the entry. And a request of the box's
-own client, bound at its engine's death, stayed bound 10 minutes after its lane's stop showed when the client left
-before the stream's end, as the SDKs do at an error event: systemd is read again three times over 3 s. A ninth review
-found three more faults in the binding at a cut, fixed here too: a cut bound its request only after its client saw it,
-a quick retry free to reach the other box meanwhile, read systemd twice for it, and bound a death whose own read had
-seen its lane's stop. A tenth review found the first fixed on SSE streams alone: an Ollama stream or a non-streamed
-answer cut by its engine is bound before its client sees the cut too. And a stop no longer counts a request whose
-engine answered an error, refused or dropped its connection before answering, or cut its answer: an eleventh review
-found a stream cut by its engine still counted by a stop that landed during the read of systemd at the cut, and left
-unbound: v1.42.1 counted such a request as stopped and cut its client, and after a floor stop held new generations
-back while nothing was generating. tests/test_proxy_pair.py has two boxes that serve the 27B from their start, each
-rule its test there or in the proxy's and the cockpit's other test files, and each test fails on v1.42.1 or on the
-commit before its fix.
+death is bound as it is relayed, and the order line is read whole and kept at the entry, with the line end before it
+when the entry holds nothing of the unended line; when it still holds part of a line over 64 KiB, that line reaches
+the client ended, a JSON error there instead of a cut: known, not fixed in this release. A ninth review found four
+more faults in the binding, fixed here too: a cut bound its request only after its client saw it, a quick retry free
+to reach the other box meanwhile, read systemd twice for it, and bound a death whose own read had seen its lane's
+stop. And a request of the box's own client, bound at its engine's death, stayed bound 10 minutes after its lane's
+stop showed when the client left before the stream's end, as the SDKs do at an error event: systemd is read again
+three times over the 3 s after the proxy finds the client gone. A tenth review found the first of them fixed on SSE
+streams alone: an Ollama stream or a non-streamed answer cut by its engine is bound before its client sees the cut
+too. And a stop no longer counts a request whose engine answered an error, refused or dropped its connection before
+answering, or cut its answer: an eleventh review found a stream cut by its engine still counted by a stop that landed
+during the read of systemd at the cut, and left unbound: v1.42.1 counted such a request as stopped and cut its client,
+and after a floor stop held new generations back while nothing was generating. A twelfth review found more, fixed here
+too (decision 1082). A retry whose death read had seen its lane's stop bound nothing, yet at its ordered end undid the
+binding an earlier real death of the same body had made, the next retry free to reach the other box, and a request
+held and sent again did the same to the binding of its own first try: only the binding a try made is undone now, and
+each try's is its own. A stream whose engine died stayed a stop target while systemd was read at its death and at its
+clean end, and so did an engine's cut while the relay wrote the events before it to a slow client: a stop then counted
+it, started the floor's episode for nothing and cut it as stopped, the cut left unbound, and a death relayed to the
+other box was then said there to be an order, which undid its binding. A stream is out of every stop's reach once its
+engine's end is known now: its death said in the stream, its cut, its end. And the engine's cut was dropped when the
+client read nothing for 5 s while 1,024 events waited for it, the stream's end then closing the client's stream as
+whole on a cut answer: the cut waits for room now, as the end does. tests/test_proxy_pair.py has two boxes that serve
+the 27B from their start, each rule its test there or in the proxy's and the cockpit's other test files, and each test
+fails on v1.42.1 or on the commit before its fix.
 
 **Ollama clients get their stream as it comes.** The proxy relayed every answer that is not SSE in blocks of 64 KiB,
 so a client of the Ollama routes (`/api/chat`, `/api/generate`) got its NDJSON stream in bursts, most answers whole at

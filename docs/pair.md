@@ -137,8 +137,8 @@ list was read): the entry then serves it itself.
     within 5 s that it ended the request by order (decisions 1054 and 1061), which it says at the stream's end
     too when its lane's stop showed only then. A request of the entry's own client, bound at a death of its
     engine, is unbound the same way when its lane's stop shows at the stream's end, at its cut, or within 3 s of
-    its client leaving before the end. Undoing a binding gives back the one the same body had before, from an
-    earlier death.
+    the proxy finding its client gone before the end. Only the binding a try made is undone, which gives back
+    the one the same body had before, from an earlier death or an earlier try of the same request.
   - While the entry's engine is away (a crash, a restart), a model its lane serves (as the command of its
     engine says, what its unit starts, or as it served last) goes to the other box only from the same
     checkpoint (decision 1018): otherwise the entry holds it while its own engine comes back, as for a model no
