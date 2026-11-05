@@ -186,6 +186,17 @@ when its lane stopped by order), where it could wait for that engine to come bac
 writes ~/.config/qwen38/recovery-restarts.json when it restarts an engine to recover it. Update both boxes of a pair:
 a box of v1.42 gets no shared request.
 
+**After the push.** The reference box updated at bc51ea9 on 2026-11-05 with the command of this release,
+`cd ~/dgx-spark-qwen38 && curl -fsSL https://get.alzeo.ai | bash`, once GitHub's CI had passed on that commit (7 jobs,
+89 steps, none skipped) and get.alzeo.ai served its get.sh byte for byte: the run ended whole in 97 s. The proxy
+(v6.52) and the cockpit restarted. The 27B, the lane that served, kept running, and no unit file changed. The 8 real
+clients (Claude Code, opencode, Hermes, pi, the OpenAI and Anthropic SDKs, fetch under Node and Bun, LiteLLM) answered
+through the proxy on the 27B, and the production checks passed. The cockpit showed no banner on any of its 5 views,
+with no JavaScript error, and said v1.43.0. The matrix then ran the 8 clients on each of the 7 lanes, each lane loaded
+as the cockpit loads it and the 27B loaded again at the end: 56 of 56. Before the push, two proxies of this release,
+paired on the reference box in front of its 27B, passed the 8 clients through the entry, and the 19 requests the entry
+sent on all came back answered.
+
 ## v1.42.1 (2026-11-03): no client can hide a field from the proxy's guards in UTF-16, and a listed key or the other box of a pair can no longer end every generation of the box
 
 **What was wrong.** SGLang aborts every request whose id starts with one it aborts, and it aborts a request's id when
