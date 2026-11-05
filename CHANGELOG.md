@@ -24,6 +24,13 @@ when its client leaves first, an order seen at the death binds nothing however l
 reach as they are read, and vLLM's death on its Anthropic route, which it says without the engine's words, counts as
 one when the engine no longer answers.
 
+**A pair reads on after its client leaves.** When the client of a request this box sent to the other box left before a
+death that box sent reached it, the connection was ended at once, the death went unread, and the request was left
+unbound, its retry free to run on this box's engine too (the fourteenth review of v1.43.0, decision 1112). The entry
+reads on what the other box sends for 5 s after every client that leaves now: a death binds the request, an order
+binds nothing, and this box ending the connection at the end of those seconds is no death. The other box generates for
+nobody up to that long, the cost of reading it.
+
 **A stop reaches what it should.** A stop counted again a generation another stop had marked (an Abort all, then the
 floor, which started its episode for it). On vLLM, a running answer's engine connection ended only at its relay's next
 event, after a write to a slow client returned, up to 900 s, the generation going on meanwhile: it ends at once. A
