@@ -4810,13 +4810,17 @@ class ThePairsPieces(unittest.TestCase):
         self.mod._PAIR["seen"] = 0.0
         return self.mod.pair_conf()
 
-    def _relayed_behind_a_frozen_client(self, n, fp=None, meanwhile=None, cut=True, tail=(), freeze=0.5, leave=False):
-        """A stream of n events relayed by a bare handler, then the events of tail, then its engine's cut (or its end,
-        cut=False). Its client is frozen at its 51st write until the pump has read all of it, and freeze seconds more:
-        with n = 1075, the queue of 1024 events is full all that time, and the first event of tail waits there to be put.
-        meanwhile(h) runs during the freeze; leave: the client is gone when it ends. What the relay ended with."""
+    def _relayed_behind_a_frozen_client(self, n, fp=None, meanwhile=None, cut=True, tail=(), freeze=0.5,
+                                        path="/v1/chat/completions",
+                                        event=b'data: {"choices":[{"index":0,"delta":{"content":"x"}}]}\n\n'):
+        """A stream of n events relayed by a bare handler, then the event of tail if any, then its engine's cut (or its
+        end, cut=False). Its client is frozen once, at its 51st write, until the pump has read all of it, and freeze
+        seconds more: with n = 1075 the queue of 1024 events is full all that time, and the event of tail waits there to
+        be put. meanwhile(h) runs during that freeze, once the proxy took the stream out of every stop's reach, or 2 s
+        on. What the relay ended with."""
+        assert len(tail) <= 1, "the pump reads one event past a full queue"
         m = self.mod
-        got, writes, read_all = [], [], threading.Event()
+        got, writes, read_all, frozen = [], [], threading.Event(), []
 
         class Resp:
             status = 200
@@ -4828,12 +4832,10 @@ class ThePairsPieces(unittest.TestCase):
             def read1(self, size):
                 self.n += 1
                 if self.n <= n:
-                    return b'data: {"choices":[{"index":0,"delta":{"content":"x"}}]}\n\n'
-                k = self.n - n - 1
-                if k < len(tail):
-                    if k == len(tail) - 1:
-                        read_all.set()
-                    return tail[k]
+                    return event
+                if self.n == n + 1 and tail:
+                    read_all.set()
+                    return tail[0]
                 read_all.set()
                 if not cut:
                     return b""                                          # the engine's stream ends
@@ -4847,16 +4849,19 @@ class ThePairsPieces(unittest.TestCase):
                 got.append("shutdown")
 
         def chunk(b):
-            if len(writes) == 50 and not read_all.is_set():
+            if len(writes) == 50 and not frozen:
+                frozen.append(1)
                 read_all.wait(10)
+                # the effect waited for, not a time: the pump may parse what it read later than read1 returned it
+                until = time.monotonic() + 2
+                while h in m._GENERATIONS and time.monotonic() < until:
+                    time.sleep(0.01)
                 if meanwhile:
                     meanwhile(h)
                 time.sleep(freeze)
-                if leave:
-                    raise BrokenPipeError("the client left")
             writes.append(b)
         h = object.__new__(m.H)
-        h.path, h._t0, h._first, h._last, h._bytes = "/v1/chat/completions", time.time(), None, None, 0
+        h.path, h._t0, h._first, h._last, h._bytes = path, time.time(), None, None, 0
         h._stop_why, h._pair_box, h._killer_fp, h._killer_bound, h._killer_before = None, None, fp, False, None
         h._peer, h._held_sse, h.connection = "test", True, Conn()     # a stream the hold opened: no headers to write
         h._abort_upstream = lambda why: True
@@ -4919,7 +4924,7 @@ class ThePairsPieces(unittest.TestCase):
         # floor's episode for nothing, and cut the client of an answer whole at its engine (the 12th review of v1.43.0,
         # 2026-11-05)
         reached = []
-        got = self._relayed_behind_a_frozen_client(1075, meanwhile=self._a_stop(reached), cut=False)
+        got = self._relayed_behind_a_frozen_client(1075, meanwhile=self._a_stop(reached), cut=False, freeze=2.5)
         self.assertEqual(reached, [0], "a stream its engine had ended was a stop target")
         self.assertEqual(got[-2:], ["finish", "ok"], got)
 
@@ -4946,19 +4951,18 @@ class ThePairsPieces(unittest.TestCase):
         self.assertEqual(reached, [0], "an answer whose end the pump had read was a stop target")
         self.assertEqual(got[-2:], ["finish", "ok"], got)
 
-    def test_a_client_gone_before_the_death_the_pump_read_still_binds_it(self):
-        # vLLM's death read by the pump, still in the queue behind what its client had not read, and the client gone:
-        # the relay never reached it, and a real death stayed unbound, the client's retry free to reach the other box
-        # (decision 1019; the 13th review of v1.43.0, 2026-11-05)
-        m = self.mod
-        self._bindings_read_here()
-        for name, kw in (("death", {"cut": False, "tail": (b"data: " + VLLM_DEAD_EVENT + b"\n\n",)}),
-                         ("cut", {"cut": True})):
-            with self.subTest(end=name):
-                fp = ("e" if name == "death" else "f") * 32
-                got = self._relayed_behind_a_frozen_client(1075, fp=fp, leave=True, **kw)
-                self.assertEqual(got[-1], "CLIENT GONE on write", got)
-                self.assertEqual(m.killer_box(fp), "", f"a {name} the pump had read was left unbound")
+    def test_an_anthropic_end_read_behind_a_client_that_reads_nothing_is_no_stop_target(self):
+        # message_stop, the end of the Anthropic dialect Claude Code reads, read by the pump and waiting to be put in a
+        # queue full behind a client that read nothing: no test reached its branch (the 14th review of v1.43.0,
+        # 2026-11-05)
+        reached = []
+        got = self._relayed_behind_a_frozen_client(
+            1075, meanwhile=self._a_stop(reached), cut=False, path="/v1/messages",
+            event=b'event: content_block_delta\ndata: {"type":"content_block_delta","index":0,'
+                  b'"delta":{"type":"text_delta","text":"x"}}\n\n',
+            tail=(b'event: message_stop\ndata: {"type":"message_stop"}\n\n',))
+        self.assertEqual(reached, [0], "an Anthropic answer whose end the pump had read was a stop target")
+        self.assertEqual(got[-2:], ["finish", "ok"], got)
 
     def test_what_pair_json_may_say(self):
         colons = ":".join(ident("spark3")[1][i:i + 2] for i in range(0, 64, 2)).upper()
