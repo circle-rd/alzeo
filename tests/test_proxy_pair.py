@@ -404,6 +404,42 @@ class FakeCockpit(http.server.BaseHTTPRequestHandler):
         self.reply(404, {"error": "not found"})
 
 
+class LateBox(http.server.BaseHTTPRequestHandler):
+    """A box that lists the 27B and reads a request, then: "close", closes the connection 1.5 s later with no answer (its
+    power, a restart of its proxy); "cut", writes the head of its answer and cuts it 1.5 s later; "silent" and
+    "cut_silent", the same but 8 s later, past the seconds an entry keeps a connection whose client left (1112)."""
+    protocol_version = "HTTP/1.1"
+    how = "close"
+    got = []                            # the users of the requests it read
+
+    def log_message(self, *a):
+        pass
+
+    def do_GET(self):
+        out = json.dumps({"object": "list", "data": [{"id": "qwen3.8-27b"}], "x_alzeo_running": 0,
+                          "x_alzeo_running_yours": 0, "x_alzeo_revision": TEST_REV}).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(out)))
+        self.end_headers()
+        self.wfile.write(out)
+
+    def do_POST(self):
+        body = json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)) or b"{}")
+        self.got.append(body.get("user"))
+        if self.how.startswith("cut"):
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", "1000")
+            self.end_headers()
+            self.wfile.write(b'{"id": "c", ')
+            self.wfile.flush()
+        time.sleep(8.0 if self.how in ("silent", "cut_silent") else 1.5)
+        try: self.connection.shutdown(socket.SHUT_RDWR)
+        except OSError: pass
+        self.close_connection = True
+
+
 def silent_port(test):
     """A held port with a socket listening on it that takes the connection and never answers its TLS: a box gone without
     a reset. Its number from localports.held, never read out of a socket (test_localports, NoTestFile)."""
@@ -1292,7 +1328,7 @@ class TwoBoxesBehindOneEndpoint(PairFixture, unittest.TestCase):
         # engine generated to the end for nobody), the answer not streamed or streamed
         for stream in (False, True):
             with self.subTest(stream=stream):
-                self.E2.delay = 8.0
+                self.E2.delay = 8.0 + PAIR_GRACE_READ_S
                 gone = self.journal("spark2").count("CLIENT GONE")
                 c = http.client.HTTPConnection("127.0.0.1", self.port1, timeout=60)
                 t0 = time.monotonic()
@@ -1301,11 +1337,12 @@ class TwoBoxesBehindOneEndpoint(PairFixture, unittest.TestCase):
                           {"Content-Type": "application/json", "Authorization": f"Bearer {KEY_1}"})
                 time.sleep(1.5)
                 c.close()                           # the client leaves before the answer
-                deadline = time.monotonic() + 5.5
+                # once the seconds the entry reads on for a death are over (decision 1112)
+                deadline = time.monotonic() + 5.5 + PAIR_GRACE_READ_S
                 while self.journal("spark2").count("CLIENT GONE") <= gone and time.monotonic() < deadline:
                     time.sleep(0.1)
                 self.assertGreater(self.journal("spark2").count("CLIENT GONE"), gone, self.journal("spark2")[-600:])
-                self.assertLess(time.monotonic() - t0, 7.5, "seen before its engine answered")
+                self.assertLess(time.monotonic() - t0, 7.5 + PAIR_GRACE_READ_S, "seen before its engine answered")
 
     def test_an_answer_past_the_cap_is_refused(self):
         # an answer not streamed was read whole: a box gone wrong could fill this one's memory (review, 2026-11-03)
@@ -3664,6 +3701,124 @@ class TwoBoxesServeOneModel(PairFixture, unittest.TestCase):
         c.close()                               # gone: the next event's write fails, before the death comes
         return m.body_fingerprint(raw, "/v1/chat/completions"), held
 
+    def _left_at_once(self, tag, stream=False, after=0.3, **extra):
+        """A request this box sends to the other box (one generation here, none there), its client gone `after` seconds
+        after sending it, with a reset: the request's fingerprint, and the generation that kept this box busy."""
+        m = self.mod
+        held = self.busy(self.E1, self.port1, KEY_1, "local-only", 1, 6.0)     # one here, none there: it goes there
+        raw = json.dumps(dict(self.turns(tag, 1)[0], stream=stream, **extra)).encode()
+        c = http.client.HTTPConnection("127.0.0.1", self.port1, timeout=30)
+        c.connect()
+        c.sock.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))   # it leaves with a reset
+        c.request("POST", "/v1/chat/completions", raw,
+                  {"Content-Type": "application/json", "Authorization": f"Bearer {KEY_1}"})
+        time.sleep(after)
+        c.close()
+        return m.body_fingerprint(raw, "/v1/chat/completions"), held
+
+    def _bound_within(self, fp, secs):
+        m = self.mod
+        deadline = time.monotonic() + secs
+        while m.killer_box(fp) is None and time.monotonic() < deadline:
+            time.sleep(0.05)
+        return m.killer_box(fp)
+
+    def _the_other_box_is(self, how):
+        """spark2 a LateBox that does `how`, listed as serving the 27B: its class, whose `got` says what it read."""
+        late = type("Late", (LateBox,), {"how": how, "got": []})
+        self.repoint(tls_peer(self, late))
+        self.mod._PAIR_MODELS["spark2"] = {"ts": time.monotonic(), "models": ("qwen3.8-27b",), "rows": [],
+                                           "error": None, "answered": True, "known": ("qwen3.8-27b",),
+                                           "known_ts": time.monotonic(), "read_s": 0.01, "running": 0,
+                                           "revision": TEST_REV}
+        self.addCleanup(self.mod._PAIR_COOL.pop, "spark2", None)
+        return late
+
+    def test_a_death_the_other_box_answers_after_this_boxs_client_left_is_bound(self):
+        # an answer not streamed, its client gone: the other box's engine died on it a second later, which that box
+        # answered 502 within the seconds the watch keeps the connection; read after its client left, it bound nothing,
+        # and its client's retry ran on this box's engine too (decision 1112)
+        if not self.INPROC:
+            self.skipTest("the binding is read in this test's process")
+        self.E2.mode = "die"
+        fp, held = self._left_at_once("conv-entry-left-502", x_die_after=1.5)
+        bound = self._bound_within(fp, 10)
+        self.assertIn("conv-entry-left-502-0", self.E2.users, "the test needs the other box's engine to have it")
+        self.assertEqual(bound, "spark2", "a death the other box answered after this box's client left was left unbound")
+        for th in held:
+            th.join(30)
+
+    def test_a_stream_the_other_box_begins_after_this_boxs_client_left_is_read_for_a_death(self):
+        # its client gone before the other box's stream began: the entry left at its head, unread, the death that
+        # stream carried a second later (decision 1112)
+        if not self.INPROC:
+            self.skipTest("the binding is read in this test's process")
+        self.E2.mode = "vllm_dead_after_1s"
+        fp, held = self._left_at_once("conv-entry-left-late", stream=True, x_delay=1.6)
+        bound = self._bound_within(fp, 10)
+        self.assertIn("conv-entry-left-late-0", self.E2.users, "the test needs the other box's engine to have it")
+        self.assertEqual(bound, "spark2", "a death in a stream begun after this box's client left was left unbound")
+        for th in held:
+            th.join(30)
+
+    def test_a_stream_whose_head_this_box_could_not_write_is_read_for_a_death(self):
+        # its client reset before the watch saw it go: the stream's head failed to reach it, and the entry left there,
+        # unread, the death the stream carried a second later (decision 1112)
+        if not self.INPROC:
+            self.skipTest("the binding is read in this test's process")
+        self.E2.mode = "vllm_dead_after_1s"
+        fp, held = self._left_at_once("conv-entry-left-head", stream=True, after=0.05, x_delay=0.5)
+        bound = self._bound_within(fp, 10)
+        self.assertIn("conv-entry-left-head-0", self.E2.users, "the test needs the other box's engine to have it")
+        self.assertEqual(bound, "spark2", "a death in a stream whose head failed to reach its client was left unbound")
+        for th in held:
+            th.join(30)
+
+    def test_a_box_that_closes_on_a_request_after_its_client_left_is_bound(self):
+        # its client gone, the other box closed the connection on the request with no answer a second later (its power,
+        # a restart of its proxy): bound as when its client stays (decision 1017), its retry otherwise free to run on
+        # this box's engine (decision 1112)
+        if not self.INPROC:
+            self.skipTest("the binding is read in this test's process")
+        late = self._the_other_box_is("close")
+        fp, held = self._left_at_once("conv-entry-left-drop")
+        self.assertIn("conv-entry-left-drop-0", late.got, "the test needs the other box to have it")
+        self.assertEqual(self._bound_within(fp, 10), "spark2",
+                         "a box that closed on the request after its client left was left unbound")
+        for th in held:
+            th.join(30)
+
+    def test_an_answer_cut_after_its_client_left_is_bound(self):
+        # an answer not streamed whose head came, its client gone, then cut by the other box a second later: a death, as
+        # when its client stays (decision 1112)
+        if not self.INPROC:
+            self.skipTest("the binding is read in this test's process")
+        late = self._the_other_box_is("cut")
+        fp, held = self._left_at_once("conv-entry-left-cut")
+        self.assertIn("conv-entry-left-cut-0", late.got, "the test needs the other box to have it")
+        self.assertEqual(self._bound_within(fp, 10), "spark2", "an answer cut after its client left was left unbound")
+        for th in held:
+            th.join(30)
+
+    def _the_watch_ends_it(self, how):
+        # the other box silent past the seconds the watch keeps the connection, then ended by the watch: that end is this
+        # box's, no death (decision 1112)
+        if not self.INPROC:
+            self.skipTest("the binding is read in this test's process")
+        late = self._the_other_box_is(how)
+        fp, held = self._left_at_once(f"conv-entry-left-{how}")
+        time.sleep(PAIR_GRACE_READ_S + 2)
+        self.assertIn(f"conv-entry-left-{how}-0", late.got, "the test needs the other box to have it")
+        self.assertIsNone(self.mod.killer_box(fp), "this box ending the connection was read as a death")
+        for th in held:
+            th.join(30)
+
+    def test_the_watchs_own_end_of_a_silent_box_binds_nothing(self):
+        self._the_watch_ends_it("silent")
+
+    def test_the_watchs_own_end_of_an_answer_gone_silent_binds_nothing(self):
+        self._the_watch_ends_it("cut_silent")
+
     def test_a_death_the_other_box_sends_after_this_boxs_client_left_is_bound(self):
         # the other box's engine died on the request just after this box's client left, the death unrelayed: the watch
         # shut the connection at once, the death went unread, and the request unbound, its retry free to run on this
@@ -4724,6 +4879,27 @@ class TwoBoxesServeOneModelInProcess(TwoBoxesServeOneModel):
 
     def test_a_death_the_other_box_sends_after_this_boxs_client_left_is_bound(self):
         super().test_a_death_the_other_box_sends_after_this_boxs_client_left_is_bound()
+
+    def test_a_death_the_other_box_answers_after_this_boxs_client_left_is_bound(self):
+        super().test_a_death_the_other_box_answers_after_this_boxs_client_left_is_bound()
+
+    def test_a_stream_the_other_box_begins_after_this_boxs_client_left_is_read_for_a_death(self):
+        super().test_a_stream_the_other_box_begins_after_this_boxs_client_left_is_read_for_a_death()
+
+    def test_a_stream_whose_head_this_box_could_not_write_is_read_for_a_death(self):
+        super().test_a_stream_whose_head_this_box_could_not_write_is_read_for_a_death()
+
+    def test_a_box_that_closes_on_a_request_after_its_client_left_is_bound(self):
+        super().test_a_box_that_closes_on_a_request_after_its_client_left_is_bound()
+
+    def test_an_answer_cut_after_its_client_left_is_bound(self):
+        super().test_an_answer_cut_after_its_client_left_is_bound()
+
+    def test_the_watchs_own_end_of_a_silent_box_binds_nothing(self):
+        super().test_the_watchs_own_end_of_a_silent_box_binds_nothing()
+
+    def test_the_watchs_own_end_of_an_answer_gone_silent_binds_nothing(self):
+        super().test_the_watchs_own_end_of_an_answer_gone_silent_binds_nothing()
 
     def test_a_stream_that_ends_after_this_boxs_client_left_binds_nothing(self):
         super().test_a_stream_that_ends_after_this_boxs_client_left_binds_nothing()
@@ -6218,6 +6394,29 @@ class ThePairsPieces(unittest.TestCase):
         half = len(HOP_ENDED_OPENAI) // 2
         self.assertEqual(h._end_after(Stream([HOP_ENDED_OPENAI[half:]]), None, HOP_ENDED_OPENAI[:half]), (False, True))
         self.assertEqual(h._end_after(Stream([b'data: {"choices": []}\n\n']), None, b""), (False, False))
+
+    def test_a_death_split_where_its_client_leaves_is_read_whole(self):
+        # read after its client left (decision 1112), a death whose first half came in the last read relayed: its SSE
+        # event, and an NDJSON line held back there
+        m = self.mod
+
+        class Stream:
+            def __init__(self, parts):
+                self.parts = list(parts)
+
+            def read1(self, n):
+                return self.parts.pop(0) if self.parts else b""
+        h = object.__new__(m.H)
+        h._peer = "test"
+        event = b'data: {"error": {"message": "keepalive-proxy: ' + m.HOP_CLOSED.encode() + b'"}}\n\n'
+        line = json.dumps({"error": {"message": "keepalive-proxy: " + m.HOP_CLOSED}}).encode() + b"\n"
+        for sse, whole, before in ((True, event, b'data: {"choices": []}\n\n'), (False, line, b'{"done": false}\n')):
+            with self.subTest(sse=sse):
+                for cut in (1, len(whole) // 2, len(whole) - 2):
+                    self.assertEqual(h._end_after(Stream([whole[cut:]]), None, before + whole[:cut], sse), (True, False),
+                                     f"a death split at byte {cut} went unread")
+                self.assertEqual(h._end_after(Stream([b'{"done": true}\n' if not sse else b"data: [DONE]\n\n"]), None,
+                                              before, sse), (False, False))
 
     def test_the_ndjson_order_line_starts_a_line_of_its_own(self):
         # after a line over 64 KiB relayed unended, the order line glued to it went unread at the entry, which bound the
