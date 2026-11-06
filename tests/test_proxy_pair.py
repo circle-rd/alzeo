@@ -447,7 +447,8 @@ class LateBox(http.server.BaseHTTPRequestHandler):
     power, a restart of its proxy); "cut", writes the head of its answer and cuts it 1.5 s later; "silent" and
     "cut_silent", the same but 8 s later, past the seconds an entry keeps a connection whose client left (1112);
     "away", answers 503 1.5 s later (its engine away); "away_soon", the same once the test sets answer_now, right
-    after its client left, well before an entry's watch first looks at its client."""
+    after its client left, well before an entry's watch first looks at its client; "close_soon", "moved_soon" and
+    "answer_soon" then: the connection closed with no answer, a 409 model_not_served, a whole answer."""
     protocol_version = "HTTP/1.1"
     how = "close"
     got = []                            # the users of the requests it read
@@ -468,6 +469,25 @@ class LateBox(http.server.BaseHTTPRequestHandler):
     def do_POST(self):
         body = json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)) or b"{}")
         self.got.append(body.get("user"))
+        if self.how in ("close_soon", "moved_soon", "answer_soon"):
+            self.answer_now.wait(5)
+            if self.how == "close_soon":
+                try: self.connection.shutdown(socket.SHUT_RDWR)
+                except OSError: pass
+                self.close_connection = True
+                return
+            if self.how == "moved_soon":
+                code, out = 409, {"error": {"type": "model_not_served", "message": "another model"}}
+            else:
+                code, out = 200, {"id": "c", "object": "chat.completion", "model": "qwen3.8-27b", "choices": [
+                    {"index": 0, "message": {"role": "assistant", "content": "late"}, "finish_reason": "stop"}]}
+            raw = json.dumps(out).encode()
+            self.send_response(code)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(raw)))
+            self.end_headers()
+            self.wfile.write(raw)
+            return
         if self.how in ("away", "away_soon"):
             if self.how == "away":
                 time.sleep(1.5)
@@ -2713,7 +2733,9 @@ class TwoBoxesServeOneModel(PairFixture, unittest.TestCase):
             def do_POST(self):
                 if Base.state.get("fast"):
                     return Base.do_POST(self)
-                time.sleep(8)                                                   # it reads nothing of the body yet
+                # it reads nothing of the body yet, past the seconds this box's watch keeps the connection once its
+                # client left (decision 1112): ended sooner, its own close cut the upload, a box that does not answer
+                time.sleep(14)
         entry = self.spare_proxy("spark1-slow-read", KEY_1, peers=(("spark2", tls_peer(self, Slow)),))
         self.until_listed("marker-slow-read", port=entry)
         held = self.busy(self.E1, entry, KEY_1, "local-only", 1, 6.0)          # one here, none there: it goes there
@@ -3849,6 +3871,50 @@ class TwoBoxesServeOneModel(PairFixture, unittest.TestCase):
         self.assertIn(st, (503, 529), out[:300])
         self.assertIn(b"memory floor", out)
         self.assertNotIn("conv-floor-too-long", self.E2.users, "a request the floor stopped went to the other box")
+
+    def _left_then(self, how, tag, reset=True):
+        """A shared request to a LateBox that does `how` once its client left (answer_now set right after): the box."""
+        late = self._the_other_box_is(how)
+        late.answer_now = threading.Event()
+        fp, held = self._left_at_once(tag, after=0.1, reset=reset)
+        late.answer_now.set()
+        self.addCleanup(lambda: [th.join(30) for th in held])
+        self.assertTrue(_until(lambda: f"{tag}-0" in late.got, 5), "the test needs the other box to have it")
+        return late, fp
+
+    def test_a_box_that_closes_on_a_request_as_its_client_leaves_is_read_with_its_client_gone(self):
+        # its close came within the second its client left, before the watch's first look: read as one with its client
+        # there (the 6th review of v1.44.0: no test held the immediate look of that branch)
+        if not self.INPROC:
+            self.skipTest("the journal is read in this test's process")
+        self._left_then("close_soon", "conv-entry-close-soon")
+        self.assertTrue(self.until_in_journal("spark1", "its client gone, spark2 had the request and closed the "
+                                                        "connection with no answer", within=3.0),
+                        "a close that came as its client left was read with its client there")
+
+    def test_a_refusal_as_its_client_leaves_moves_no_conversation_there(self):
+        # a 409 that came once its client had left read as served: the conversation's next turn went to the box that
+        # refused it (the 6th review of v1.44.0)
+        if not self.INPROC:
+            self.skipTest("the affinities are read in this test's process")
+        m = self.mod
+        before = len(m._AFFINITY.get("spark2", ()))
+        self._left_then("moved_soon", "conv-entry-moved-soon")
+        self.assertTrue(self.until_in_journal("spark1", "CLIENT GONE during pair", within=3.0))
+        time.sleep(0.3)
+        self.assertEqual(len(m._AFFINITY.get("spark2", ())), before, "a refusal after its client left moved its turns there")
+
+    def test_a_whole_answer_as_its_client_leaves_goes_to_nobody(self):
+        # a whole answer that came within the second its client left, before the watch's first look: written to a
+        # client gone, said served or with no outcome (the 6th review of v1.44.0)
+        if not self.INPROC:
+            self.skipTest("the journal is read in this test's process")
+        gone = self.journal("spark1").count("CLIENT GONE during pair")
+        oks = self.journal("spark1").count("ok pair")
+        self._left_then("answer_soon", "conv-entry-answer-soon", reset=False)
+        self.assertTrue(_until(lambda: self.journal("spark1").count("CLIENT GONE during pair") > gone, 5),
+                        "a whole answer that came as its client left was not said gone")
+        self.assertEqual(self.journal("spark1").count("ok pair"), oks, "an answer written to nobody was said served")
 
     def test_a_box_that_refuses_a_shared_request_as_its_client_leaves_serves_it_nowhere(self):
         # its 503 came within the second its client left, before the watch's tick: read as a refusal with its client
@@ -5177,6 +5243,15 @@ class TwoBoxesServeOneModelInProcess(TwoBoxesServeOneModel):
     def test_a_box_that_refuses_a_shared_request_as_its_client_leaves_serves_it_nowhere(self):
         super().test_a_box_that_refuses_a_shared_request_as_its_client_leaves_serves_it_nowhere()
 
+    def test_a_box_that_closes_on_a_request_as_its_client_leaves_is_read_with_its_client_gone(self):
+        super().test_a_box_that_closes_on_a_request_as_its_client_leaves_is_read_with_its_client_gone()
+
+    def test_a_refusal_as_its_client_leaves_moves_no_conversation_there(self):
+        super().test_a_refusal_as_its_client_leaves_moves_no_conversation_there()
+
+    def test_a_whole_answer_as_its_client_leaves_goes_to_nobody(self):
+        super().test_a_whole_answer_as_its_client_leaves_goes_to_nobody()
+
     def test_a_hop_a_stop_marks_during_its_count_still_gets_its_400(self):
         super().test_a_hop_a_stop_marks_during_its_count_still_gets_its_400()
 
@@ -5392,6 +5467,7 @@ class ThePairsPieces(unittest.TestCase):
     def _relayed_behind_a_frozen_client(self, n, fp=None, meanwhile=None, cut=True, tail=(), freeze=0.0,
                                         path="/v1/chat/completions", hop=None, frozen_at=50, until=None,
                                         need_freeze=True, eof_delay=0.0, settle=None, abort=None, real_conn=False,
+                                        pace=0.0,
                                         event=b'data: {"choices":[{"index":0,"delta":{"content":"x"}}]}\n\n'):
         """A stream of n events relayed by a bare handler, then the event of tail if any, then its engine's cut (or its
         end, cut=False). Its client is frozen once, at its 51st write, until the pump has read all of it and the proxy
@@ -5437,6 +5513,7 @@ class ThePairsPieces(unittest.TestCase):
             def read1(self, size):
                 self.n += 1
                 if self.n <= n:
+                    time.sleep(pace)                # an engine that sends at its pace (pace: seconds an event)
                     return event
                 if self.n <= n + len(tail):
                     if self.n == n + len(tail):
@@ -6099,17 +6176,21 @@ class ThePairsPieces(unittest.TestCase):
 
     def test_a_stop_frees_its_frozen_relays_spool(self):
         # a stopped relay frozen in a write kept what waited in its spool, never written once stopped, up to
-        # SPOOL_MAX_BYTES and CLIENT_IO_S long, on the box whose memory the floor's stop defends (the 5th review of
-        # v1.44.0)
+        # SPOOL_MAX_BYTES and CLIENT_IO_S long, on the box whose memory the floor's stop defends; cleared alone, it
+        # filled again while the engine still sent (the 5th and 6th reviews of v1.44.0)
         reached, held = [], []
 
         def a_stop_while_frozen(h):
+            held.append(h._relay_q.bytes)
             self._a_stop(reached)(h)
             held.append(h._relay_q.bytes)
-        self._relayed_behind_a_frozen_client(300, cut=False, eof_delay=3.0, need_freeze=False,
-                                             until=lambda h: h._relay_q.bytes > 10000, meanwhile=a_stop_while_frozen)
+            time.sleep(0.5)                     # the engine still sending
+            held.append(h._relay_q.bytes)
+        self._relayed_behind_a_frozen_client(3000, cut=False, pace=0.002, until=lambda h: h._relay_q.bytes > 10000,
+                                             meanwhile=a_stop_while_frozen)
         self.assertEqual(reached, [1], "the test needs the stop to reach the running generation")
-        self.assertEqual(held, [0], "a stop left what waited in its frozen relay's spool")
+        self.assertGreater(held[0], 10000, "the test needs its spool full when the stop came")
+        self.assertEqual(held[1:], [0, 0], "a stop left what waited, or let what came after fill it again")
 
     def test_a_client_too_slows_spool_is_freed_before_its_abort(self):
         # freed before the abort's round trip, up to ABORT_TIMEOUT_S on an engine the floor finds slow (the 4th and 5th

@@ -5017,12 +5017,15 @@ class _Spool:
         self.bytes = 0
         self.cap = cap
         self.over = False
+        self.stopped = False                # a stop marked its generation: its relay writes nothing more of it
 
     def put(self, kind, val=b"", capped=True):
         """Queued at once; False when a capped one finds the bytes waiting over the bound. Not capped: what ends the
         answer (its end, a death, a cut, an order), which stops nothing: its end over the bound stopped a generation
         whole at its engine and cut its client (the review of v1.44.0)."""
         with self._cond:
+            if capped and self.stopped:
+                return True                 # never written: its relay cuts its client at its next turn
             self._d.append((kind, val))
             self.bytes += len(val)
             if capped and self.cap and self.bytes > self.cap:
@@ -5037,9 +5040,16 @@ class _Spool:
             self.bytes = 0
             self._cond.notify()
 
-    def put_nowait(self, item):
-        """A stop's wake (_mark_stopped), as the queue took it."""
-        self.put(*item)
+    def stop(self):
+        """A stop's mark (_mark_stopped): what waits dropped, what the engine still sends of the answer dropped as it
+        comes, its relay woken, in one step. Cleared alone, the spool filled again while its relay was frozen in a
+        write, and a relay woken by the clear before the wake came wrote a keepalive (the 6th review of v1.44.0)."""
+        with self._cond:
+            self.stopped = True
+            self._d.clear()
+            self.bytes = 0
+            self._d.append(("s", b""))
+            self._cond.notify()
 
     def get(self, timeout):
         """The next event, or queue.Empty after timeout seconds with none."""
@@ -6344,12 +6354,9 @@ class H(BaseHTTPRequestHandler):
         q = getattr(self, "_relay_q", None)
         if q is not None:
             # what waits is never written: its relay cuts its client at its next turn. Freed now, where a relay frozen in
-            # a write kept up to SPOOL_MAX_BYTES of it CLIENT_IO_S long (the 5th review of v1.44.0)
-            q.clear()
-            try:
-                q.put_nowait(("s", b""))
-            except queue.Full:
-                pass                        # the loop reads _stop_why at its next event
+            # a write kept up to SPOOL_MAX_BYTES of it CLIENT_IO_S long (the 5th and 6th reviews of v1.44.0). Under
+            # _GEN_LOCK: a full spool takes some 20 ms to free (the 6th review)
+            q.stop()
 
     def _stop_waiting(self):
         """A stopped request still waiting for the engine's first byte has its generation stopped
@@ -8140,6 +8147,14 @@ class H(BaseHTTPRequestHandler):
         done, left = threading.Event(), threading.Event()
         shut = threading.Event()            # the watch below ended the connection: no death of the other box's engine
 
+        def gone_now():
+            # its client's leaving read now, at each point where the request's course is decided, not at the watch's
+            # next tick: within that second a request whose client had left was served here, or written to nobody
+            # (the 5th and 6th reviews of v1.44.0)
+            if not left.is_set() and self._client_left():
+                left.set()
+            return left.is_set()
+
         def watch():
             # the caller of an answer that is not streamed yet hears nothing: when it leaves,
             # the connection to the peer is ended PAIR_ORDER_GRACE_S later, and the peer's proxy drops the request
@@ -8189,9 +8204,7 @@ class H(BaseHTTPRequestHandler):
                 # its engine died on it there, which it said whole: the request is bound to it (decision 1019)
                 engine_died = not ordered and data is not None and len(data) <= PAIR_ANSWER_MAX and (
                     (e.code == 502 and b'"upstream_closed"' in data) or (e.code == 500 and bool(ENGINE_DIED_RE.search(data))))
-                if not left.is_set() and self._client_left():
-                    left.set()                  # seen now: at the watch's next tick, a request was served for nobody
-                if left.is_set():
+                if gone_now():
                     # the client left while the other box said no: nothing to serve here either (found in review,
                     # 2026-11-03: a refusal brought the request back to this box's engine, which computed it for nobody).
                     # Its engine's death, said in the seconds the watch keeps the connection, binds it as when its client
@@ -8201,6 +8214,8 @@ class H(BaseHTTPRequestHandler):
                     self._done("CLIENT GONE during pair")
                     if fallback and not ordered and e.code in (503, 529):
                         return "gone"           # away: paused, its conversation forgotten there (the 3rd review)
+                    if fallback and not ordered:
+                        return "left"           # refused: its conversation forgotten there, none of it moved there
                     return None
                 if ordered and e.code == 503:
                     # it ended it there by order (its Abort all, its floor, a stop of its lane): not run here too (decision
@@ -8251,9 +8266,7 @@ class H(BaseHTTPRequestHandler):
                 why = _pair_why(e)
                 refused = isinstance(e, ssl.SSLError) and bool(_TLS_REFUSED.search(str(getattr(e, "reason", "") or "")))
                 had = not isinstance(e, urllib.error.URLError) and not refused
-                if not left.is_set() and self._client_left():
-                    left.set()                  # seen now, not at the watch's next tick (the 5th review of v1.44.0)
-                if left.is_set():
+                if gone_now():
                     closed = had and not shut.is_set()
                     if closed:
                         # closed by that box in the seconds the watch keeps the connection after its client left: bound
@@ -8267,9 +8280,11 @@ class H(BaseHTTPRequestHandler):
                     # review, 2026-11-04)
                     took = getattr(getattr(req, "upstream", None), "kept_sock", None) is not None
                     if fallback and isinstance(e, urllib.error.URLError):
-                        # "left": that box took it and never read it all, so it holds none of its prefix: the caller
-                        # forgets the conversation there, where None moved it (the delta's review, 2026-11-04)
-                        return "left" if took else "gone"
+                        # "left": that box took it and this request's watch cut it before it read it all, so it holds
+                        # none of its prefix: the caller forgets the conversation there, where None moved it (the delta's
+                        # review, 2026-11-04). Cut by that box, its client gone or not, it is one that does not answer
+                        # (the 6th review of v1.44.0)
+                        return "left" if took and shut.is_set() else "gone"
                     if fallback and closed:
                         return "gone"           # paused as a box that does not answer, its conversation forgotten there
                     return None
@@ -8300,7 +8315,7 @@ class H(BaseHTTPRequestHandler):
                     try:
                         data = _pair_read_whole(resp, PAIR_ANSWER_MAX)
                     except (OSError, http.client.HTTPException) as e:
-                        if left.is_set():
+                        if gone_now():
                             if not shut.is_set():
                                 # cut by that box in the seconds the watch keeps the connection after its client left: a
                                 # death, as when its client stays (decision 1112); the watch's own end of it is none
@@ -8311,7 +8326,7 @@ class H(BaseHTTPRequestHandler):
                         self._pair_refuse(502, "upstream_cut", f"box {peer['name']} cut its answer short",
                                           pair_served_map(conf, local))
                         self._done("UPSTREAM CUT pair"); return None
-                    if left.is_set():
+                    if gone_now():
                         # its client left while it came, within the seconds the watch keeps the connection (decision
                         # 1112): written to nobody, it was said served (the 2nd review of v1.44.0)
                         self._done("CLIENT GONE during pair"); return None
