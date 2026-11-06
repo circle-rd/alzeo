@@ -6,7 +6,7 @@
 <p align="center"><a href="#see-it-in-49-seconds">Watch the 49-second tour, with sound</a></p>
 <p align="center"><a href="https://hasso5703.github.io/">The website: every model measured, guides, every GB10 machine</a></p>
 
-**Qwen3.8-27B at 71.4 tok/s with a 1M context, Qwen3.8-Flash-Next 176B on a single box, images,
+**Qwen3.8-27B at 65.2 to 68.5 tok/s with a 1M context, Qwen3.8-Flash-Next 176B on a single box, images,
 video, Kolibri-1, Nemotron 3.5 Bolt, Nemotron 3.5 Super VL and Ornith 1.5 122B: installed and pinned by one command**, the lane that serves proved before it ends and every other built at its first Load, on a DGX Spark or another
 GB10 box such as the ASUS Ascent GX10. No prompt, image or video leaves the box.
 
@@ -24,7 +24,7 @@ its folder and services keep their names, and every old address of the repositor
 
 | Model | Measured on the reference box, an ASUS Ascent GX10 |
 |---|---|
-| Qwen3.8-27B, NVFP4 + DFlash2 | **71.4 tok/s** greedy median, 1M context, 135-148 tok/s at 8 streams (v1.2 battery) |
+| Qwen3.8-27B, NVFP4 + DFlash2 | **65.2 and 68.5 tok/s** greedy median (two runs), 44.0 alone and 80.6 at 4 requests on 8,192-token prompts, 1M context (2026-11-05) |
 | Qwen3.8-Flash-Next 176B, on **one** box | **47.9 tok/s** on code (`FLASH_TIER=context`), 262K context |
 | Qwen-Image 2.1, 1024×1024 | **7.5 s** with its Turbo, 34 s without |
 
@@ -42,7 +42,7 @@ transient allocations in it, and a pool pushed to zero freezes the box until a p
   with one button, from a laptop or a phone.
 - **Clients that work out of the box.** OpenAI- and Anthropic-compatible APIs, opencode wired to
   the local model, Claude Code, VS Code Copilot, Open WebUI and Cursor in [docs/clients.md](docs/clients.md).
-- **Measured, not claimed.** GSM8K 94.0% on the 27B and 97.41% on the flash, tool calling
+- **Measured, not claimed.** GSM8K 99.2% on the 27B and 97.41% on the flash, tool calling
   91/100, every number with its method in [BENCHMARKS.md](BENCHMARKS.md).
 
 Also on the box: Aleph Alpha's **Kolibri-1** for German and English (48 tok/s, 166 at 8
@@ -93,7 +93,7 @@ The two Qwen text lanes come with **seven switchable targets**, and speculation 
 
 | target | model | engine | headline (measured here) |
 |---|---|---|---|
-| `stock` (default) | Qwen3.8-27B NVFP4 | SGLang + DFlash2 | **71.4 tok/s** greedy median, 135-148 aggregate at 8 streams (v1.2 battery), 1M context by default |
+| `stock` (default) | Qwen3.8-27B NVFP4 | SGLang + DFlash2 | **65.2 and 68.5 tok/s** greedy median, 44.0 alone and 80.6 at 4 requests on 8,192-token prompts (2026-11-05), 1M context by default |
 | `uncensored` | Qwen3.8-27B abliterated NVFP4 | SGLang + DFlash2 | same speed and serving path as stock |
 | `fp8` | Qwen3.8-27B FP8, Qwen's own release | SGLang + DFlash2 | the quantization reference: 108 tok/s aggregate at 8 streams, ~92K less KV pool |
 | `uncensored-fp8` | Qwen3.8-27B abliterated FP8 | SGLang + DFlash2 | same serving path and same cost as `fp8` |
@@ -101,7 +101,7 @@ The two Qwen text lanes come with **seven switchable targets**, and speculation 
 | `flash-uncensored` | the **abliterated** build of that same tree | SGLang + NEXTN | 205 of 206 shards identical in size to stock, so the same flags: 45-46 on code, **0 refusals of 5** |
 | `flash-nvda` | the same 176B from NVIDIA's mixed-precision export | SGLang + NEXTN | same N-gram table byte for byte, its own expert calibration: ties `flash` on every quality probe, with a KV pool about 9% smaller |
 
-The 27B path is the fastest configuration measured so far on GB10 (**SGLang + NVFP4 + DFlash2 speculative decoding with deterministic kernels, drafting from a calibrated NVFP4 head 16 deep**): **71.4 tok/s greedy median on `./bench.sh`**, measured 2026-09-17 on SGLang v0.5.19, when this lane moved to the official release image (on v0.5.21 since v1.23: the same 105 to 108 ms per drafter step; on v0.5.22 since v1.39, faster at 1 and 4 streams in the same night's A/B, see the CHANGELOG), against 69.8 on the image it replaced and 65.3 on the v1.9 campaign before it (per probe then: code 64.2-65.3, reasoning 65.3-66.2, math 56.6-71.3, prose 23.0-24.7). Free prose is the slow case on any drafter. **135-148 tok/s aggregate at 8 concurrent streams, 258 at 32** (carried over from the v1.2 battery; the draft only helps concurrency, re-measure on your box with `./bench-matrix.sh`). Reproducible to the decimal across boots: see BENCHMARKS.md, "The boot lottery".
+The 27B path is the fastest configuration measured so far on GB10 (**SGLang + NVFP4 + DFlash2 speculative decoding with deterministic kernels, drafting from a calibrated NVFP4 head 16 deep**): **65.2 and 68.5 tok/s greedy median on `./bench.sh`** on 2026-11-05, two runs on SGLang v0.5.22 without torch.compile, the lane v1.44.0 serves (44.0 tok/s alone and 80.6 in all at 4 requests on SGLang's official benchmark, 8,192 tokens in and 1,024 out, GSM8K 99.2% on 250 questions; with torch.compile the same day, 71.0 and 67.4 on `./bench.sh`, 42.9 and 77.0 on the official benchmark, see the CHANGELOG). Before: 71.4 measured 2026-09-17 on SGLang v0.5.19, when this lane moved to the official release image (on v0.5.21 since v1.23: the same 105 to 108 ms per drafter step; on v0.5.22 since v1.39, faster at 1 and 4 streams in the same night's A/B), against 69.8 on the image it replaced and 65.3 on the v1.9 campaign before it (per probe then: code 64.2-65.3, reasoning 65.3-66.2, math 56.6-71.3, prose 23.0-24.7). Free prose is the slow case on any drafter. **135-148 tok/s aggregate at 8 concurrent streams, 258 at 32** (carried over from the v1.2 battery; the draft only helps concurrency, re-measure on your box with `./bench-matrix.sh`). Reproducible to the decimal across boots in the August study, once the kernels were made deterministic (BENCHMARKS.md, "The boot lottery"); on 2026-11-05, two runs on one boot of the lane v1.44.0 serves gave 65.2 and 68.5.
 
 The flash path serves a model that does not otherwise fit: the 176B checkpoint's 47.7 GiB FP8 N-gram table is **served from a sparse file on NVMe**, read row by row by the gather kernel through GB10's host page tables, leaving the unified pool to the compute weights and a real KV cache. Until v1.7 that was a vendored patch of this repo's own; since v1.8 it is upstream (`--ple-offload-backend file`, [sglang#37068](https://github.com/sgl-project/sglang/pull/37068)) and the overlay is retired, along with the vendored sm_121 QSA kernel and the workaround for the GB10 MTP collapse. **Prefix caching works** (27k tokens re-served in 2.5 s against 12.0 s cold), decode is **47.9 tok/s on code and 47.1 on math** single stream at the `context` tier (29-31 on prose), prefill ~2,250 tok/s cold, and image input stays available. Since v1.8 it also takes **`--speculative-token-map`**, which hands the speculative draft the target's `lm_head` sliced to 65,536 rows instead of all 248,320: that removes 2.6 GiB from every engine step on a lane that is memory-bandwidth bound, and it is worth 14 to 25% of decode without changing what the model can say, because the target still verifies every drafted token over the whole vocabulary.
 
@@ -293,7 +293,7 @@ Re-running the installer (upgrades included) remembers what you chose: the insta
 
 Speculative decoding accepts *predictable* tokens, so speed depends on **what the model generates**, not on one magic number.
 
-Two instruments, both in the box, both reproducible. The headline **71.4 tok/s greedy median** is `./bench.sh` (streaming decode rate net of TTFT, the repo's historical headline instrument: v1.0-v1.1 measured ~36-40 on it, v1.2 measured 41-57 per probe, v1.9 measured 64-71 per probe with the calibrated draft, and the v1.14 move to the official release image measured 71.4 against 69.8 on the image it replaced). The table below is the harsher one: the frozen battery `./bench-matrix.sh` (two-call wall-clock delta, comparable across engines and boxes):
+Two instruments, both in the box, both reproducible. The headline, **65.2 and 68.5 tok/s greedy median** on 2026-11-05, is `./bench.sh` (streaming decode rate net of TTFT, the repo's historical headline instrument: v1.0-v1.1 measured ~36-40 on it, v1.2 measured 41-57 per probe, v1.9 measured 64-71 per probe with the calibrated draft, the v1.14 move to the official release image measured 71.4 against 69.8 on the image it replaced, and the lane v1.44.0 serves, without torch.compile, 65.2 and 68.5 against 71.0 and 67.4 with it the same day, spreads that overlap). The table below is the harsher one: the frozen battery `./bench-matrix.sh` (two-call wall-clock delta, comparable across engines and boxes):
 | What you generate (thinking on, battery v1) | v1.9 (NVFP4 draft D16, this repo) | v1.2 (DFlash2, this repo) | v1.1 (DSpark) | Stable-MTP engines |
 |---|---|---|---|---|
 | Agentic coding (code, diffs, tool calls) | **40 / 34** | 32-40 | 28-36 | 24-28 |
