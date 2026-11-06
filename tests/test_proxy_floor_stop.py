@@ -312,7 +312,7 @@ class FloorStop(unittest.TestCase):
         mod = self.mod
         mod._rid_override_honoured = True
         mod._SERVED.update(names=(), engine="", ts=0.0)
-        mod._STOP_WINDOW["until"] = 0.0     # no stop under way left by the test before (v1.44.0)
+        getattr(mod, "_STOP_WINDOWS", {}).clear()     # no stop under way left by the test before (v1.44.0)
         # The box's own memory never decides here: the floor is off unless a test sets it. Read with
         # getattr, so that on a proxy without the stop each test fails on what it checks, not here.
         if hasattr(mod, "_FLOOR"):
@@ -684,6 +684,20 @@ class FloorStop(unittest.TestCase):
         got = self._read(s)
         s.close()
         self.assertIn(b"message_stop", got)
+
+    def test_a_generation_that_goes_out_while_the_cockpits_abort_all_may_come_is_cut(self):
+        # SGLang refused the proxy's abort_all: the cockpit sends its own within 8 s, which ends every generation SGLang
+        # runs, and SGLang ends an aborted Anthropic stream as end_turn. One that goes out then is that stop's, cut, never
+        # ended as whole (the 15th review of v1.43.0); read as it goes out, after the size guard, since the review of
+        # v1.44.0
+        FakeEngine.abort_all_fails = True
+        status, out, _ = self._stop({"why": "test operator", "kind": "operator"})
+        self.assertEqual((status, out["stopped"], out["abort_all"]), (200, 0, False), out)
+        s = self._post("/v1/messages", {"model": "m", "max_tokens": 10, "stream": True,
+                                        "messages": [{"role": "user", "content": "hi"}]})
+        got = self._read(s)
+        s.close()
+        self.assertNotIn(b"message_stop", got, "a generation that went out in a stop's window was ended as whole")
 
     def test_a_stop_that_cut_nothing_holds_nothing_back(self):
         # the wait belongs to a cut (revue 627, 26/10): generations running outside this proxy

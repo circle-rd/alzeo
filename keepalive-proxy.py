@@ -586,8 +586,8 @@ def text_lane_coming():
         return _HOLD_SEEN["coming"]
 
 
-def engine_answers():
-    """True when the engine answers at all: any status under 500 on its info route. A held
+def engine_answers(path=None):
+    """True when the engine answers at all: any status under 500 on its info route (path: on that one). A held
     request may go then; 5xx is SGLang starting or stopping, and no answer is no engine."""
     try:
         headers = {"Authorization": f"Bearer {_api_key()}"}
@@ -595,7 +595,7 @@ def engine_answers():
         headers = {}                    # a 401 still says an engine is there
     # v6.39: an engine without SGLang's info routes (vLLM) is probed on /health, which there
     # generates nothing
-    req = urllib.request.Request(UPSTREAM + (_INFO_ROUTE["path"] or "/health"), headers=headers)
+    req = urllib.request.Request(UPSTREAM + (path or _INFO_ROUTE["path"] or "/health"), headers=headers)
     try:
         urllib.request.urlopen(req, timeout=10).read()
         return True
@@ -4870,9 +4870,17 @@ def engine_aborted(rec):
 # one that started after the stop's list was made included, and SGLang ends an aborted Anthropic stream as end_turn,
 # its client taking the part it got for the whole answer; the cockpit sends its own abort_all, straight to the engine,
 # within its 8 s when this proxy's did not go (dashboard/cockpit.py, engine_abort_all), hence the grace then (the 15th
-# review of v1.43.0, 2026-11-05)
-_STOP_WINDOW = {"until": 0.0, "why": "", "floor": True}
+# review of v1.43.0, 2026-11-05). One per stop: one slot, two stops at once closed each other's (the review of v1.44.0)
+_STOP_WINDOWS = {}                  # {stop: {"until", "why", "floor"}}, under _GEN_LOCK
 COCKPIT_ABORT_GRACE_S = 8.0
+
+
+def _stop_window_now():
+    """The window of a stop under way or in its grace (the one open the longest), or None. Under _GEN_LOCK."""
+    now = time.monotonic()
+    for k in [k for k, w in _STOP_WINDOWS.items() if w["until"] <= now]:
+        del _STOP_WINDOWS[k]
+    return max(_STOP_WINDOWS.values(), key=lambda w: w["until"], default=None)
 
 
 def stop_generations(why, floor_gib=None, hold_s=None, floor=True):
@@ -4887,10 +4895,14 @@ def stop_generations(why, floor_gib=None, hold_s=None, floor=True):
         # engine's death, and a floor stop that cut nothing held new generations back (the 6th review of v1.43.0)
         # nor one a stop marked already: an Abort all then the floor counted it twice and started the floor's episode
         # for a generation stopped before (the 15th review of v1.43.0, 2026-11-05)
-        targets = [h for h in _GENERATIONS
-                   if not getattr(h, "_relaying_whole", False) and not getattr(h, "_stop_why", None)]
-        _STOP_WINDOW.update(until=time.monotonic() + ABORT_TIMEOUT_S + 2, why=why, floor=floor)
-        if floor and targets:
+        running = [h for h in _GENERATIONS if not getattr(h, "_relaying_whole", False)]
+        targets = [h for h in running if not getattr(h, "_stop_why", None)]
+        me = object()
+        _STOP_WINDOWS[me] = {"until": time.monotonic() + ABORT_TIMEOUT_S + 2, "why": why, "floor": floor}
+        # the floor's episode for what still runs, a stop before it ending it or not: counted out of the targets, the
+        # floor that landed during an Abort all held nothing back, and the resends came in under it (the review of
+        # v1.44.0); stopped again, it was counted twice (the 15th review of v1.43.0)
+        if floor and running:
             now = time.monotonic()
             hold = 0.0 if FLOOR_HOLD_S <= 0 else (FLOOR_HOLD_S if hold_s is None else hold_s)
             gib = 0.0 if MEM_FLOOR_GIB <= 0 else (MEM_FLOOR_GIB if floor_gib is None else floor_gib)
@@ -4922,6 +4934,7 @@ def stop_generations(why, floor_gib=None, hold_s=None, floor=True):
     # vLLM answers it 404: closing each relayed connection is its abort.
     all_sent = False
     abort_404 = False                   # vLLM's answer: no abort_all there, and the cockpit sends none of its own
+    refused = False                     # no engine listening: the cockpit's own abort_all reaches none either
     key = _door_key()
     hdrs = {"Content-Type": "application/json"}
     if key:
@@ -4936,6 +4949,7 @@ def stop_generations(why, floor_gib=None, hold_s=None, floor=True):
         if e.code != 404:
             log(f"memory floor: abort_all failed: HTTP {e.code}")
     except Exception as e:  # noqa: BLE001 (the requests' own aborts follow; said, not raised)
+        refused = engine_refused(e)
         log(f"memory floor: abort_all failed: {type(e).__name__}: {str(e)[:120]}")
     # When abort_all did not go, the aborts by rid of the requests still waiting go out, each in its own
     # thread: one by one, each up to ABORT_TIMEOUT_S, they held the cockpit's answer past its 8 s (the
@@ -4947,9 +4961,12 @@ def stop_generations(why, floor_gib=None, hold_s=None, floor=True):
             if h not in vllm:
                 threading.Thread(target=h._stop_waiting, name="stop-waiting", daemon=True).start()
     with _GEN_LOCK:
-        # closed once abort_all went, or where there is none (vLLM's 404: the cockpit sends none either); open
-        # COCKPIT_ABORT_GRACE_S more when SGLang's did not go, the cockpit then sending its own
-        _STOP_WINDOW["until"] = time.monotonic() + (0.0 if all_sent or abort_404 else COCKPIT_ABORT_GRACE_S)
+        # closed once abort_all went, or where there is none (vLLM's 404: the cockpit sends none either), or where no
+        # engine listens (open, a request then was cut where it waited for the engine and was served, the review of
+        # v1.44.0); open COCKPIT_ABORT_GRACE_S more when SGLang's did not go, the cockpit then sending its own
+        grace = 0.0 if all_sent or abort_404 or refused else COCKPIT_ABORT_GRACE_S
+        _STOP_WINDOWS[me] = {"until": time.monotonic() + grace, "why": why, "floor": floor}
+        _stop_window_now()
     return len(targets), all_sent
 
 
@@ -4957,7 +4974,15 @@ def stop_generations(why, floor_gib=None, hold_s=None, floor=True):
 # engine never waits for the client, so it reads the engine at the engine's pace and sees its end, a death or a cut as
 # they come; past this many bytes waiting for a client that reads nothing, the generation is stopped and the client cut.
 # PROXY_SPOOL_MAX_MIB=0: no bound.
-SPOOL_MAX_BYTES = int(float(os.environ.get("PROXY_SPOOL_MAX_MIB", "32")) * (1 << 20))
+# Empty, not a number, infinite or below 0: 32. An empty value stopped the proxy at its start, and -1 cut every stream
+# (the review of v1.44.0).
+try:
+    SPOOL_MAX_MIB = float(os.environ.get("PROXY_SPOOL_MAX_MIB") or 32)
+except ValueError:
+    SPOOL_MAX_MIB = 32.0
+SPOOL_MAX_MIB = SPOOL_MAX_MIB if math.isfinite(SPOOL_MAX_MIB) and SPOOL_MAX_MIB >= 0 else 32.0
+SPOOL_MAX_BYTES = int(SPOOL_MAX_MIB * (1 << 20))
+SPOOL_CUT_WAIT_S = 5.0              # a client too slow whose write does not return in these seconds is cut there
 # An SSE answer's end, as each route says it: the OpenAI chat routes' [DONE], the Anthropic route's message_stop, the
 # Responses route's response.completed, .incomplete or .failed (SGLang 0.5.22's serving_responses.py and vLLM 0.29's
 # write no [DONE] there; read 2026-11-05)
@@ -4980,15 +5005,17 @@ class _Spool:
         self.cap = cap
         self.over = False
 
-    def put(self, kind, val=b""):
-        """Queued at once; False once the bytes waiting are over the bound."""
+    def put(self, kind, val=b"", capped=True):
+        """Queued at once; False when a capped one finds the bytes waiting over the bound. Not capped: what ends the
+        answer (its end, a death, a cut, an order), which stops nothing: its end over the bound stopped a generation
+        whole at its engine and cut its client (the review of v1.44.0)."""
         with self._cond:
             self._d.append((kind, val))
             self.bytes += len(val)
-            if self.cap and self.bytes > self.cap:
+            if capped and self.cap and self.bytes > self.cap:
                 self.over = True
             self._cond.notify()
-            return not self.over
+            return not (capped and self.over)
 
     def put_nowait(self, item):
         """A stop's wake (_mark_stopped), as the queue took it."""
@@ -5006,16 +5033,20 @@ class _Spool:
             return kind, val
 
 
-def engine_died_in(rec):
+def engine_died_in(rec, before_probe=None):
     """vLLM's engine died during this answer, as its stream says it: the chat routes' error event names EngineCore
     (ENGINE_DIED_RE); the Anthropic route says it as the chat event it could not read (vLLM 0.29's
     anthropic/serving.py: a ValidationError of ChatCompletionStreamResponse in an error event, the engine's words cut),
     a death only when the engine no longer answers. Until v1.44.0 that death was neither recognized nor bound (the 14th
-    and 15th reviews of v1.43.0)."""
+    and 15th reviews of v1.43.0). Its probe asks vLLM's /health: on the info route a pool read had not set yet, a 404
+    said the engine answered (the review of v1.44.0). before_probe runs before it: the probe can take 10 s, and a stop
+    during it took the death for the stop's (the same review)."""
     if b"EngineCore" in rec and ENGINE_DIED_RE.search(rec):
         return True
     if rec.startswith(b"event: error") and b"ChatCompletionStreamResponse" in rec and b"validation error" in rec:
-        return not engine_answers()
+        if before_probe is not None:
+            before_probe()
+        return not engine_answers("/health")
     return False
 
 
@@ -6839,26 +6870,58 @@ class H(BaseHTTPRequestHandler):
         spool = _Spool(SPOOL_MAX_BYTES)
         self._relay_q = spool               # v6.47: a stop wakes the loop below through it
         self._order_put = False             # a hop's box told its request ended by order (the pump decides it)
+        self._pump_death = False            # the pump read its engine's death or its cut: no order said for it
+        slow = []                           # too_slow ran
         stop = threading.Event()
         drain = threading.Event()
         drain_t0 = [0.0]
 
         def too_slow():
-            # the client read nothing while SPOOL_MAX_BYTES of its answer waited: the generation stops now
+            # the client read nothing while SPOOL_MAX_BYTES of its answer waited: the generation stops now, once, as
+            # drop_upstream stops it: aborted, then closed; drained where the engine knows no rid of it (sglang#35255).
+            # Shut here with no abort, and closed by the relay before the abort went (the review of v1.44.0)
+            if slow:
+                return
+            slow.append(1)
             self._generates_no_more()
             if self._abort_upstream("its client too slow"):
                 stop.set()
                 try: resp.close()
                 except Exception: pass
             else:
-                self._shut_upstream()
-                stop.set()
+                drain_t0[0] = time.time()
+                drain.set()
 
-        def put(kind, rec=b""):
-            if spool.put(kind, rec):
+            def unblock():
+                # a client that reads nothing at all kept its relay in its write CLIENT_IO_S, the spool with it, and was
+                # said gone, not too slow (the review of v1.44.0)
+                if not getattr(self, "_ended", False):
+                    try: self.connection.shutdown(socket.SHUT_RDWR)
+                    except Exception: pass
+            cut = threading.Timer(SPOOL_CUT_WAIT_S, unblock)
+            cut.daemon = True
+            cut.start()
+
+        def put(kind, rec=b"", end=False):
+            # the answer's events are capped; what ends it is not (_Spool.put)
+            if spool.put(kind, rec, kind == "d" and not end):
                 return True
             too_slow()
             return False
+
+        def decide(fn, *args):
+            # its decision guarded: raised in the pump, the 'e' or 'f' after it never went, and the relay waited for
+            # them MAX_SILENCE_S, then ended the stream as whole (the review of v1.44.0)
+            try:
+                fn(*args)
+            except Exception as e:  # noqa: BLE001 (said, never raised: the stream's end goes after it)
+                log(f"{self._peer} {fn.__name__} failed: {type(e).__name__}: {str(e)[:160]}")
+
+        def ours():
+            # this proxy ended the upstream itself (a stop, its client gone or too slow): what the pump reads then is
+            # no cut of its engine's. vLLM's abort shuts the socket before its caller sets stop, and a client gone was
+            # bound 10 minutes (the review of v1.44.0)
+            return stop.is_set() or drain.is_set() or getattr(self, "_aborted", False)
 
         def pump():
             # only COMPLETE SSE events are forwarded (boundary \n\n): a
@@ -6867,6 +6930,7 @@ class H(BaseHTTPRequestHandler):
             buf = b""
             died = False
             cut = False
+            aborted = False                 # SGLang ended it as aborted: its end is no whole answer's
             try:
                 while not stop.is_set():
                     # read1: returns as soon as bytes exist, where read(8192)
@@ -6889,20 +6953,34 @@ class H(BaseHTTPRequestHandler):
                         i = buf.find(b"\n\n")
                         if i < 0: break
                         rec = buf[:i+2]; buf = buf[i+2:]
-                        if not died and engine_died_in(rec):
+                        if not died and engine_died_in(rec, self._generates_no_more):
                             # vLLM's engine died during this answer: decided as it is read (decision 1019), the
                             # hop's order put before the death it relays (decision 1031)
-                            self._engine_end(put)
+                            decide(self._engine_end, put)
                             died = True
-                            if not put("x", rec): return
+                            self._pump_death = True
+                            if self._pair_hop() and not (b"EngineCore" in rec and ENGINE_DIED_RE.search(rec)):
+                                # the other box reads a death in an event that names EngineCore, or in this proxy's
+                                # own: vLLM's on /v1/messages, said in neither, was bound on no box (the review of
+                                # v1.44.0)
+                                rec = sse_error(HOP_CLOSED)
+                            put("x", rec)
                             continue
+                        aborted = aborted or engine_aborted(rec)
                         if rec.startswith(SSE_ENDS):
-                            self._generates_no_more(finishing=True)   # its end read: whole at its engine
-                        if not put("d", rec): return
+                            # its end read: whole at its engine, unless dead, aborted or failed there (the review of
+                            # v1.44.0: the stop's count said whole answers that were not)
+                            self._generates_no_more(finishing=not died and not aborted
+                                                    and not rec.startswith(b"event: response.failed"))
+                            put("d", rec, end=True)
+                            continue
+                        if not put("d", rec):
+                            break           # too slow: stopped, or drained from here (too_slow)
             except Exception as e:
-                if not stop.is_set() and not drain.is_set():
+                if not ours():
                     cut = True
-                    self._engine_end(put, died)   # cut by its engine, decided as it is read
+                    self._pump_death = True
+                    decide(self._engine_end, put, died)   # cut by its engine, decided as it is read
                     put("e", str(e).encode())
             finally:
                 # an if and its else, not a return: a return in a finally swallows what is
@@ -6912,12 +6990,12 @@ class H(BaseHTTPRequestHandler):
                         f"{time.time() - drain_t0[0]:.0f}s")
                     try: resp.close()
                     except Exception: pass
-                elif not cut and not stop.is_set():
-                    self._generates_no_more(finishing=not died)   # its engine's stream ended
+                elif not cut and not ours():
+                    self._generates_no_more(finishing=not died and not aborted)   # its engine's stream ended
                     if died:
-                        self._engine_end_late(put)
+                        decide(self._engine_end_late, put)
                     if buf:
-                        put("d", buf)
+                        put("d", buf, end=True)
                     put("f")
         threading.Thread(target=pump, daemon=True).start()
 
@@ -6933,6 +7011,20 @@ class H(BaseHTTPRequestHandler):
                 drain_t0[0] = time.time()
                 drain.set()
 
+        def cut_too_slow():
+            # its client read nothing while SPOOL_MAX_BYTES of its answer waited (decision 1108): the pump stopped the
+            # generation (too_slow, the upstream its own to end), and the client is cut with no end, as an answer it can
+            # retry. A hop's box is told an order, unless the pump read its engine's death or its cut: told then, it
+            # undid the binding of a real death (the review of v1.44.0)
+            log(f"{self._peer} its client read nothing while {spool.cap / (1 << 20):g} MiB of its answer waited: the "
+                f"generation is stopped and the client cut")
+            if not self._pump_death:
+                self._say_ended_by_order()
+            self.close_connection = True
+            try: self.connection.shutdown(socket.SHUT_RDWR)
+            except Exception: pass
+            self._done("CLIENT TOO SLOW")
+
         anthropic = self.path.startswith("/v1/messages")
         ka_bytes = KA_ANTHROPIC if anthropic else KA_OPENAI
         silence = 0.0
@@ -6943,17 +7035,7 @@ class H(BaseHTTPRequestHandler):
                 drop_upstream(self._stop_label())
                 self._cut_stopped(); return
             if spool.over:
-                # its client read nothing while SPOOL_MAX_BYTES of its answer waited (decision 1108): the pump stopped
-                # the generation, and the client is cut with no end, as an answer it can retry
-                log(f"{self._peer} its client read nothing while {spool.cap >> 20} MiB of its answer waited: the "
-                    f"generation is stopped and the client cut")
-                self._say_ended_by_order()  # a hop's box binds nothing: this box ended it
-                self.close_connection = True
-                try: self.connection.shutdown(socket.SHUT_RDWR)
-                except Exception: pass
-                try: resp.close()
-                except Exception: pass
-                self._done("CLIENT TOO SLOW"); return
+                cut_too_slow(); return
             try:
                 kind, val = spool.get(KEEPALIVE_S)
                 if kind == "s":
@@ -7027,6 +7109,8 @@ class H(BaseHTTPRequestHandler):
             self._watch_tools(val, anthropic)
             try: self._chunk(val)
             except Exception:
+                if spool.over:
+                    cut_too_slow(); return  # its write ended by too_slow's wait: the upstream is the pump's to end
                 drop_upstream(); self._done("CLIENT GONE on write"); return
         self._finish()
         try: resp.close()          # the pump thread already ended at EOF; without this
@@ -7724,14 +7808,21 @@ class H(BaseHTTPRequestHandler):
     def _now_a_generation(self):
         """This try is a generation a stop reaches (v6.47), until its answer: the flag an error of the try before set
         (a 503 held, then sent again) kept the generation sent again out of every stop's reach, and on SGLang a stopped
-        Anthropic stream ended in end_turn as if whole (the 8th and 9th reviews of v1.43.0, 2026-11-05). One that starts
-        while a stop is under way is that stop's: abort_all would end it unmarked, as whole (_STOP_WINDOW); marked, it
-        is not sent, and is refused or cut as a new one is (_forward)."""
+        Anthropic stream ended in end_turn as if whole (the 8th and 9th reviews of v1.43.0, 2026-11-05)."""
         with _GEN_LOCK:
             _GENERATIONS.add(self)
             self._relaying_whole = False
-            if time.monotonic() < _STOP_WINDOW["until"] and not getattr(self, "_stop_why", None):
-                self._mark_stopped(_STOP_WINDOW["why"], _STOP_WINDOW["floor"])
+
+    def _marked_if_a_stop_is_under_way(self):
+        """A generation that goes out while a stop is under way is that stop's: abort_all would end it unmarked, as
+        whole (_STOP_WINDOWS); marked, it is not sent, and is refused or cut as a new one is (_forward). Read as it goes
+        out: read at its registration, before the size guard, a request the guard then held (its engine warming up, its
+        count unanswered) kept the mark through its hold, up to 20 minutes, and was cut after it (the review of
+        v1.44.0)."""
+        with _GEN_LOCK:
+            w = _stop_window_now()
+            if w is not None and not getattr(self, "_stop_why", None) and self in _GENERATIONS:
+                self._mark_stopped(w["why"], w["floor"])
 
     def _generates_no_more(self, finishing=False):
         """Its engine's end is known (its death said in its stream, its cut, its stream's end, read as the SSE pump reads
@@ -7827,12 +7918,11 @@ class H(BaseHTTPRequestHandler):
         before, peer = getattr(self, "_killer_before", None), self._peer
 
         def later():
-            for wait in (0.5, 1.0, 1.5):    # 0.5, 1.5 and 3 s after its client left
+            for wait in (0.5, 1.0, 1.5):    # 0.5, 1.5 and 3 s after the binding
                 time.sleep(wait)
                 if unit_stopping_by_order():
                     killer_forget(fp, "", before)
-                    log(f"{peer} its lane's stop showed after its client left at its engine's death: its binding is "
-                        f"undone")
+                    log(f"{peer} its lane's stop showed after its engine's death or cut: its binding is undone")
                     return
         threading.Thread(target=later, daemon=True).start()
 
@@ -8519,6 +8609,8 @@ class H(BaseHTTPRequestHandler):
         # first chunk is out, after its queue and its prefill (_keep_waiting). Until then this
         # proxy waits inside _open, and the caller is watched for that wait: its leaving ends
         # the upstream, and a stream is kept alive meanwhile.
+        if gen:
+            self._marked_if_a_stop_is_under_way()
         if getattr(self, "_stop_why", None):
             # stopped before it went out: not sent, and refused as a new one is (cut if no refusal holds)
             if not self._floor_refused():
