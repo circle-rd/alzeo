@@ -137,11 +137,12 @@ list was read): the entry then serves it itself.
     within 5 s that it ended the request by order (decisions 1054 and 1061), which it says at the stream's end
     too when its lane's stop showed only then. A request of the entry's own client, bound at a death of its
     engine, is unbound the same way when its lane's stop shows at the stream's end, at its cut, or within 3 s of
-    the proxy finding its client gone before the end. Only the binding a try made is undone, which gives back
+    the binding. Only the binding a try made is undone, which gives back
     the one the same body had before, from an earlier death or an earlier try of the same request. A death or
     a cut is decided as the proxy reads it from the engine, its order read then, however far behind its client
     reads (v1.44.0), and vLLM's death on /v1/messages, which its Anthropic route says without the engine's
-    words, counts as one when the engine no longer answers. When the client of a request the entry sent on
+    words, counts as one when the engine no longer answers on /health; the box that served it says it to the
+    other box in words that box reads as a death. When the client of a request the entry sent on
     leaves, streamed or not, the entry reads what the other box still sends for 5 s: a death there binds the
     request, an order binds nothing (decision 1112).
   - While the entry's engine is away (a crash, a restart), a model its lane serves (as the command of its

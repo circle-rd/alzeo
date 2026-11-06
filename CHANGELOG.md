@@ -17,12 +17,14 @@ it read nothing more of the engine, its end included, and what the proxy decides
 reach, the order read in systemd, the binding of decision 1019, the order told to the other box) was decided once the
 client's relay reached it, behind up to 1,024 events, as the fourteenth and fifteenth reviews of v1.43.0 found. Its
 reader never waits now: the answer waits in a spool bounded at 32 MiB (PROXY_SPOOL_MAX_MIB), past which the generation
-is stopped and the client cut (CLIENT TOO SLOW in the journal), and the engine's death, cut or end is decided as it is
-read, the order read in systemd once then, and a binding's 3 s of reads started at once. A death or a cut is bound
-when its client leaves first, an order seen at the death binds nothing however late the relay gets there, the end of a
-/v1/responses stream (response.completed, .incomplete or .failed) and an Ollama stream's last line take it out of
-reach as they are read, and vLLM's death on its Anthropic route, which it says without the engine's words, counts as
-one when the engine no longer answers.
+is stopped (read to its end unrelayed where the engine knows no id of it to abort) and the client cut within 5 s, even
+one that reads nothing at all (CLIENT TOO SLOW in the journal); what ends the answer, its end, a death or a cut, goes
+whatever waits. The engine's death, cut or end is decided as it is read, the order read in systemd once then, and a
+binding's 3 s of reads started at once. A death or a cut is bound when its client leaves first, an order seen at the
+death binds nothing however late the relay gets there, the end of a /v1/responses stream (response.completed,
+.incomplete or .failed) and an Ollama stream's last line take it out of reach as they are read, and vLLM's death on
+its Anthropic route, which it says without the engine's words, counts as one when its engine no longer answers on
+/health, the box of a pair that served it saying it to the other box in words that box reads as a death.
 
 **A pair reads on after its client leaves.** When the client of a request this box sent to the other box left before a
 death that box sent reached it, the connection was ended at once, the death went unread, and the request was left
@@ -32,21 +34,25 @@ reached: a death there binds the request (its error event or its 502, an answer 
 answer), an order binds nothing, and this box ending the connection at the end of those seconds is no death. The other
 box generates for nobody up to that long, the cost of reading it.
 
-**A stop reaches what it should.** A stop counted again a generation another stop had marked (an Abort all, then the
-floor, which started its episode for it). On vLLM, a running answer's engine connection ended only at its relay's next
-event, after a write to a slow client returned, up to 900 s, the generation going on meanwhile: it ends at once. A
-generation that starts while a stop is under way is that stop's, refused or cut as a new one is: abort_all ended it
-unmarked, and SGLang ends an aborted Anthropic stream as end_turn, its client taking the part it got for the whole
-answer; the window closes once the proxy's abort_all went, and stays open 8 s more when it did not, the cockpit then
-sending its own. And the stop's answer counts as finishing a stream whose end was read and still goes out, where the
-cockpit said no generation ran.
+**A stop reaches what it should.** A stop counted again a generation another stop had marked, an Abort all then the
+floor: it counts once now, and the floor's episode still holds new generations back while that generation runs. On
+vLLM, a running answer's engine connection ended only at its relay's next event, after a write to a slow client
+returned, up to 900 s, the generation going on meanwhile: it ends at once. A generation that goes out while a stop is
+under way is that stop's, refused or cut as a new one is: abort_all ended it unmarked, and SGLang ends an aborted
+Anthropic stream as end_turn, its client taking the part it got for the whole answer. Each stop's window closes once
+the proxy's abort_all went or no engine listens, and stays open 8 s more when an engine did not take it, the cockpit
+then sending its own. And the stop's answer counts as finishing a stream whose end was read and still goes out, where
+the cockpit said no generation ran.
 
 **What an update does.** The proxy (v6.53) and the cockpit restart. The 27B's unit changes. A box that serves the 27B
 restarts it during the update, about 3.5 minutes on the reference box, the proxy holding requests meanwhile. A box
 that serves another lane starts the 27B without torch.compile at its next Load.
 
 **Tests.** tests/test_27b_no_torch_compile.py: none of the 27B's launches (its three units and run.sh) passes either
-flag. It fails on v1.43.0.
+flag. It fails on v1.43.0. tests/test_proxy_pair.py has 40 new tests and tests/test_proxy_floor_stop.py one: the relay
+behind a client that reads nothing (its end, its death, its cut and their order read as they come, the spool's bound),
+the stops, and the pair's entry once its client left. Each one written for a defect fails on the proxy before its fix,
+the others guard against a false alarm, and changing any part of the new code fails at least one of them (47 mutants).
 
 ## v1.43.0 (2026-11-05): two boxes that serve one model share its requests, a conversation staying on the box that holds it
 
