@@ -6,10 +6,10 @@
 --torch-compile-max-bs 4`. Measured on the reference box on 2026-11-05, one after the other within the hour on the
 same image (v0.5.22), three runs of the official benchmark each (8,192 tokens in, 1,024 out, medians): with it, 42.9
 tok/s at one request and 77.0 at four, and the engine ready in 371 s; without it, 44.0 and 80.6, ready in 208 s. GSM8K
-gave 0.992 against 0.988 on 250 questions, and bench.sh's short greedy prompts 65.2 and 68.5 against 71.0 and 67.4,
-spreads that overlap. It also kept the lane from SGLang v0.5.23, which decodes ten times slower with it at one request
-(3.6 against 37.3 tok/s) and as fast as v0.5.22 without it (decision 1102). The 64 GB unit follows without a measure
-of its own: no 64 GB box was at hand.
+gave 0.992 without it against 0.988 with it on 250 questions, and bench.sh's short greedy prompts 65.2 and 68.5
+without it against 71.0 and 67.4 with it, spreads that overlap. It also kept the lane from SGLang v0.5.23, which
+decodes ten times slower with it at one request (3.6 against 37.3 tok/s) and as fast as v0.5.22 without it (decision
+1102). The 64 GB unit follows without a measure of its own: no 64 GB box was at hand.
 
 **An answer's end is read as its engine sends it, whatever its client's pace.** The proxy read an SSE answer from the
 engine into a queue of 1,024 events, and its reader waited when the queue was full: behind a client that read nothing,
@@ -54,6 +54,24 @@ flag. It fails on v1.43.0. tests/test_proxy_pair.py has 72 new tests and tests/t
 behind a client that reads nothing (its end, its death, its cut and their order read as they come, the spool's bound),
 the stops, and the pair's entry once its client left. Each one written for a defect fails on the proxy before its fix,
 the others guard against a false alarm, and 82 mutants of the new code are each caught by at least one of them.
+
+**After the push.** The reference box updated at 138df81 on 2026-11-06 with the command of this release,
+`cd ~/dgx-spark-qwen38 && curl -fsSL https://get.alzeo.ai | bash`, once GitHub's CI had passed on that commit (7 jobs,
+89 steps, none skipped) and get.alzeo.ai served its get.sh byte for byte: the run ended whole in 95 s. The proxy
+(v6.53) and the cockpit restarted. Flash FP4-Local, the lane that served, kept running, and the 27B's unit was written
+without torch.compile. The 8 real clients (Claude Code, opencode, Hermes, pi, the OpenAI and Anthropic SDKs, fetch
+under Node and Bun, LiteLLM) answered through the proxy on Flash FP4-Local, and the production checks passed. The
+cockpit showed no banner on any of its 5 views, with no JavaScript error, and said v1.44.0. The matrix then ran the 8
+clients on each of the 7 lanes, each lane loaded as the cockpit loads it and Flash FP4-Local loaded again at the end:
+55 of 56. The one cell left, opencode on Kolibri, failed as it did in v1.40.4: the model asked to read `/hello.txt` at
+the root instead of the hello.txt of its working directory, and opencode, with no one to ask, refused that outside
+directory, the proxy having relayed the answer whole. Run again five times, it failed twice; then, Kolibri loaded once
+more, ten runs each through a proxy of v1.43.0, a proxy of this release and no proxy at all, opencode on the engine
+itself, failed 4, 3 and 1 times, every one on that same path: the model's own, without a proxy too. The 27B, loaded
+first, started without torch.compile and was ready in 218 s. Before the push, two proxies of this release, paired on
+the reference box in front of its Flash FP4-Local, passed the 8 clients through the entry: of the 16 requests the
+entry sent on, 15 came back answered, and the 16th, a request of 8.8 KB that opencode sends beside its first turn, was
+still streaming when opencode ended its run and left it, as it leaves it on one box.
 
 ## v1.43.0 (2026-11-05): two boxes that serve one model share its requests, a conversation staying on the box that holds it
 
