@@ -6906,6 +6906,10 @@ class H(BaseHTTPRequestHandler):
                 return
             slow.append(1)
             self._generates_no_more()
+            # none of what waits is written any more (its relay cuts at its next turn): freed now, before the abort's
+            # round trip, where it stayed up to CLIENT_IO_S behind a hop, or a drain's DRAIN_MAX_S (the 3rd and 4th
+            # reviews of v1.44.0)
+            spool.clear()
             if self._abort_upstream("its client too slow"):
                 stop.set()
                 try: resp.close()
@@ -6913,9 +6917,6 @@ class H(BaseHTTPRequestHandler):
             else:
                 drain_t0[0] = time.time()
                 drain.set()
-            # none of what waits is written any more (its relay cuts at its next turn): freed now, where it stayed up to
-            # CLIENT_IO_S behind a hop, or a drain's DRAIN_MAX_S (the 3rd review of v1.44.0)
-            spool.clear()
 
             def unblock():
                 # a client that reads nothing at all kept its relay in its write CLIENT_IO_S, the spool with it, and was
@@ -7040,6 +7041,7 @@ class H(BaseHTTPRequestHandler):
             else:
                 drain_t0[0] = time.time()
                 drain.set()
+                spool.clear()               # drained, never written: what waited freed (the 4th review of v1.44.0)
 
         def cut_too_slow():
             # its client read nothing while SPOOL_MAX_BYTES of its answer waited (decision 1108): the pump stopped the
@@ -7997,15 +7999,21 @@ class H(BaseHTTPRequestHandler):
         """Decision 998, this box's side: its engine did not answer (connection refused, or an HTTP error while it
         starts or stops) a request of a model the other box serves too, at its first try: no byte went out, no hold
         opened a stream. True once the other box answered it; False when none could (this box then holds it, or says
-        503, as before)."""
+        503, as before). A request a stop marked is answered here, refused or cut, never handed on: read under the lock
+        the stop marks under, a stop between a check and the hand-off had the other box serve it (the 3rd and 4th
+        reviews of v1.44.0)."""
         alt, self._pair_alt = getattr(self, "_pair_alt", None), None
         if alt is None or self._hold_until is not None or getattr(self, "_held_sse", False):
             return False
         peers, name, conf, local, blocks, mine = alt
         with _GEN_LOCK:
-            was = (self in _GENERATIONS, self in _PAIR_HERE)
-            _PAIR_HERE.discard(self)
-            _GENERATIONS.discard(self)      # it runs elsewhere, if anywhere: a stop or a count here is not its
+            stopped = getattr(self, "_stop_why", None)
+            if not stopped:
+                was = (self in _GENERATIONS, self in _PAIR_HERE)
+                _PAIR_HERE.discard(self)
+                _GENERATIONS.discard(self)  # it runs elsewhere, if anywhere: a stop or a count here is not its
+        if stopped:
+            return self._stopped_now()
         for peer in peers:
             if _PAIR_COOL.get(peer["name"], 0) > time.monotonic():
                 continue                    # it refused a request moments ago (found in review, 2026-11-03)
@@ -8095,7 +8103,8 @@ class H(BaseHTTPRequestHandler):
         checkpoint" when it serves the model still, from another checkpoint (PAIR_MOVED holds both), None once the
         caller has its answer. With fallback (this box serves the model too, decision 998),
         "lost" when the peer had it whole and closed the connection with no answer (decision 1017), "gone" when its
-        client left before the peer took the connection, "left" when it left while its body was still on its way there,
+        client left before the peer took the connection, or once it left the peer closed on it or refused it as away
+        (503, 529, v1.44.0), "left" when it left while its body was still on its way there,
         "fallback" when the peer does not answer, or refuses it as away (503, 529), and "too long" when its pool is too
         small for the prompt, before a byte went to the caller. reserved: the caller counted it in flight already
         (_pair_spread). count: what the tile counts it as (decision 996), once the other box's answer came, never for one
@@ -8657,8 +8666,6 @@ class H(BaseHTTPRequestHandler):
                            f"tokens{ceil}) and the engine would hang instead of refusing it. The engine "
                            f"itself is up: compact the conversation, drop image attachments, or serve a "
                            f"larger pool.")
-                    if self._stopped_now():
-                        return None         # a stop reached it during its count: never handed on (the 3rd review)
                     if getattr(self, "_pair_alt", None) and self._pair_take_over(
                             body, "the prompt is too long for this box's pool"):
                         return None         # the other box of a pair that serves its model took it, its own pool

@@ -3785,6 +3785,66 @@ class TwoBoxesServeOneModel(PairFixture, unittest.TestCase):
         self.addCleanup(self.mod._PAIR_COOL.pop, "spark2", None)
         return late
 
+    def _stopped_in_its_count(self, tag, floor, hop=False, fails=False):
+        """A long prompt this box keeps (the other box busier), a stop during its count (floor or not), the count
+        answering too long (or failing): (status, body) its client got, None when the proxy cut it. hop: sent by the
+        other box to this box's pair port."""
+        m = self.mod
+        m._POOL.update(tokens=10000, window=9990, ts=time.time())
+        self.addCleanup(m._POOL.update, tokens=None, window=None, ts=0.0)
+        key = m.UPSTREAM_API_KEY
+        self.addCleanup(setattr, m, "UPSTREAM_API_KEY", key)
+        m.UPSTREAM_API_KEY = KEY_1
+        windows, floor_state = dict(m._STOP_WINDOWS), dict(m._FLOOR)
+        self.addCleanup(lambda: (m._STOP_WINDOWS.clear(), m._STOP_WINDOWS.update(windows)))
+        self.addCleanup(lambda: (m._FLOOR.clear(), m._FLOOR.update(floor_state)))
+        held = self.busy(self.E2, self.port2, KEY_2, "marker-27b", 2, 10.0)
+        self.addCleanup(lambda: [th.join(30) for th in held])
+        self.E2.served[:] = ["qwen3.8-27b", f"marker-busy-{tag}"]
+        self.until_listed(f"marker-busy-{tag}")
+        self.E1.count_delay = 1.5
+        if fails:
+            self.E1.mode = "count_fails"
+        body = dict(self.chat("qwen3.8-27b"), user=tag, messages=[{"role": "user", "content": f"{tag} " + "count " * 12000}])
+        got = {}
+
+        def send():
+            try:
+                got["r"] = (self.tls_call(self.pport1, "/v1/chat/completions", body)[:2] if hop
+                            else self.call("/v1/chat/completions", body)[:2])
+            except (OSError, http.client.HTTPException):
+                got["r"] = None
+        th = threading.Thread(target=send, daemon=True)
+        th.start()
+        self.assertTrue(_until(lambda: any(p == "/tokenize" for p, *_ in self.E1.seen), 5), "no count was made")
+        self.assertEqual(m.stop_generations(f"this test's {'memory floor' if floor else 'Abort all'}", floor=floor)[0], 1,
+                         "the stop did not reach it")
+        th.join(30)
+        return got.get("r")
+
+    def test_a_hop_a_stop_marks_during_its_count_still_gets_its_400(self):
+        # a request the other box sent on, its count too long: the size guard's 400, which the entry serves itself on,
+        # became a 503 ended by order once a stop reached it during its count (the 4th review of v1.44.0)
+        if not self.INPROC:
+            self.skipTest("this box's pool and stop are in this test's process")
+        r = self._stopped_in_its_count("conv-hop-too-long", floor=False, hop=True)
+        self.assertIsNotNone(r, "the hop's request was cut")
+        st, out = r
+        self.assertEqual(st, 400, out[:300])
+        self.assertIn(b"context_length_exceeded", out)
+
+    def test_a_request_the_floor_stops_during_its_count_is_refused_by_it_never_handed_on(self):
+        # its count too long for this box's pool, which hands it to the other box's: the floor's stop during the count is
+        # answered by the floor, with when to come back, the other box never getting it (the 4th review of v1.44.0)
+        if not self.INPROC:
+            self.skipTest("this box's pool and stop are in this test's process")
+        r = self._stopped_in_its_count("conv-floor-too-long", floor=True)
+        self.assertIsNotNone(r, "a request the floor stopped was cut bare")
+        st, out = r
+        self.assertIn(st, (503, 529), out[:300])
+        self.assertIn(b"memory floor", out)
+        self.assertNotIn("conv-floor-too-long", self.E2.users, "a request the floor stopped went to the other box")
+
     def test_a_box_away_that_refuses_a_shared_request_after_its_client_left_is_paused(self):
         # its 503 came once its client had left: said served, the box was neither paused nor its conversation
         # forgotten there, its retry refused again (the 3rd review of v1.44.0)
@@ -3797,6 +3857,10 @@ class TwoBoxesServeOneModel(PairFixture, unittest.TestCase):
         self.assertTrue(_until(lambda: m._PAIR_COOL.get("spark2", 0) > time.monotonic(), 6),
                         "a box that refused a shared request after its client left was not paused")
         self.assertIsNone(m.killer_box(fp), "a refusal was bound")
+        # its client gone first, its path pinned: with the watch late, the refusal took the path of a client still
+        # there, which pauses too and serves it here for nobody (the 4th review of v1.44.0)
+        self.assertTrue(self.until_in_journal("spark1", "its client left, and spark2 gets nothing", within=3.0))
+        self.assertNotIn("conv-entry-left-away-0", self.E1.users, "a request whose client left was served here")
         for th in held:
             th.join(30)
 
@@ -5128,6 +5192,12 @@ class TwoBoxesServeOneModelInProcess(TwoBoxesServeOneModel):
     def test_a_box_away_that_refuses_a_shared_request_after_its_client_left_is_paused(self):
         super().test_a_box_away_that_refuses_a_shared_request_after_its_client_left_is_paused()
 
+    def test_a_hop_a_stop_marks_during_its_count_still_gets_its_400(self):
+        super().test_a_hop_a_stop_marks_during_its_count_still_gets_its_400()
+
+    def test_a_request_the_floor_stops_during_its_count_is_refused_by_it_never_handed_on(self):
+        super().test_a_request_the_floor_stops_during_its_count_is_refused_by_it_never_handed_on()
+
     def test_a_request_a_stop_marks_during_its_count_is_never_handed_on_as_too_long(self):
         super().test_a_request_a_stop_marks_during_its_count_is_never_handed_on_as_too_long()
 
@@ -6028,6 +6098,18 @@ class ThePairsPieces(unittest.TestCase):
             w = m._stop_window_now()
         self.assertIsNotNone(w, "the window closed at once, the cockpit's own abort_all still to come")
         self.assertLessEqual(w["until"], time.monotonic() + m.COCKPIT_ABORT_GRACE_S, "a stop that raised left its window open")
+
+    def test_a_drained_answers_spool_is_freed(self):
+        # its client gone, its engine knowing no rid of it: the answer drained to its end, every event queued before kept
+        # alive the drain long, up to DRAIN_MAX_S (the 4th review of v1.44.0)
+        hs = []
+
+        def leaves(h):
+            hs.append(h)
+            raise BrokenPipeError("the client left")
+        got = self._relayed_behind_a_frozen_client(300, cut=False, meanwhile=leaves, abort=lambda why: False)
+        self.assertEqual(got[-1], "CLIENT GONE on write", got)
+        self.assertEqual(hs[0]._relay_q.bytes, 0, "what waited for a client gone stayed through the drain")
 
     def test_a_client_too_slows_spool_is_freed_at_once(self):
         # what waited in the spool of a client too slow is never written: it stayed SPOOL_MAX_BYTES and more behind a
