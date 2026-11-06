@@ -117,34 +117,34 @@ list was read): the entry then serves it itself.
     entry's pool, its engine warms up and cannot measure a long prompt yet, or its engine does not answer at
     the first try (connection refused, or a 502, 503 or 504 while its lane starts or stops). The request goes
     at once, not after a wait for the lane.
-  - A request whose answer began is never sent again, nor one an engine closed the connection on while it
-    had it: the same request could take the other engine down too. Clients send a request again by
-    themselves after a 5xx (Claude Code, opencode, the SDKs): for 10 minutes, a request an engine closed
-    on, before its answer or during it, died with (vLLM answers those with a 500), or that the other box had
-    and dropped, goes to that box or nowhere, never shared, handed back or taken over, and nowhere once that
-    box left the pair, or the pair was dissolved. It can take one box down, as on a box alone (decision 1019).
-    A stop of the lane's unit (a Load of another lane, the Stop button), a restart of it that loads another
-    checkpoint than the one the box served (the cockpit's Load of another checkpoint of the lane, decision
-    1041), an Abort all and the memory floor end requests by order, which bind nothing, and a box that ends so
-    a request the other box sent tells it before the cut. Any other restart binds them as an engine's death:
-    their retries wait for that engine (decision 1030). So does the cockpit's restart of a wedged or stuck
-    engine, whatever checkpoint an update or switch-model.sh staged for its next start: the cockpit says which
-    run it restarts to recover it, in ~/.config/qwen38/recovery-restarts.json (decision 1049): the job that runs
-    the restart writes it just before its systemctl and removes it when that fails, unless systemd took the
-    restart all the same or does not answer. The proxy takes a mark for the restart it was written for only,
-    the unit leaving active, or changing state, within 2 minutes of it, and none older than 10 minutes
-    (decision 1062). A death the other box relays is bound as it is relayed, and unbound if that box says
-    within 5 s that it ended the request by order (decisions 1054 and 1061), which it says at the stream's end
-    too when its lane's stop showed only then. A request of the entry's own client, bound at a death of its
-    engine, is unbound the same way when its lane's stop shows at the stream's end, at its cut, or within 3 s of
-    the binding. Only the binding a try made is undone, which gives back
-    the one the same body had before, from an earlier death or an earlier try of the same request. A death or
-    a cut is decided as the proxy reads it from the engine, its order read then, however far behind its client
-    reads (v1.44.0), and vLLM's death on /v1/messages, which its Anthropic route says without the engine's
-    words, counts as one when the engine no longer answers on /health; the box that served it says it to the
-    other box in words that box reads as a death. When the client of a request the entry sent on
-    leaves, streamed or not, the entry reads what the other box still sends for 5 s: a death there binds the
-    request, an order binds nothing (decision 1112).
+  - A request whose answer began is never sent again, nor one an engine closed the connection on while it had it:
+    the same request could take the other engine down too. Clients send a request again by themselves after a 5xx
+    (Claude Code, opencode, the SDKs): for 10 minutes, a request an engine closed on, before its answer or during
+    it, died with (vLLM answers those with a 500), or that the other box had and dropped, goes to that box or
+    nowhere, never shared, handed back or taken over, and nowhere once that box left the pair, or the pair was
+    dissolved. It can take one box down, as on a box alone (decision 1019). A stop of the lane's unit (a Load of
+    another lane, the Stop button), a restart of it that loads another checkpoint than the one the box served (the
+    cockpit's Load of another checkpoint of the lane, decision 1041), an Abort all and the memory floor end
+    requests by order, which bind nothing, and a box that ends so a request the other box sent tells it before the
+    cut. Any other restart binds them as an engine's death: their retries wait for that engine (decision 1030). So
+    does the cockpit's restart of a wedged or stuck engine, whatever checkpoint an update or switch-model.sh
+    staged for its next start: the cockpit says which run it restarts to recover it, in
+    ~/.config/qwen38/recovery-restarts.json (decision 1049): the job that runs the restart writes it just before
+    its systemctl and removes it when that fails, unless systemd took the restart all the same or does not answer.
+    The proxy takes a mark for the restart it was written for only, the unit leaving active, or changing state,
+    within 2 minutes of it, and none older than 10 minutes (decision 1062). A death the other box relays is bound
+    as it is relayed, and unbound if that box says within 5 s that it ended the request by order (decisions 1054
+    and 1061), which it says at the stream's end too when its lane's stop showed only then. An answer its engine
+    aborted (finish_reason abort, an abort_all sent straight to it) is said the same way: an abort is no death,
+    and binds nothing (v1.44.0). A request of the entry's own client, bound at a death of its engine, is unbound
+    the same way when its lane's stop shows at the stream's end, at its cut, or within 3 s of the binding. Only
+    the binding a try made is undone, which gives back the one the same body had before, from an earlier death or
+    an earlier try of the same request. A death or a cut is decided as the proxy reads it from the engine, its
+    order read then, however far behind its client reads (v1.44.0), and vLLM's death on /v1/messages, which its
+    Anthropic route says without the engine's words, counts as one when the engine no longer answers on /health;
+    the box that served it says it to the other box in words that box reads as a death. When the client of a
+    request the entry sent on leaves, streamed or not, the entry reads what the other box still sends for about 5
+    s: a death there binds the request, an order binds nothing (decision 1112).
   - While the entry's engine is away (a crash, a restart), a model its lane serves (as the command of its
     engine says, what its unit starts, or as it served last) goes to the other box only from the same
     checkpoint (decision 1018): otherwise the entry holds it while its own engine comes back, as for a model no
