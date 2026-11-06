@@ -693,11 +693,14 @@ class FloorStop(unittest.TestCase):
         FakeEngine.abort_all_fails = True
         status, out, _ = self._stop({"why": "test operator", "kind": "operator"})
         self.assertEqual((status, out["stopped"], out["abort_all"]), (200, 0, False), out)
+        FakeEngine.seen.clear()
         s = self._post("/v1/messages", {"model": "m", "max_tokens": 10, "stream": True,
                                         "messages": [{"role": "user", "content": "hi"}]})
         got = self._read(s)
         s.close()
         self.assertNotIn(b"message_stop", got, "a generation that went out in a stop's window was ended as whole")
+        self.assertEqual([p for p, _, _ in FakeEngine.seen if p == "/v1/messages"], [],
+                         "a generation that went out in a stop's window reached the engine")
 
     def test_a_stop_that_cut_nothing_holds_nothing_back(self):
         # the wait belongs to a cut (revue 627, 26/10): generations running outside this proxy
