@@ -5965,9 +5965,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if not name or not target.is_relative_to(STATIC_DIR.resolve()) \
                 or not target.is_file():
             return self.send_json({"error": "not found"}, 404)
+        # every kind of file under static/ has its type here: nosniff is on, and a file served as
+        # application/octet-stream is one a browser may refuse to show (v1.44.1, the Qwen4 card's art)
         ctype = {"html": "text/html; charset=utf-8", "css": "text/css",
                  "js": "text/javascript", "svg": "image/svg+xml",
-                 "woff2": "font/woff2"}.get(
+                 "woff2": "font/woff2", "webp": "image/webp"}.get(
                      target.suffix.lstrip("."), "application/octet-stream")
         body = target.read_bytes()
         self.send_response(200)

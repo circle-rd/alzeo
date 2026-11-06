@@ -23,6 +23,7 @@ import http.client
 import importlib.util
 import json
 import os
+import pathlib
 import re
 import shutil
 import socket
@@ -516,6 +517,21 @@ class StaticFiles(Base):
         self.assertEqual(st, 200)
         self.assertIn("text/html", hdrs.get("Content-Type", ""))
         self.assertTrue(body)
+
+    def test_no_static_file_is_served_with_no_type(self):
+        """nosniff is on: a file served as application/octet-stream is one a browser may refuse to
+        show, which is how the Qwen4 card's art (a WebP) would have reached the page (v1.44.1)."""
+        root = pathlib.Path(self.cp.STATIC_DIR)
+        files = sorted(p for p in root.rglob("*") if p.is_file() and p.suffix not in (".md", ".txt"))
+        self.assertTrue(any(p.suffix == ".webp" for p in files), "the test needs the card's WebP")
+        for p in files:
+            st, hdrs, body = self.req("GET", "/static/" + p.relative_to(root).as_posix())
+            with self.subTest(file=p.name):
+                self.assertEqual(st, 200)
+                self.assertNotIn("octet-stream", hdrs.get("Content-Type", ""))
+        st, hdrs, body = self.req("GET", "/static/img/qwen4-27b.webp")
+        self.assertEqual(hdrs.get("Content-Type"), "image/webp")
+        self.assertEqual((body[:4], body[8:12]), (b"RIFF", b"WEBP"))
 
     def test_no_request_walks_out_of_the_static_directory(self):
         for path in self.ESCAPES:

@@ -533,8 +533,23 @@ button.bay:hover{border-color:rgba(255,255,255,.22); background:linear-gradient(
 .bay.booting{border-color:color-mix(in srgb, var(--warn) 50%, transparent); box-shadow:inset 0 2px 0 var(--warn), var(--shadow-1)}
 .bay.broken{border-color:color-mix(in srgb, var(--bad) 55%, transparent); box-shadow:inset 0 2px 0 var(--bad), var(--shadow-1)}
 .bay.absent{opacity:.6}
-/* a lane to come (Qwen4 27B, 2026-10-25): dimmed further than a lane not installed, dashed, its maker's mark in grey */
-.bay.soon{opacity:.5; border-style:dashed}
+/* a lane to come (Qwen4 27B, 2026-10-25): dashed, its maker's mark in grey. Since v1.44.1 it shows the art the reference
+   box made for it (img/qwen4-27b.webp, its making in img/NOTICE.md) under a veil that keeps its words readable, its
+   words dimmed where the whole card was at half opacity, so the art is seen and the card still reads as not there yet */
+.bay.soon, button.bay.soon:hover{border-style:dashed; background:
+  linear-gradient(90deg, rgba(9,8,36,.94) 0%, rgba(9,8,36,.80) 45%, rgba(9,8,36,.15) 70%, rgba(9,8,36,0) 100%),
+  url("/static/img/qwen4-27b.webp") right center / cover no-repeat}
+button.bay.soon:hover{border-color:rgba(120,150,255,.45)}
+.bay.soon :is(h3, .kind, .desc, .foot){opacity:.8}
+.bay.soon .desc{max-width:58%}              /* its words beside the art, not over it */
+/* a narrow card is near square: the art fills it from its lower right, under a veil that darkens from the bottom up,
+   the words on the dark and the art seen below them (a smaller art showed its own left edge as a seam) */
+@media (max-width: 640px){
+  .bay.soon, button.bay.soon:hover{background:
+    linear-gradient(180deg, rgba(9,8,36,.90) 0%, rgba(9,8,36,.72) 50%, rgba(9,8,36,.10) 100%),
+    url("/static/img/qwen4-27b.webp") right bottom / cover no-repeat}
+  .bay.soon .desc{max-width:none}
+}
 .bay.soon .mark img{filter:grayscale(1)}
 .bay.soon .foot{margin-top:auto}
 .bay .bootbar{display:flex; flex-direction:column; gap:6px}
