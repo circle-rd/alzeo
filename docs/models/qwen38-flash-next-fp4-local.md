@@ -19,6 +19,7 @@ Dimitris Kontokostas's pull request #55.
 - At the `lean` effort: **47.4 tok/s alone** and **106.6 in all at 8 requests** on real text at the
   agents' sampling, **GSM8K 97.64%** (1,314 questions) and **HumanEval 98.17%** (164).
 - A KV cache of **921,090 to 984,833 tokens** in FP8, three and a half times its 262,144-token window.
+- **Reads images**: a solid red and a solid blue test image, each named right (2026-11-06).
 - Against the flash lane: 102.3 GB of checkpoint on disk against 135.3, nothing written at boot (its
   n-gram table is read in place), a later boot answering in about 5 min 30 s against 12 to 15 min.
 
