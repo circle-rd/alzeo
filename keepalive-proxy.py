@@ -4895,18 +4895,17 @@ def stop_generations(why, floor_gib=None, hold_s=None, floor=True):
     those), PROXY_MEM_FLOOR_GIB=0 keeping the refusal for memory off and PROXY_FLOOR_HOLD_S=0 the pause."""
     with _GEN_LOCK:
         # an answer relayed whole is generated already: no stop reaches it. Stopped, vLLM's was cut and taken for its
-        # engine's death, and a floor stop that cut nothing held new generations back (the 6th review of v1.43.0)
-        # nor one a stop marked already: an Abort all then the floor counted it twice and started the floor's episode
-        # for a generation stopped before (the 15th review of v1.43.0, 2026-11-05)
-        targets = [h for h in _GENERATIONS
-                   if not getattr(h, "_relaying_whole", False) and not getattr(h, "_stop_why", None)]
+        # engine's death, and a floor stop that cut nothing held new generations back (the 6th review of v1.43.0).
+        # One a stop marked already, still running, is reached again, as in v1.43.0: a floor that lands during an Abort
+        # all holds new generations back while the engine frees what that stop aborted (SGLang answers abort_all before
+        # its scheduler acts). Three reviews of v1.44.0 disagreed on it, the box's behaviour kept (decision to come)
+        targets = [h for h in _GENERATIONS if not getattr(h, "_relaying_whole", False)]
         # open until this stop's aborts are answered, its end set below: one of ABORT_TIMEOUT_S + 2 s closed while
         # abort_all's answer could still come, its timeout bounding the connection and each read apart (the 2nd review
         # of v1.44.0)
         me = object()
         _STOP_WINDOWS[me] = {"until": float("inf"), "why": why, "floor": floor}
-        # the floor's episode for a stop that cut a generation (revue 627): one an earlier stop marked holds no engine
-        # memory any more, its abort sent; an episode for it was the blackout 627 removed (the 2nd review of v1.44.0)
+        # the floor's episode for a stop that reached a generation (revue 627: none for a stop that reached none)
         if floor and targets:
             now = time.monotonic()
             hold = 0.0 if FLOOR_HOLD_S <= 0 else (FLOOR_HOLD_S if hold_s is None else hold_s)
@@ -5030,6 +5029,13 @@ class _Spool:
                 self.over = True
             self._cond.notify()
             return not (capped and self.over)
+
+    def clear(self):
+        """What waits dropped (too_slow): the relay writes none of it once the bound is passed."""
+        with self._cond:
+            self._d.clear()
+            self.bytes = 0
+            self._cond.notify()
 
     def put_nowait(self, item):
         """A stop's wake (_mark_stopped), as the queue took it."""
@@ -6907,6 +6913,9 @@ class H(BaseHTTPRequestHandler):
             else:
                 drain_t0[0] = time.time()
                 drain.set()
+            # none of what waits is written any more (its relay cuts at its next turn): freed now, where it stayed up to
+            # CLIENT_IO_S behind a hop, or a drain's DRAIN_MAX_S (the 3rd review of v1.44.0)
+            spool.clear()
 
             def unblock():
                 # a client that reads nothing at all kept its relay in its write CLIENT_IO_S, the spool with it, and was
@@ -7326,12 +7335,10 @@ class H(BaseHTTPRequestHandler):
             if gone is None:
                 return
             kind, why, detail = gone
-            if getattr(self, "_stop_why", None):
+            if self._stopped_now():
                 # a stop of the cockpit's reached it while it waited here (its size guard, its engine's first byte):
                 # refused or cut now, as a stop's other generations are, never held: held, it was cut once its engine
                 # came back, up to PROXY_HOLD_MAX_S on, or handed to the other box (the 2nd review of v1.44.0)
-                if not self._floor_refused():
-                    self._cut_stopped()
                 return
             if kind == "unreachable" and detail is None:
                 # the engine closed the connection while it had this request, which may be what took it down
@@ -7847,6 +7854,16 @@ class H(BaseHTTPRequestHandler):
             _GENERATIONS.add(self)
             self._relaying_whole = False
 
+    def _stopped_now(self):
+        """True once a stop's mark is answered: refused while the floor holds new generations back, cut otherwise. One
+        answer wherever a request a stop reached would go on (the 3rd review of v1.44.0: the size guard's hand-off to
+        the other box served one)."""
+        if not getattr(self, "_stop_why", None):
+            return False
+        if not self._floor_refused():
+            self._cut_stopped()
+        return True
+
     def _marked_if_a_stop_is_under_way(self):
         """A generation that goes out while a stop is under way is that stop's: abort_all would end it unmarked, as
         whole (_STOP_WINDOWS); marked, it is not sent, and is refused or cut as a new one is (_forward). Read as it goes
@@ -8167,7 +8184,10 @@ class H(BaseHTTPRequestHandler):
                     # stays: unbound, its client's retry ran on this box's engine too (decision 1112)
                     if engine_died:
                         self._pair_left_death(peer, f"answered {e.code}, its engine dead on it")
-                    self._done("CLIENT GONE during pair"); return None
+                    self._done("CLIENT GONE during pair")
+                    if fallback and not ordered and e.code in (503, 529):
+                        return "gone"           # away: paused, its conversation forgotten there (the 3rd review)
+                    return None
                 if ordered and e.code == 503:
                     # it ended it there by order (its Abort all, its floor, a stop of its lane): not run here too (decision
                     # 1017), not bound to it (1031), and that box is no box that fails: no pause, nothing on the tile.
@@ -8637,6 +8657,8 @@ class H(BaseHTTPRequestHandler):
                            f"tokens{ceil}) and the engine would hang instead of refusing it. The engine "
                            f"itself is up: compact the conversation, drop image attachments, or serve a "
                            f"larger pool.")
+                    if self._stopped_now():
+                        return None         # a stop reached it during its count: never handed on (the 3rd review)
                     if getattr(self, "_pair_alt", None) and self._pair_take_over(
                             body, "the prompt is too long for this box's pool"):
                         return None         # the other box of a pair that serves its model took it, its own pool
@@ -8654,11 +8676,8 @@ class H(BaseHTTPRequestHandler):
         # the upstream, and a stream is kept alive meanwhile.
         if gen:
             self._marked_if_a_stop_is_under_way()
-        if getattr(self, "_stop_why", None):
-            # stopped before it went out: not sent, and refused as a new one is (cut if no refusal holds)
-            if not self._floor_refused():
-                self._cut_stopped()
-            return None
+        if self._stopped_now():
+            return None             # stopped before it went out: not sent, and refused as a new one is
         done = threading.Event()
         self._wlock = threading.Lock()      # the keeper writes into the stream until _open returns
         whole = bool(body) and not held_as_stream(self.path, body)
