@@ -1,6 +1,6 @@
 # Changelog
 
-## v1.44.1 (2026-11-06): one page per model, and the 27B's numbers as the lane v1.44.0 serves measured them
+## v1.44.1 (2026-11-06): one page per model, the 27B's numbers as the lane v1.44.0 serves measured them, and Qwen's new mark in the cockpit
 
 **One page per model.** docs/models/ has a page for each model this stack serves (the 27B, the flash on SGLang, Flash
 FP4-Local, Nemotron 3.5 Bolt and Super VL, Kolibri-1, Ornith 1.5 122B, Qwen-Image 2.1 and MiniMax-H3) and an index the
@@ -19,8 +19,20 @@ bench.sh, two runs on one boot, 44.0 tok/s alone and 80.6 in all at 4 requests o
 tokens in, 1,024 out), GSM8K 99.2% on 250 questions. The earlier ones stay, dated, as history (decision 1125), and
 "reproducible to the decimal across boots" is said of the August study, beside those two runs (decision 1127).
 
+**Qwen's new mark, and the Qwen4 27B card's art.** The cockpit showed Qwen's former mark, a purple star, on every Qwen
+lane: Lobe Icons, where it comes from, carries Qwen's new one since its 1.102.0 (2026-11-02), three shapes in blue,
+and the cockpit shows it now. The Qwen4 27B card, which announces the lane to come, shows an art the reference box
+made for it with its own image lane: Qwen-Image 2.1, its base model at 40 steps, turned the new mark into crystal
+glass. `dashboard/static/img/NOTICE.md` says how it was made and under which licence: the Qwen Research License grants
+the model's use for non-commercial purposes only. The card's words stand beside the art on a wide screen and over its
+darkened top on a phone, and the card no longer sits at half opacity. The cockpit serves a WebP as image/webp: it
+would have served it as application/octet-stream, which a browser may refuse to show under nosniff.
+
 **What an update does.** The cockpit restarts: it reads the release's number in CHANGELOG.md at its start. Nothing
 else this release ships is read by an engine, the proxy or the Agent tab's opencode-web.
+
+**Tests.** `dashboard/tests/test_cockpit_http.py`: no file of the cockpit's static directory is served with no type,
+the card's WebP as image/webp. It fails on the cockpit of v1.44.0.
 
 ## v1.44.0 (2026-11-06): an answer's end is read as its engine sends it, and the 27B starts without torch.compile
 
