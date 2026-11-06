@@ -1,5 +1,27 @@
 # Changelog
 
+## v1.44.1 (2026-11-06): one page per model, and the 27B's numbers as the lane v1.44.0 serves measured them
+
+**One page per model.** docs/models/ has a page for each model this stack serves (the 27B, the flash on SGLang, Flash
+FP4-Local, Nemotron 3.5 Bolt and Super VL, Kolibri-1, Ornith 1.5 122B, Qwen-Image 2.1 and MiniMax-H3) and an index the
+README links: the command that loads it, the numbers measured on the reference box with where their method lives, and
+what it is good at. Each figure was checked against the lane's own page, BENCHMARKS.md or the raw data of its
+campaign, and the pages say what main does today: Flash FP4-Local a lane of its own, the video's own times rather than
+the cookbook's, Super VL's KV cache at the four requests it serves, and what a plain install sets up for Kolibri, the
+image and the video. The cockpit says Flash FP4-Local reads images, and nothing in the repository showed it: on
+2026-11-06 a solid red and a solid blue image sent through the proxy came back named "Red" and "Blue", and its page
+says so.
+
+**The 27B's numbers.** The README and BENCHMARKS.md gave the 27B 71.4 tok/s on bench.sh (2026-09-17, SGLang v0.5.19,
+with torch.compile), 135-148 tok/s at 8 streams (the v1.2 battery) and GSM8K 94.0% on 200 problems (v1.2.1). They give
+what the lane v1.44.0 serves measured on 2026-11-05 (SGLang v0.5.22, without torch.compile): 65.2 and 68.5 tok/s on
+bench.sh, two runs on one boot, 44.0 tok/s alone and 80.6 in all at 4 requests on SGLang's official benchmark (8,192
+tokens in, 1,024 out), GSM8K 99.2% on 250 questions. The earlier ones stay, dated, as history (decision 1125), and
+"reproducible to the decimal across boots" is said of the August study, beside those two runs (decision 1127).
+
+**What an update does.** The cockpit restarts: it reads the release's number in CHANGELOG.md at its start. Nothing
+else this release ships is read by an engine, the proxy or the Agent tab's opencode-web.
+
 ## v1.44.0 (2026-11-06): an answer's end is read as its engine sends it, and the 27B starts without torch.compile
 
 **The 27B lane starts without torch.compile.** Its units and run.sh started SGLang with `--enable-torch-compile
