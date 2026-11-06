@@ -5020,7 +5020,8 @@ class _Spool:
         self.stopped = False                # a stop marked its generation: its relay writes nothing more of it
 
     def put(self, kind, val=b"", capped=True):
-        """Queued at once; False when a capped one finds the bytes waiting over the bound. Not capped: what ends the
+        """Queued at once (a capped one dropped once a stop marked the answer); False when a capped one finds the bytes
+        waiting over the bound. Not capped: what ends the
         answer (its end, a death, a cut, an order), which stops nothing: its end over the bound stopped a generation
         whole at its engine and cut its client (the review of v1.44.0)."""
         with self._cond:
@@ -8032,7 +8033,7 @@ class H(BaseHTTPRequestHandler):
             # same way (tool schemas, reasoning effort), not a copy of the client's kept for the whole request, which
             # held one body more in memory on a paired box (found in review, 2026-11-03)
             res = self._forward_peer(asked, peer, name, conf, local, fallback=True, count="rescued", checkpoint=mine)
-            if res == "left":               # its client left before that box read it: nothing moves (review, 2026-11-04)
+            if res == "left":               # its client left: nothing moves (review, 2026-11-04)
                 return True
             if res is None:
                 affinity_forget(conf["name"], blocks)
@@ -8113,8 +8114,9 @@ class H(BaseHTTPRequestHandler):
         checkpoint" when it serves the model still, from another checkpoint (PAIR_MOVED holds both), None once the
         caller has its answer. With fallback (this box serves the model too, decision 998),
         "lost" when the peer had it whole and closed the connection with no answer (decision 1017), "gone" when its
-        client left before the peer took the connection, or once it left the peer closed on it or refused it as away
-        (503, 529, v1.44.0), "left" when it left while its body was still on its way there,
+        client left before the peer took the connection, or once it left the peer closed on it, cut its upload or refused
+        it as away (503, 529, v1.44.0), "left" when this request's watch cut its upload once it left, or the peer said it
+        could not serve it (409, too long),
         "fallback" when the peer does not answer, or refuses it as away (503, 529), and "too long" when its pool is too
         small for the prompt, before a byte went to the caller. reserved: the caller counted it in flight already
         (_pair_spread). count: what the tile counts it as (decision 996), once the other box's answer came, never for one
@@ -8162,8 +8164,7 @@ class H(BaseHTTPRequestHandler):
             # over (found in review, 2026-11-02: the request was sent anyway and ran for nobody)
             seen_gone = None
             while not done.wait(1.0):
-                if left.is_set() or self._client_left():
-                    left.set()
+                if gone_now():
                     # its client gone: the relay reads on up to PAIR_ORDER_GRACE_S what the other box still sends, for
                     # a death on its way, which binds the request (1019), and an order, which binds nothing (decisions
                     # 1054 and 1061). Shut at once, the order was never read (the 6th review); left open with no bound,
@@ -8214,8 +8215,11 @@ class H(BaseHTTPRequestHandler):
                     self._done("CLIENT GONE during pair")
                     if fallback and not ordered and e.code in (503, 529):
                         return "gone"           # away: paused, its conversation forgotten there (the 3rd review)
-                    if fallback and not ordered:
-                        return "left"           # refused: its conversation forgotten there, none of it moved there
+                    if fallback and not ordered and (_pair_refused_here(e.code, data) == "too long" or (
+                            e.code == 409 and data is not None and b'"model_not_served"' in data)):
+                        # not served there (too long for its pool, another model): its conversation forgotten there; any
+                        # other error keeps it where it is, its prefix still in that box's cache (the 6th and 7th reviews)
+                        return "left"
                     return None
                 if ordered and e.code == 503:
                     # it ended it there by order (its Abort all, its floor, a stop of its lane): not run here too (decision
@@ -8278,13 +8282,12 @@ class H(BaseHTTPRequestHandler):
                     # review of v1.43.0, 2026-11-03). Not a box that took the connection: this request's own watch cut
                     # it when its client left, its body still on its way, and a healthy box was paused 30 s (found in
                     # review, 2026-11-04)
-                    took = getattr(getattr(req, "upstream", None), "kept_sock", None) is not None
                     if fallback and isinstance(e, urllib.error.URLError):
                         # "left": that box took it and this request's watch cut it before it read it all, so it holds
                         # none of its prefix: the caller forgets the conversation there, where None moved it (the delta's
                         # review, 2026-11-04). Cut by that box, its client gone or not, it is one that does not answer
                         # (the 6th review of v1.44.0)
-                        return "left" if took and shut.is_set() else "gone"
+                        return "left" if shut.is_set() else "gone"
                     if fallback and closed:
                         return "gone"           # paused as a box that does not answer, its conversation forgotten there
                     return None
