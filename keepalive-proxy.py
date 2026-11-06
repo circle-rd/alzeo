@@ -5031,7 +5031,7 @@ class _Spool:
             return not (capped and self.over)
 
     def clear(self):
-        """What waits dropped (too_slow): the relay writes none of it once the bound is passed."""
+        """What waits dropped: its relay writes none of it (past the bound, drained, or stopped)."""
         with self._cond:
             self._d.clear()
             self.bytes = 0
@@ -6343,6 +6343,9 @@ class H(BaseHTTPRequestHandler):
         self._stop_why = why
         q = getattr(self, "_relay_q", None)
         if q is not None:
+            # what waits is never written: its relay cuts its client at its next turn. Freed now, where a relay frozen in
+            # a write kept up to SPOOL_MAX_BYTES of it CLIENT_IO_S long (the 5th review of v1.44.0)
+            q.clear()
             try:
                 q.put_nowait(("s", b""))
             except queue.Full:
@@ -8186,6 +8189,8 @@ class H(BaseHTTPRequestHandler):
                 # its engine died on it there, which it said whole: the request is bound to it (decision 1019)
                 engine_died = not ordered and data is not None and len(data) <= PAIR_ANSWER_MAX and (
                     (e.code == 502 and b'"upstream_closed"' in data) or (e.code == 500 and bool(ENGINE_DIED_RE.search(data))))
+                if not left.is_set() and self._client_left():
+                    left.set()                  # seen now: at the watch's next tick, a request was served for nobody
                 if left.is_set():
                     # the client left while the other box said no: nothing to serve here either (found in review,
                     # 2026-11-03: a refusal brought the request back to this box's engine, which computed it for nobody).
@@ -8246,6 +8251,8 @@ class H(BaseHTTPRequestHandler):
                 why = _pair_why(e)
                 refused = isinstance(e, ssl.SSLError) and bool(_TLS_REFUSED.search(str(getattr(e, "reason", "") or "")))
                 had = not isinstance(e, urllib.error.URLError) and not refused
+                if not left.is_set() and self._client_left():
+                    left.set()                  # seen now, not at the watch's next tick (the 5th review of v1.44.0)
                 if left.is_set():
                     closed = had and not shut.is_set()
                     if closed:
@@ -8588,7 +8595,8 @@ class H(BaseHTTPRequestHandler):
             self._now_a_generation()
             if (floor_refusal() is not None and getattr(self, "_pair_alt", None)
                     and self._pair_take_over(body, "this box is short of memory")):
-                return None                 # the other box of a pair that serves its model took it (v6.52)
+                return None                 # the other box of a pair that serves its model took it (v6.52), or a stop
+                                            # that marked it answered it here
             if self._floor_refused():
                 return None
         # v6.34: every prompt body is measured: by its bound where a wedge is possible.
@@ -8669,7 +8677,8 @@ class H(BaseHTTPRequestHandler):
                     if getattr(self, "_pair_alt", None) and self._pair_take_over(
                             body, "the prompt is too long for this box's pool"):
                         return None         # the other box of a pair that serves its model took it, its own pool
-                                            # deciding (a 128 GB box paired with a 64 GB one, v6.52)
+                                            # deciding (a 128 GB box paired with a 64 GB one, v6.52), or a stop
+                                            # that marked it answered it here
                     log(f"{self._peer} REFUSED oversize ({len(body)}b, {reason}, limit {limit})")
                     self._answer(400, {"Content-Type": "application/json"},
                                  json.dumps({"error": {"type": "context_too_long",
