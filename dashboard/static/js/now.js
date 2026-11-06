@@ -157,8 +157,8 @@ function renderRack(){
   soonBay();
 }
 // A lane to come (2026-10-25): Qwen named a Qwen4 27B at Apsara (22/09) with no date and has not
-// published its weights. Its card sits greyed after the 27B it will follow, says no more than that,
-// and loads nothing; the release that serves it replaces this card with its lane.
+// published its weights. Its card opens the rack, before the 27B it will follow (Hasan, 2026-11-06),
+// says no more than that, and loads nothing; the release that serves it replaces this card with its lane.
 const SOON = {title: 'Qwen4 27B', kind: 'Text, not released yet',
               desc: "Qwen's next 27B. It arrives here as a lane, measured on this box, the day Qwen publishes its weights.",
               note: 'announced by Qwen, no date yet', toast: 'Qwen4 27B is not released yet. It comes in an update.'};
@@ -178,8 +178,8 @@ function soonBay(){
     root.addEventListener('click', () => toast(SOON.toast, '', 6000));
     SOON_BAY = root;
   }
-  const b27 = BAYS.get(U27);
-  if (b27 && b27.root.nextSibling !== SOON_BAY) $('rack').insertBefore(SOON_BAY, b27.root.nextSibling);
+  const b27 = BAYS.get(U27), rack = $('rack');
+  if (b27 && rack.firstChild !== SOON_BAY) rack.insertBefore(SOON_BAY, rack.firstChild);
 }
 
 // ── the spine's serving capsule and the lede ──────────────────────────────────

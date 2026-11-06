@@ -2202,12 +2202,13 @@ class EveryVersionOfALaneIsInSight(unittest.TestCase):
         self.assertEqual(missing, [], "a version declared halfway reads its long name on its segment and '. .' under it")
 
 
-class ALaneToComeIsGreyedAfterThe27B(unittest.TestCase):
-    """Hasan, 2026-10-25: a greyed card says Qwen4 27B is coming. It sits once after the 27B it
-    will follow however often the rack renders, says no date and no architecture (Qwen published
-    neither), and loads nothing: a click only says it is not out."""
+class ALaneToComeOpensTheRack(unittest.TestCase):
+    """Hasan, 2026-10-25: a card says Qwen4 27B is coming. Since 2026-11-06 (Hasan: "en tout premier,
+    avant qwen3.8 27b") it opens the rack, once, before the 27B it will follow however often the rack
+    renders, says no date and no architecture (Qwen published neither), and loads nothing: a click only
+    says it is not out."""
 
-    def test_the_card_follows_the_27b_and_loads_nothing(self):
+    def test_the_card_opens_the_rack_and_loads_nothing(self):
         r = run(self, r"""
         const mem = {MemTotal: 121.6 * GIB, MemAvailable: 16 * GIB, Cached: 12 * GIB, SwapTotal: 0, SwapFree: 0};
         feed({config: CONFIG, units: UNITS, machine: {mem, cpu_pct: {}, disks: {}}, lifecycle: life({})});
@@ -2216,15 +2217,15 @@ class ALaneToComeIsGreyedAfterThe27B(unittest.TestCase):
         const rack = [...$('rack').children], soon = document.querySelectorAll('#rack .bay.soon'), card = soon[0];
         const before = __fetches.length;
         clear($('toasts')); card.click(); await __settle();
-        report({n: soon.length, at: rack.indexOf(card), prev: rack[rack.indexOf(card) - 1].querySelector('h3').textContent,
+        report({n: soon.length, at: rack.indexOf(card), next: rack[rack.indexOf(card) + 1].querySelector('h3').textContent,
                 bays: rack.length, title: card.querySelector('h3').textContent, cap: card.querySelector('.cap').textContent,
                 lamp: card.querySelectorAll('.cap .lamp').length, text: card.textContent, toast: toastText(),
                 fetched: __fetches.slice(before).map(x => x.url), aria: card.getAttribute('aria-label'),
                 room: [card.querySelector('.foot .act').style.visibility, card.querySelector('.foot .act').getAttribute('aria-hidden')]});
         """)
         self.assertEqual(r["n"], 1)
-        self.assertEqual(r["at"], 1)
-        self.assertTrue(r["prev"].startswith("Qwen3.8 27B"), r["prev"])
+        self.assertEqual(r["at"], 0)
+        self.assertTrue(r["next"].startswith("Qwen3.8 27B"), r["next"])
         self.assertEqual(r["bays"], 10)   # the nine lanes and this card
         self.assertEqual((r["title"], r["cap"], r["lamp"]), ("Qwen4 27B", "coming soon", 0))
         self.assertIn("not released yet", r["text"])
