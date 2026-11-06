@@ -1,5 +1,16 @@
 # Changelog
 
+## v1.44.2 (2026-11-07): the Qwen4 27B card opens the rack
+
+**The Qwen4 27B card opens the rack.** The card that announces the lane to come sat after the 27B it will follow. It
+comes first now, before it, on a wide screen as on a phone (Hasan, 2026-11-06).
+
+**What an update does.** The cockpit restarts: it reads the release's number in CHANGELOG.md at its start. Nothing
+else this release ships is read by an engine, the proxy or the Agent tab's opencode-web.
+
+**Tests.** `dashboard/tests/test_page_behaviour.py`: the card opens the rack, once however often it renders, the 27B
+right after it. It fails on the cockpit of v1.44.1.
+
 ## v1.44.1 (2026-11-06): one page per model, the 27B's numbers as the lane v1.44.0 serves measured them, and Qwen's new mark in the cockpit
 
 **One page per model.** docs/models/ has a page for each model this stack serves (the 27B, the flash on SGLang, Flash
