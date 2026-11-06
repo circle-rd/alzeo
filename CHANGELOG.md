@@ -50,10 +50,10 @@ restarts it during the update, about 3.5 minutes on the reference box, the proxy
 that serves another lane starts the 27B without torch.compile at its next Load.
 
 **Tests.** tests/test_27b_no_torch_compile.py: none of the 27B's launches (its three units and run.sh) passes either
-flag. It fails on v1.43.0. tests/test_proxy_pair.py has 64 new tests and tests/test_proxy_floor_stop.py one: the relay
+flag. It fails on v1.43.0. tests/test_proxy_pair.py has 67 new tests and tests/test_proxy_floor_stop.py one: the relay
 behind a client that reads nothing (its end, its death, its cut and their order read as they come, the spool's bound),
 the stops, and the pair's entry once its client left. Each one written for a defect fails on the proxy before its fix,
-the others guard against a false alarm, and changing any part of the new code fails at least one of them (73 mutants).
+the others guard against a false alarm, and 78 mutants of the new code are each caught by at least one of them.
 
 ## v1.43.0 (2026-11-05): two boxes that serve one model share its requests, a conversation staying on the box that holds it
 
