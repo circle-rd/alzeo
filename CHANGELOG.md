@@ -34,6 +34,15 @@ else this release ships is read by an engine, the proxy or the Agent tab's openc
 **Tests.** `dashboard/tests/test_cockpit_http.py`: no file of the cockpit's static directory is served with no type,
 the card's WebP as image/webp. It fails on the cockpit of v1.44.0.
 
+**After the push.** The reference box updated at 9a4bcef on 2026-11-06 with the command of this release,
+`cd ~/dgx-spark-qwen38 && curl -fsSL https://get.alzeo.ai | bash`, once GitHub's CI had passed on that commit (7 jobs,
+89 steps, none skipped) and get.alzeo.ai served its get.sh byte for byte: the run ended whole in 97 s. The cockpit
+restarted, and nothing else: the 27B, the lane that served, kept running, and so did the proxy and opencode-web; no
+unit file changed. The 8 real clients (Claude Code, opencode, Hermes, pi, the OpenAI and Anthropic SDKs, fetch under
+Node and Bun, LiteLLM) answered through the proxy on the 27B, and the production checks passed. The cockpit showed no
+banner on any of its 5 views, with no JavaScript error, said v1.44.1, and showed Qwen's new mark on its Qwen lanes and
+the Qwen4 27B card's art. This release changes no lane, proxy, engine or unit file, so no matrix ran (decision 1136).
+
 ## v1.44.0 (2026-11-06): an answer's end is read as its engine sends it, and the 27B starts without torch.compile
 
 **The 27B lane starts without torch.compile.** Its units and run.sh started SGLang with `--enable-torch-compile
