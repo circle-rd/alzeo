@@ -519,19 +519,26 @@ class StaticFiles(Base):
         self.assertTrue(body)
 
     def test_no_static_file_is_served_with_no_type(self):
-        """nosniff is on: a file served as application/octet-stream is one a browser may refuse to
-        show, which is how the Qwen4 card's art (a WebP) would have reached the page (v1.44.1)."""
+        """application/octet-stream says nothing of what a file is: the Qwen4 card's art (a WebP) went
+        out so until v1.44.1, the fonts' and marks' licences and the images' notices until v1.44.2, and a
+        browser saves such a licence instead of showing it. Every file under static/ has its type."""
         root = pathlib.Path(self.cp.STATIC_DIR)
-        files = sorted(p for p in root.rglob("*") if p.is_file() and p.suffix not in (".md", ".txt"))
-        self.assertTrue(any(p.suffix == ".webp" for p in files), "the test needs the card's WebP")
+        files = sorted(p for p in root.rglob("*") if p.is_file())
+        for suffix in (".webp", ".txt", ".md"):
+            self.assertTrue(any(p.suffix == suffix for p in files), "the test needs a %s file" % suffix)
         for p in files:
-            st, hdrs, body = self.req("GET", "/static/" + p.relative_to(root).as_posix())
-            with self.subTest(file=p.name):
+            name = p.relative_to(root).as_posix()
+            st, hdrs, body = self.req("GET", "/static/" + name)
+            with self.subTest(file=name):
                 self.assertEqual(st, 200)
-                self.assertNotIn("octet-stream", hdrs.get("Content-Type", ""))
+                self.assertTrue(hdrs.get("Content-Type"), "served with no Content-Type")
+                self.assertNotIn("octet-stream", hdrs.get("Content-Type"))
         st, hdrs, body = self.req("GET", "/static/img/qwen4-27b.webp")
         self.assertEqual(hdrs.get("Content-Type"), "image/webp")
         self.assertEqual((body[:4], body[8:12]), (b"RIFF", b"WEBP"))
+        for name in ("img/NOTICE.md", "fonts/OFL-Geist.txt"):
+            st, hdrs, body = self.req("GET", "/static/" + name)
+            self.assertEqual(hdrs.get("Content-Type"), "text/plain; charset=utf-8", name)
 
     def test_no_request_walks_out_of_the_static_directory(self):
         for path in self.ESCAPES:
