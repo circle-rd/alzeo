@@ -5,11 +5,21 @@
 **The Qwen4 27B card opens the rack.** The card that announces the lane to come sat after the 27B it will follow. It
 comes first now, before it, on a wide screen as on a phone (Hasan, 2026-11-06).
 
+**The licences and notices have a type.** The cockpit served the six text files of its static directory, the fonts'
+and the marks' licences and the images' two notices, as application/octet-stream, a type that says nothing of what a
+file is, and a browser saves a file served so instead of showing it. It serves them as text/plain now.
+
+**v1.44.1's notes.** Its section here says what its release on GitHub says: Lobe Icons carries Qwen's new mark since its
+1.96.0 (2026-10-21), the WebP's former type is one that says nothing of what the file is, and its test checked every
+file of the static directory but the .txt and .md ones.
+
 **What an update does.** The cockpit restarts: it reads the release's number in CHANGELOG.md at its start. Nothing
 else this release ships is read by an engine, the proxy or the Agent tab's opencode-web.
 
 **Tests.** `dashboard/tests/test_page_behaviour.py`: the card opens the rack, once however often it renders, the 27B
-right after it. It fails on the cockpit of v1.44.1.
+right after it. It fails on the cockpit of v1.44.1. `dashboard/tests/test_cockpit_http.py`: every file under the
+cockpit's static directory is served with a type, the licences and notices as text/plain. It fails on the cockpit of
+v1.44.1.
 
 ## v1.44.1 (2026-11-06): one page per model, the 27B's numbers as the lane v1.44.0 serves measured them, and Qwen's new mark in the cockpit
 
@@ -31,18 +41,18 @@ tokens in, 1,024 out), GSM8K 99.2% on 250 questions. The earlier ones stay, date
 "reproducible to the decimal across boots" is said of the August study, beside those two runs (decision 1127).
 
 **Qwen's new mark, and the Qwen4 27B card's art.** The cockpit showed Qwen's former mark, a purple star, on every Qwen
-lane: Lobe Icons, where it comes from, carries Qwen's new one since its 1.102.0 (2026-11-02), three shapes in blue,
+lane: Lobe Icons, where it comes from, carries Qwen's new one since its 1.96.0 (2026-10-21), three shapes in blue,
 and the cockpit shows it now. The Qwen4 27B card, which announces the lane to come, shows an art the reference box
 made for it with its own image lane: Qwen-Image 2.1, its base model at 40 steps, turned the new mark into crystal
 glass. `dashboard/static/img/NOTICE.md` says how it was made and under which licence: the Qwen Research License grants
 the model's use for non-commercial purposes only. The card's words stand beside the art on a wide screen and over its
 darkened top on a phone, and the card no longer sits at half opacity. The cockpit serves a WebP as image/webp: it
-would have served it as application/octet-stream, which a browser may refuse to show under nosniff.
+would have served it as application/octet-stream, a type that says nothing of what the file is.
 
 **What an update does.** The cockpit restarts: it reads the release's number in CHANGELOG.md at its start. Nothing
 else this release ships is read by an engine, the proxy or the Agent tab's opencode-web.
 
-**Tests.** `dashboard/tests/test_cockpit_http.py`: no file of the cockpit's static directory is served with no type,
+**Tests.** `dashboard/tests/test_cockpit_http.py`: no file the page loads is served with no type,
 the card's WebP as image/webp. It fails on the cockpit of v1.44.0.
 
 **After the push.** The reference box updated at 9a4bcef on 2026-11-06 with the command of this release,
