@@ -111,6 +111,60 @@ class TheJobThatNeedsTheOthers(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertEqual(sorted(p.name for p in tmp.iterdir()), [], r.stdout)
 
+    def run_with_git(self, add):
+        """A full run whose git, first on PATH, runs the shell lines add on each `git worktree add`
+        (REAL_GIT is the real one) and hands it, and every other call, to the real git."""
+        repo, tmp = self.make_repo(WORKFLOW.format(slow="true"))
+        bindir = repo.parent / "bin"
+        bindir.mkdir()
+        (bindir / "git").write_text(f'#!/bin/sh\nREAL_GIT="{shutil.which("git")}"\n'
+                                    f'if [ "$1 $2" = "worktree add" ]; then\n{add}\nfi\nexec "$REAL_GIT" "$@"\n')
+        os.chmod(bindir / "git", 0o755)
+        env = self.env(tmp, PATH=str(bindir) + os.pathsep + os.environ["PATH"])
+        r = subprocess.run(["bash", str(SCRIPT)], cwd=repo, env=env, capture_output=True, text=True,
+                           timeout=120)
+        return r, tmp
+
+    def test_the_worktrees_are_added_one_after_the_other(self):
+        # git worktree add, side by side, reads what the other adds are writing: twice on 2026-11-07 a
+        # job's add failed on another's worktrees/<job>/commondir. Each add holds a mark here for 0.3 s,
+        # and one that finds it taken writes itself down.
+        root = pathlib.Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, root, True)
+        mark, beside = root / "adding", root / "added-beside-another"
+        r, _ = self.run_with_git(f'if mkdir "{mark}" 2>/dev/null; then\n'
+                                    f'  sleep 0.3; "$REAL_GIT" "$@"; rc=$?; rmdir "{mark}"; exit $rc\nfi\n'
+                                    f'echo "$*" >> "{beside}"')
+        self.assertFalse(beside.exists(), beside.read_text() if beside.exists() else "")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("CI local: 3 ok, 0 echecs, 0 sautes", r.stdout)
+
+    def test_a_worktree_that_cannot_be_added_is_its_jobs_failure(self):
+        # the other jobs ran to their end, then the run ended in a traceback and said no count (2026-11-07)
+        r, tmp = self.run_with_git('for a in "$@"; do case "$a" in\n'
+                                      '  */quick) echo "fatal: no worktree for quick here" >&2; exit 128 ;;\n'
+                                      'esac; done')
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertNotIn("Traceback", r.stderr)
+        self.assertIn("  [quick] FAIL git worktree add (rc=128): none of quick's steps ran\n"
+                      "       fatal: no worktree for quick here\n", r.stdout)
+        self.assertIn("  [slow] ok   The slow one", r.stdout)
+        self.assertIn("--   Every job passed (not run: quick did not pass)", r.stdout)
+        self.assertIn("CI local: 1 ok, 1 echecs, 0 sautes", r.stdout)
+        self.assertEqual(sorted(p.name for p in tmp.iterdir()), [], r.stdout)
+
+    def test_the_job_that_needs_the_others_is_not_run_without_its_worktree(self):
+        # run without one, its steps would run in this checkout: the tree a full run must leave alone
+        r, tmp = self.run_with_git('for a in "$@"; do case "$a" in\n'
+                                   '  */checks) echo "fatal: no worktree for checks here" >&2; exit 128 ;;\n'
+                                   'esac; done')
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertNotIn("Traceback", r.stderr)
+        self.assertIn("  [checks] FAIL git worktree add (rc=128): none of checks's steps ran\n", r.stdout)
+        self.assertNotIn("ok   Every job passed", r.stdout)
+        self.assertIn("CI local: 2 ok, 1 echecs, 0 sautes", r.stdout)
+        self.assertEqual(sorted(p.name for p in tmp.iterdir()), [], r.stdout)
+
     def test_a_fragment_runs_in_the_checkout_as_it_is(self):
         # what one runs while editing: the worktrees of HEAD made it refuse every tree with a change
         repo, tmp = self.make_repo(WORKFLOW.format(slow="true"), {"notes.txt": "one\n"})

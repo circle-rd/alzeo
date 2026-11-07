@@ -219,19 +219,34 @@ try:
         print(f"tree {head}: {len(first)} jobs side by side, each in a worktree of HEAD"
               + (f", then {', '.join(n for n, _, _ in after)}" if after else ""))
 
-        def one(jb):
-            n, steps, _ = jb
+        # Each job's worktree is added here, one after the other, before any job starts: git worktree add,
+        # side by side, reads what the other adds are writing. Twice on 2026-11-07 a job's add failed on
+        # another's worktrees/<job>/commondir: that job never ran, and once the others were over the run
+        # ended in a traceback, with no count. An add takes some 0.06 s. One that fails is its job's
+        # failure, said and counted, and the other jobs run.
+        def add(n):
             wt = os.path.join(base, n)
-            subprocess.run(["git", "worktree", "add", "-q", "--detach", wt, "HEAD"], check=True)
             trees.append(wt)
+            a = subprocess.run(["git", "worktree", "add", "-q", "--detach", wt, "HEAD"], capture_output=True,
+                               text=True)
+            if a.returncode == 0:
+                return wt
+            with say:
+                print(f"  [{n}] FAIL git worktree add (rc={a.returncode}): none of {n}'s steps ran")
+                print("       " + (a.stdout + a.stderr).strip().replace("\n", "\n       ")[-600:])
+            results[n] = (0, 1, 0)
+            return None
+
+        def one(n, steps, wt):
             t0 = time.monotonic()
             results[n] = run_job(n, steps, wt)
             per_job[n] = time.monotonic() - t0
+        wts = {n: add(n) for n, _, _ in first}
         with ThreadPoolExecutor(max_workers=max(1, len(first))) as pool:
-            list(pool.map(one, first))
-        for jb in after:
-            if ready(*jb):
-                one(jb)
+            list(pool.map(lambda jb: one(*jb), [(n, steps, wts[n]) for n, steps, _ in first if wts[n]]))
+        for n, steps, needs in after:
+            if ready(n, steps, needs) and (wt := add(n)):
+                one(n, steps, wt)
 finally:
     shutil.rmtree(stubs, ignore_errors=True)
     for wt in trees:
