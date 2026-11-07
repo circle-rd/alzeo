@@ -21,6 +21,16 @@ right after it. It fails on the cockpit of v1.44.1. `dashboard/tests/test_cockpi
 cockpit's static directory is served with a type, the licences and notices as text/plain. It fails on the cockpit of
 v1.44.1.
 
+**After the push.** The reference box updated at 73bf705 on 2026-11-07 with the command of this release,
+`cd ~/dgx-spark-qwen38 && curl -fsSL https://get.alzeo.ai | bash`, once GitHub's CI had passed on that commit (7 jobs,
+89 steps, none skipped) and get.alzeo.ai served its get.sh byte for byte: the run ended whole in 94 s. The cockpit
+restarted, and nothing else: the 27B, the lane that served, kept running, and so did the proxy and opencode-web; no
+unit file changed. The 8 real clients (Claude Code, opencode, Hermes, pi, the OpenAI and Anthropic SDKs, fetch under
+Node and Bun, LiteLLM) answered through the proxy on the 27B, and the production checks passed. The cockpit showed no
+banner on any of its 5 views, with no JavaScript error, said v1.44.2, showed the Qwen4 27B card first on a wide screen
+and on a phone, and served its licences and notices as text/plain. This release changes no lane, proxy, engine or unit
+file, so no matrix ran (decision 1165).
+
 ## v1.44.1 (2026-11-06): one page per model, the 27B's numbers as the lane v1.44.0 serves measured them, and Qwen's new mark in the cockpit
 
 **One page per model.** docs/models/ has a page for each model this stack serves (the 27B, the flash on SGLang, Flash
