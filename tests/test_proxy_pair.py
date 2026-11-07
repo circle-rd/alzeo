@@ -187,6 +187,9 @@ def fake_engine(name, model):
         bodies: list = []           # every POST's body, parsed
         gets: list = []             # the path of every GET
         delay = 0.0
+        # set by a test's cleanup: every generation its x_delay (or delay) still holds answers now. A request
+        # held for the whole test (busy) ends with it, not seconds later (the CI's time, decision 1137)
+        release = threading.Event()
         count_delay = 0.0           # seconds the size guard's count waits before its answer
         ordered_now = False         # "vllm_dead_late_order(_cut)": its lane's stop job, seen only once it is set
         mode = "ok"                 # "down": /v1/models answers 503 (a boot) ; "cut": a stream dies mid-way ;
@@ -259,7 +262,8 @@ def fake_engine(name, model):
                 self.end_headers()
                 self.wfile.write(out)
                 return
-            time.sleep(body.get("x_delay", Handler.delay))
+            # float(): a null delay fails at once, as time.sleep did, where wait(None) would wait for good (review)
+            Handler.release.wait(float(body.get("x_delay", Handler.delay)))
             if self.path.startswith("/v1/messages"):
                 return self.reply({"id": "m", "type": "message", "role": "assistant", "model": Handler.served[0],
                                    "content": [{"type": "text", "text": f"from {name}"}]})
@@ -2130,6 +2134,11 @@ class TwoBoxesServeOneModel(PairFixture, unittest.TestCase):
 
     def setUp(self):
         super().setUp()
+        if self.INPROC:
+            # no pause an earlier test left: once busy() ended a test's generations with it, a pause that test caused
+            # still ran as the next one began (1.07 s of it after
+            # test_a_box_gone_without_a_reset_holds_a_shared_request_seconds_not_ten, review of v1.44.3)
+            self.mod._PAIR_COOL.clear()
         self.until_listed("marker-27b")
 
 
@@ -2173,7 +2182,17 @@ class TwoBoxesServeOneModel(PairFixture, unittest.TestCase):
             "user": f"busy-{i}"}), kwargs={"port": port, "key": key}, daemon=True) for i in range(n)]
         for t in threads:
             t.start()
-        self.addCleanup(lambda: [t.join(30) for t in threads])
+
+        def ended():
+            # the test is over: its generations answer now, and the next test starts once they are in, as
+            # it did when they ran their whole secs (no assertion reads them past the test)
+            engine.release.set()
+            try:
+                for t in threads:
+                    t.join(30)
+            finally:
+                engine.release.clear()
+        self.addCleanup(ended)
         deadline = time.monotonic() + 10
         while sum(1 for u in engine.users if u and u.startswith("busy-")) < n:
             if time.monotonic() > deadline:
