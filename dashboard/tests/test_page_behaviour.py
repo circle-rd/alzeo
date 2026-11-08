@@ -877,7 +877,7 @@ class ATableCellCarriesItsColumnName(unittest.TestCase):
         labelCells(t);
         report({a: [...a.cells].map(c => c.dataset.label || null), b: [...b.cells].map(c => c.dataset.label || null)});
         """)
-        self.assertEqual(out["a"], ["Recipe", "Engine image", "Checkpoint", "Drafter", "Serving", "On disk", "Against the lane"])
+        self.assertEqual(out["a"], ["Recipe", "Engine", "Checkpoint", "Drafter", "Serving", "On disk", "Against the lane"])
         self.assertEqual(out["b"], ["Recipe", None])
 
 
@@ -2663,6 +2663,51 @@ class TheOtherBoxOfAPairIsShownInNow(unittest.TestCase):
             "models": [hostile], "version": hostile, "job": {"action": hostile}}}}}))
         self.assertIn(f"spark2: serves {hostile}", r["rows"])
         self.assertEqual(r["elements"], 2 * len(r["rows"]), "a dt and a dd per row, nothing else")
+
+
+class EachLaneSaysItsEngine(unittest.TestCase):
+    """Decision 1178 (Hasan, 2026-11-07): the engine each lane runs, and its version, said everywhere a lane is: the
+    spine's capsule, the rack's bays, the Lanes cards and the Library's recipes. The page named none of them."""
+
+    BODY = r"""
+    const PIN = 'lmsysorg/sglang@sha256:e3a4f06001a29542fc4a8638536d9ffc5eb9c9942b08603c09b19a56eae4a1ae';
+    const engines = {'qwen38-sglang.service': {engine: 'SGLang', version: '0.5.22', label: 'SGLang 0.5.22', pin: PIN},
+                     'qwen38-kolibri.service': {engine: 'vLLM', version: '0.29.0 + Aleph Alpha plugin 1.0.0',
+                                                label: 'vLLM 0.29.0 + Aleph Alpha plugin 1.0.0', pin: 'vllm/vllm-openai@sha256:18'}};
+    feed({config: Object.assign({}, CONFIG, {engines}), units: UNITS,
+          lifecycle: life({'qwen38-sglang.service': eng('ready')})});
+    const tb = $('rcp-table').tBodies[0]; clear(tb);
+    const recipe = image => ({recipe: {id: 'stock', lane: '27b', builtin: true, engine: {image},
+                                       model: {repo: 'RadixArk/Qwen3.8-27B-NVFP4', revision: '0123456789abcdef'},
+                                       drafter: {algorithm: 'none'}, serve: {}}, installed: true, presence: {}, drift: []});
+    recipeRow(tb, recipe(PIN)); recipeRow(tb, recipe('example.org/my-sglang@sha256:' + 'f'.repeat(64)));
+    report({sub: txt('serving-sub'), card27: LCARDS.get('qwen38-sglang.service').right.textContent,
+            cardKol: LCARDS.get('qwen38-kolibri.service').right.textContent,
+            bay27: BAYS.get('qwen38-sglang.service').line.textContent,
+            bayKol: BAYS.get('qwen38-kolibri.service').line.textContent,
+            bayImg: BAYS.get('qwen38-image.service').line.textContent,
+            pinned: tb.rows[0].cells[1].textContent, theirs: tb.rows[1].cells[1].textContent});
+    """
+
+    def test_the_capsule_the_bays_the_cards_and_the_library_say_it(self):
+        r = run(self, self.BODY)
+        self.assertTrue(r["sub"].startswith("SGLang 0.5.22 · "), r["sub"])
+        self.assertIn("EngineSGLang 0.5.22", r["card27"])
+        self.assertIn("EnginevLLM 0.29.0 + Aleph Alpha plugin 1.0.0", r["cardKol"])
+        self.assertTrue(r["bay27"].startswith("engine SGLang 0.5.22"), r["bay27"])
+        self.assertTrue(r["bayKol"].startswith("engine vLLM 0.29.0 + Aleph Alpha plugin 1.0.0"), r["bayKol"])
+        self.assertNotIn("engine", r["bayImg"], "a lane the table lacks says no engine rather than a wrong one")
+        self.assertEqual(r["pinned"], "SGLang 0.5.22 lmsysorg/sglang@e3a4f06001a2…")
+        # an image of the operator's is not the pin: named by itself, never given the pin's version
+        self.assertEqual(r["theirs"], "example.org/my-sglang@ffffffffffff…")
+
+    def test_without_the_table_nothing_is_said(self):
+        # a cockpit of an older release beside this page (the table came with v1.45.0): no line reads "undefined"
+        r = run(self, self.BODY.replace("Object.assign({}, CONFIG, {engines})", "CONFIG"))
+        self.assertFalse(r["sub"].startswith(" · "), r["sub"])
+        self.assertNotIn("Engine", r["card27"])
+        self.assertNotIn("undefined", r["card27"] + r["bay27"] + r["sub"])
+        self.assertEqual(r["pinned"], "lmsysorg/sglang@e3a4f06001a2…")
 
 
 if __name__ == "__main__":

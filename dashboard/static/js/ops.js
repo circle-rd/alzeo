@@ -260,7 +260,13 @@ function recipeRow(tb, row){
   if (r){ c0.append(tag(r.lane === 'flash' ? 'flash' : '27B', 'gold'), ' ', el('strong', null, r.id)); if (row.installed) c0.append(' ', tag('installed', 'cool')); if (!r.builtin) c0.append(' ', tag(row.file || 'custom')); }
   else c0.append(tag(row.file || '?', 'err'));
   if (row.errors && row.errors.length){ const td = tr.insertCell(); td.colSpan = 6; td.append(tag('invalid', 'err'), ' ', row.errors.join('; ')); return; }
-  const c1 = tr.insertCell(); c1.className = 'num'; c1.textContent = r.engine.image.replace(/@sha256:([0-9a-f]{12})[0-9a-f]+/, '@$1…'); c1.title = r.engine.image;
+  // the engine and its version when the recipe runs the image its lane pins (decision 1178); an image of the
+  // operator's is named by itself, as before
+  const img = r.engine.image.replace(/@sha256:([0-9a-f]{12})[0-9a-f]+/, '@$1…');
+  const pinned = ((F.config || {}).engines || {})[r.lane === 'flash' ? UFLASH : U27];
+  const c1 = tr.insertCell(); c1.title = r.engine.image;
+  if (pinned && pinned.pin === r.engine.image) c1.append(pinned.label, ' ', el('span', 'faint num', img));
+  else { c1.className = 'num'; c1.textContent = img; }
   const c2 = tr.insertCell(); c2.textContent = r.model.repo.split('/').pop() + ' '; c2.append(el('span', 'faint num', r.model.revision.slice(0, 10)));
   const dr = r.drafter || {};
   tr.insertCell().textContent = dr.algorithm === 'none' || !dr.algorithm ? 'none' : dr.algorithm + (dr.repo ? ' ' + dr.repo.split('/').pop() : ' (own head)') + (dr.draft_tokens ? ', ' + dr.draft_tokens + ' tokens' : '');

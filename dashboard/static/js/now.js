@@ -138,9 +138,10 @@ function renderRack(){
       b.boot.hidden = false; clear(b.boot);
       const m = el('div', 'meter indet'); m.append(el('i')); b.boot.append(m);
     } else b.boot.hidden = true;
-    // facts: what this lane costs, measured on this box
+    // facts: the engine it runs (decision 1178), then what this lane costs, measured on this box
     clear(b.line);
     const fact = (k, v) => { const sp = el('span'); sp.append(k + ' '); sp.append(el('b', null, v)); b.line.append(sp); };
+    if (engineLabel(unit)) fact('engine', engineLabel(unit));
     if (e) fact('boot', fmtMin(bootSeconds(unit)));
     const pool = e ? lanePool(unit, e) : null;
     if (pool) fact('KV pool', fmtK(pool));
@@ -210,7 +211,8 @@ function renderServing(){
   else if (st === 'ready' || st === 'degraded') sub = (loadWords(l) || 'idle') + (F.pool ? `, KV pool ${Math.round(100 * physTokens(l) / F.pool)} %` : '') + (e.elapsed ? `, up ${fmtDur(e.elapsed)}` : '');
   else if (TRANSITIONAL.has(st)){ const eta = e.eta || READY_DEFAULT[unit]; sub = `${fmtDur(e.elapsed)} elapsed` + (eta && e.elapsed ? `, about ${fmtDur(Math.max(0, eta - e.elapsed))} left` : ''); }
   else if (st === 'stopping') sub = `${e.state_elapsed != null ? fmtDur(e.state_elapsed) : ''} elapsed`;
-  setText('serving-sub', sub);
+  // the engine first, what it does after: « SGLang 0.5.22 · idle, KV pool 3 %, up 2 h » (decision 1178)
+  setText('serving-sub', [engineLabel(unit), sub].filter(Boolean).join(' · '));
   sayOnce('lane', `${laneLabel(unit)}: ${stateLabel(e)}`);
   // the lede: one sentence about the box, in words
   let lede;

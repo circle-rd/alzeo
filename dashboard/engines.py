@@ -43,5 +43,7 @@ def label(unit: str) -> str:
 
 
 def page_table() -> dict:
-    """What the page reads (its config): by unit, the engine, its version and the label."""
-    return {u: {"engine": e["engine"], "version": e["version"], "label": label(u)} for u, e in ENGINES.items()}
+    """What the page reads (its config): by unit, the engine, its version, the label, and the pin, which the
+    Library compares with a recipe's image (a recipe of the operator's may name another image)."""
+    return {u: {"engine": e["engine"], "version": e["version"], "label": label(u), "pin": e["pin"]}
+            for u, e in ENGINES.items()}

@@ -174,6 +174,8 @@ function renderLanes(){
       // check, 2026-10-02)
       ['Checkpoint', pending ? F.model.split('/').pop() : e && e.model ? e.model.split('/').pop() : !has ? 'not installed' : e || F.life ? 'unknown' : '…'],
       ['Target', laneTarget(unit) ? TARGET_NAME[laneTarget(unit)] : null],
+      // the engine and its version the lane's installer pins (decision 1178)
+      ['Engine', engineLabel(unit) || null],
       ['Next start loads', pending ? TARGET_NAME[e.target] : null],
       ['At boot', has ? (en === 'enabled' ? 'starts' : en === '?' ? 'unknown' : 'manual start') : null],
       ['Boot takes', has ? readyIn(unit) : null],

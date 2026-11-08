@@ -114,6 +114,12 @@ class Fingerprint(unittest.TestCase):
         for m in sorted(own):
             self.assertIn(f"{m}.py", self.ck.CODE_FILES, m)
 
+    def test_the_page_gets_each_lanes_engine_in_its_config(self):
+        # decision 1178: the page names each lane's engine from the config, engines.py's table
+        engines = self.ck.STATE["config"]["data"]["engines"]
+        self.assertEqual(engines, self.ck.en.page_table())
+        self.assertEqual(engines["qwen38-sglang.service"]["label"], "SGLang 0.5.22")
+
     def test_quiet_when_nothing_moved(self):
         self.assertEqual(self.ck.code_is_stale(), [])
 

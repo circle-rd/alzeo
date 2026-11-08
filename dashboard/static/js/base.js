@@ -262,6 +262,9 @@ function laneLabel(unit){
   const s = t && TARGET_SHORT[t] && !base.endsWith(TARGET_SHORT[t]) ? ' ' + TARGET_SHORT[t] : '';
   return base + s;
 }
+// The engine a lane runs and its version, the one way the page says them (decision 1178): dashboard/engines.py's
+// table, which its tests check against the installers' pins. 'SGLang 0.5.22'; '' for a unit with none.
+const engineLabel = unit => ((((F.config || {}).engines || {})[unit]) || {}).label || '';
 // When systemctl did not say ('?'), the lifecycle's list decides: it leaves out a diffusion lane
 // with no unit file. Read as installed, '?' showed the image and video lanes of a box whose
 // systemctl did not answer as installed, their checkpoint "…" for good (a CI runner, 2026-10-02).
