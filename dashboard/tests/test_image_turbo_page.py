@@ -23,13 +23,13 @@ class TheTargetIsALaneVariant(unittest.TestCase):
     def test_it_belongs_to_the_image_lane_and_has_a_name_of_its_own(self):
         r = run(self, r"""
         report({unit: TARGET_UNIT('image-turbo'), base: TARGET_UNIT('image'), list: LANE_TARGETS[IMAGE_UNIT],
-                name: TARGET_NAME['image-turbo'], short: TARGET_SHORT['image-turbo'], note: TARGET_NOTE['image-turbo'] || ''});
+                name: TARGET_NAME['image-turbo'], button: TARGET_SHORT_NAME['image-turbo'], note: TARGET_NOTE['image-turbo'] || ''});
         """)
         self.assertEqual(r["unit"], "qwen38-image.service")
         self.assertEqual(r["base"], "qwen38-image.service")
         self.assertEqual(r["list"], ["image", "image-turbo"])
-        self.assertEqual(r["name"], "Qwen-Image 2.1 Turbo")
-        self.assertEqual(r["short"], "Turbo")
+        self.assertEqual(r["name"], "Qwen-Image 2.1 Turbo · Qwen")         # its official name (decision 1180)
+        self.assertEqual(r["button"], "Turbo")
         self.assertIn("eight", r["note"])
 
     def test_the_switch_phrase_names_it(self):
@@ -261,7 +261,7 @@ class WhatTheEngineServes(unittest.TestCase):
                 banners: txt('banners'), turbo: imgTurbo()});
         """)
         self.assertEqual(r["steps"], ["unit:restart"])
-        self.assertIn("Qwen-Image 2.1 is serving, and the lane's next start loads Qwen-Image 2.1 Turbo.", r["banners"])
+        self.assertIn("Qwen-Image 2.1 · Qwen is serving, and the lane's next start loads Qwen-Image 2.1 Turbo · Qwen.", r["banners"])
         self.assertFalse(r["turbo"], "the page took the unit's word over the engine's")
 
     def test_the_page_follows_the_engine(self):

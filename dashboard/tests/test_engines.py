@@ -39,6 +39,20 @@ class EachLaneHasItsEngine(unittest.TestCase):
         self.assertEqual(set(table), set(EN.ENGINES))
 
 
+class WhatEachEngineReports(unittest.TestCase):
+    def test_it_says_the_pinned_version(self):
+        # the page tells the pin's version from an image of the operator's by this string (decision 1178): it says
+        # the same version, or the serving lane would read as another image
+        for unit, e in EN.ENGINES.items():
+            with self.subTest(unit=unit):
+                if e["reports"] is None:
+                    self.assertEqual(e["engine"], "SGLang Diffusion")       # the cockpit reads no version there
+                    continue
+                said = e["version"].split(" + ")[0].split()[-1]             # 0.5.22, 53295c6, 8244d1c, 0.29.0, 77154ca6
+                self.assertIn(said, e["reports"], (e["version"], e["reports"]))
+        self.assertEqual(EN.page_table()["qwen38-flash.service"]["reports"], "0.0.0.dev1+g53295c697")
+
+
 class EachVersionIsTheOneInstalled(unittest.TestCase):
     def pin(self, unit):
         return EN.ENGINES[unit]["pin"]

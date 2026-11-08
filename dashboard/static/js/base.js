@@ -106,16 +106,17 @@ const isNemotron = u => u === NEMOTRON_UNIT || u === NEMOTRON_SUPER_UNIT;
 // same routes, the same counters, the same belts that cannot act; each says its own name
 const isB12x = u => isNemotron(u) || u === FLASH_LOCAL_UNIT || u === ORNITH_UNIT;
 const b12xName = u => u === FLASH_LOCAL_UNIT ? 'the Flash FP4-Local lane' : u === ORNITH_UNIT ? 'the Ornith lane' : 'the Nemotron lane';
-const LANE_NAME = {[U27]: '27B', [UFLASH]: 'flash 176B', [FLASH_LOCAL_UNIT]: 'Flash FP4-Local', [KOLIBRI_UNIT]: 'Kolibri-1',
-                   [NEMOTRON_UNIT]: 'Nemotron Bolt', [NEMOTRON_SUPER_UNIT]: 'Nemotron Super VL', [ORNITH_UNIT]: 'Ornith 1.5 122B',
-                   [IMAGE_UNIT]: 'Qwen-Image',
-                   [VIDEO_UNIT]: 'MiniMax-H3'};
+// The lanes' names in sentences, each its family's official name (decision 1180 of Hasan, 2026-11-07: no name of
+// our own, neither for a lane nor for its default version)
+const LANE_NAME = {[U27]: 'Qwen3.8 27B', [UFLASH]: 'Qwen3.8 Flash-Next', [FLASH_LOCAL_UNIT]: 'Qwen3.8 Flash-Next FP4-Local',
+                   [KOLIBRI_UNIT]: 'Kolibri-1', [NEMOTRON_UNIT]: 'Nemotron 3.5 Bolt', [NEMOTRON_SUPER_UNIT]: 'Nemotron 3.5 Super VL',
+                   [ORNITH_UNIT]: 'Ornith 1.5 122B', [IMAGE_UNIT]: 'Qwen-Image 2.1', [VIDEO_UNIT]: 'MiniMax-H3'};
 // What each lane is, for people: the kind of work it does and the one line that says so.
 // `lane` names the lane's hue in the stylesheet (--lane-<lane>); `maker` its mark in img/logos.
 const LANE_META = {
   [U27]: {title: 'Qwen3.8 27B', kind: 'Text, up to 1M tokens of context', desc: 'Dense 27B in NVFP4 with a DFlash2 draft. The long-context lane.', view: 'agent', lane: '27b', maker: 'qwen'},
-  [UFLASH]: {title: 'Flash 176B', kind: 'Text, 262K tokens of context', desc: 'Mixture of experts, 176B in NVFP4 with its own draft head. The fast lane for agents.', view: 'agent', lane: 'flash', maker: 'qwen'},
-  [FLASH_LOCAL_UNIT]: {title: 'Flash FP4-Local (NVIDIA)', kind: 'Text and images, 262K tokens of context', desc: 'The same 176B model in NVIDIA’s own FP4 build, distilled from its full precision, served by vLLM with b12x as NVIDIA’s model card says. Reasoning, tool calls and vision.', view: 'agent', lane: 'flash-local', maker: 'nvidia'},
+  [UFLASH]: {title: 'Qwen3.8 Flash-Next', kind: 'Text, 262K tokens of context', desc: 'Mixture of experts, 176B in NVFP4 with its own draft head. The fast lane for agents.', view: 'agent', lane: 'flash', maker: 'qwen'},
+  [FLASH_LOCAL_UNIT]: {title: 'Qwen3.8 Flash-Next FP4-Local', kind: 'Text and images, 262K tokens of context', desc: 'The same 176B model in NVIDIA’s own FP4 build, distilled from its full precision, served by vLLM with b12x as NVIDIA’s model card says. Reasoning, tool calls and vision.', view: 'agent', lane: 'flash-local', maker: 'nvidia'},
   [KOLIBRI_UNIT]: {title: 'Kolibri-1', kind: 'Text, 262K tokens, German and English', desc: 'Aleph Alpha’s mixture of experts, 78B with 3.5B active, served by vLLM. Reasoning and tool calls.', view: 'agent', lane: 'kolibri', maker: 'alephalpha'},
   [NEMOTRON_UNIT]: {title: 'Nemotron 3.5 Bolt', kind: 'Text, images and video, 262K tokens', desc: 'NVIDIA’s mixture of experts, 74B with 9B active in 2 bits, served by vLLM with its drafter. Reasoning, tool calls and vision.', view: 'agent', lane: 'nemotron', maker: 'nvidia'},
   [NEMOTRON_SUPER_UNIT]: {title: 'Nemotron 3.5 Super VL', kind: 'Text, images and video, 1M tokens', desc: 'NVIDIA’s mixture of experts, 120B with 12B active in NVFP4, served by vLLM with its drafter. Reasoning, tool calls and vision over a 1M window.', view: 'agent', lane: 'nemotron-super', maker: 'nvidia'},
@@ -132,10 +133,6 @@ function makerMark(unit, cls = 'mark'){
 // boots (measured on the reference box). Once a lane booted in front of the cockpit, the
 // median of its own boots replaces these.
 const READY_DEFAULT = {[U27]: 540, [UFLASH]: 780, [FLASH_LOCAL_UNIT]: 1020, [KOLIBRI_UNIT]: 600, [NEMOTRON_UNIT]: 450, [NEMOTRON_SUPER_UNIT]: 660, [ORNITH_UNIT]: 420, [IMAGE_UNIT]: 70, [VIDEO_UNIT]: 720};
-const TARGET_SHORT = {stock: 'stock', uncensored: 'uncensored', fp8: 'FP8', 'uncensored-fp8': 'FP8 uncensored',
-                      flash: '', 'flash-uncensored': 'uncensored', 'flash-nvda': 'NVIDIA export', image: '2.1', 'image-turbo': 'Turbo', video: 'H3',
-                      kolibri: 'FP8', 'kolibri-nvfp4': 'NVFP4', nemotron: 'Bolt', 'nemotron-super': 'Super VL',
-                      'flash-local': 'FP4-Local', 'ornith-122b': '122B'};
 const TARGET_UNIT = t => t === 'image' || t === 'image-turbo' ? IMAGE_UNIT : t === 'video' ? VIDEO_UNIT
   : String(t).startsWith('kolibri') ? KOLIBRI_UNIT : t === 'nemotron-super' ? NEMOTRON_SUPER_UNIT : String(t).startsWith('nemotron') ? NEMOTRON_UNIT
   : t === 'flash-local' ? FLASH_LOCAL_UNIT : t === 'ornith-122b' ? ORNITH_UNIT : String(t).startsWith('flash') ? UFLASH : U27;
@@ -143,17 +140,24 @@ const LANE_TARGETS = {[U27]: ['stock', 'uncensored', 'fp8', 'uncensored-fp8'], [
                       [FLASH_LOCAL_UNIT]: ['flash-local'],
                       [KOLIBRI_UNIT]: ['kolibri', 'kolibri-nvfp4'], [NEMOTRON_UNIT]: ['nemotron'], [NEMOTRON_SUPER_UNIT]: ['nemotron-super'],
                       [ORNITH_UNIT]: ['ornith-122b'], [IMAGE_UNIT]: ['image', 'image-turbo'], [VIDEO_UNIT]: ['video']};
-const TARGET_NAME = {stock: '27B stock, NVFP4', uncensored: '27B uncensored, NVFP4', fp8: '27B FP8, Qwen official',
-                     'uncensored-fp8': '27B FP8 uncensored', flash: 'flash 176B, NVFP4', 'flash-uncensored': 'flash 176B uncensored',
-                     'flash-nvda': 'flash 176B, NVIDIA export', image: 'Qwen-Image 2.1', 'image-turbo': 'Qwen-Image 2.1 Turbo', video: 'MiniMax-H3',
-                     kolibri: 'Kolibri-1, Aleph Alpha FP8', 'kolibri-nvfp4': 'Kolibri-1, NVFP4 experts', nemotron: 'Nemotron 3.5 Bolt, 24 GB',
-                     'nemotron-super': 'Nemotron 3.5 Super VL, NVFP4', 'flash-local': 'Flash FP4-Local, NVIDIA',
-                     'ornith-122b': 'Ornith 1.5 122B, NVFP4'};
+// Each version's official name: the model, its precision, and who publishes it, read off the repository its
+// installer pins (decisions 1180 and 1185: "abliterated", the word of those builds' own makers, never "uncensored"
+// nor "stock"; the targets' ids, in commands, do not change). dashboard/tests/test_target_names.py reads each
+// repository back from the installers.
+const TARGET_NAME = {stock: 'Qwen3.8 27B NVFP4 · RadixArk', uncensored: 'Qwen3.8 27B abliterated NVFP4 · edp1096',
+                     fp8: 'Qwen3.8 27B FP8 · Qwen', 'uncensored-fp8': 'Qwen3.8 27B abliterated FP8 · edp1096',
+                     flash: 'Qwen3.8 Flash-Next NVFP4 · RadixArk', 'flash-uncensored': 'Qwen3.8 Flash-Next abliterated NVFP4 · dealignai',
+                     'flash-nvda': 'Qwen3.8 Flash-Next NVFP4 · NVIDIA', 'flash-local': 'Qwen3.8 Flash-Next FP4-Local · NVIDIA',
+                     image: 'Qwen-Image 2.1 · Qwen', 'image-turbo': 'Qwen-Image 2.1 Turbo · Qwen', video: 'MiniMax-H3 · MiniMax',
+                     kolibri: 'Kolibri-1 FP8 · Aleph Alpha', 'kolibri-nvfp4': 'Kolibri-1 NVFP4 · Quantinine',
+                     nemotron: 'Nemotron 3.5 Bolt 24GB · NVIDIA', 'nemotron-super': 'Nemotron 3.5 Super VL NVFP4 · NVIDIA',
+                     'ornith-122b': 'Ornith 1.5 122B NVFP4 · Ornith AI'};
 // A version's name on its button in Lanes, and the line that tells it apart once chosen. A
 // target is declared in the tables of this block: a page test fails when one lacks a name or a line.
-const TARGET_SHORT_NAME = {stock: 'Stock', uncensored: 'Uncensored', fp8: 'FP8', 'uncensored-fp8': 'FP8 uncensored',
-  flash: 'Standard', 'flash-uncensored': 'Uncensored', 'flash-nvda': 'NVIDIA export', image: 'Base', 'image-turbo': 'Turbo', video: 'H3',
-  kolibri: 'FP8', 'kolibri-nvfp4': 'NVFP4', nemotron: 'Bolt', 'nemotron-super': 'Super VL', 'flash-local': 'FP4-Local',
+const TARGET_SHORT_NAME = {stock: 'NVFP4 · RadixArk', uncensored: 'NVFP4 abliterated · edp1096', fp8: 'FP8 · Qwen',
+  'uncensored-fp8': 'FP8 abliterated · edp1096', flash: 'NVFP4 · RadixArk', 'flash-uncensored': 'NVFP4 abliterated · dealignai',
+  'flash-nvda': 'NVFP4 · NVIDIA', image: 'Base', 'image-turbo': 'Turbo', video: 'H3', kolibri: 'FP8 · Aleph Alpha',
+  'kolibri-nvfp4': 'NVFP4 · Quantinine', nemotron: 'Bolt', 'nemotron-super': 'Super VL', 'flash-local': 'FP4-Local',
   'ornith-122b': '122B'};
 const TARGET_LINE = {
   stock: 'The default: smallest and fastest', uncensored: 'Refusals removed, same size and speed',
@@ -167,7 +171,7 @@ const TARGET_LINE = {
   'ornith-122b': 'The one version: its authors’ NVFP4 build and its MTP head'};
 const TARGET_NOTE = {
   stock: 'The NVFP4 quantization this repo pins by default: smallest and fastest of the 27B targets.',
-  uncensored: 'The abliterated NVFP4 checkpoint: same size and speed as stock, refusals removed.',
+  uncensored: 'The abliterated NVFP4 checkpoint: same size and speed as RadixArk’s NVFP4, refusals removed.',
   fp8: 'Qwen’s own FP8 release: the most faithful weights of this lane, and the heaviest. 30.9 GB against 21 GB for NVFP4, taken out of the KV pool: around 200,000 fewer tokens of context and a slower decode. The first switch downloads about 31 GB.',
   'uncensored-fp8': 'The abliterated weights in Qwen’s FP8 format: the same 30.9 GB and the same cost in pool and speed as FP8. The first switch downloads about 31 GB.',
   flash: 'The 176B Flash-Next lane: its own unit, its own image, and a 47.7 GiB N-gram table on the NVMe that the server rewrites at every boot.',
@@ -256,15 +260,19 @@ function laneTarget(unit){
 function laneLabel(unit){
   if (unit === AGENT_UNIT) return 'the opencode web server';
   if (unit === PROXY_UNIT) return 'the keepalive proxy';
-  const base = LANE_NAME[unit] || unit.replace('.service', '');
   const t = laneTarget(unit);
-  // a lane named after its checkpoint (MiniMax-H3) does not repeat it: "MiniMax-H3 H3"
-  const s = t && TARGET_SHORT[t] && !base.endsWith(TARGET_SHORT[t]) ? ' ' + TARGET_SHORT[t] : '';
-  return base + s;
+  return (t && TARGET_NAME[t]) || LANE_NAME[unit] || unit.replace('.service', '');
 }
 // The engine a lane runs and its version, the one way the page says them (decision 1178): dashboard/engines.py's
-// table, which its tests check against the installers' pins. 'SGLang 0.5.22'; '' for a unit with none.
-const engineLabel = unit => ((((F.config || {}).engines || {})[unit]) || {}).label || '';
+// table, which its tests check against the installers' pins. 'SGLang 0.5.22'; '' for a unit with none. The lane that
+// serves says the version its engine reports (engine_info): when that is not the one the pinned image reports (an
+// image of the operator's), the engine's own word is said, never the pin's.
+function engineLabel(unit){
+  const e = (((F.config || {}).engines || {})[unit]);
+  if (!e) return '';
+  const live = F.liveEngine && F.liveEngine.unit === unit ? String(F.liveEngine.version || '').replace(/^vLLM /, '') : '';
+  return live && e.reports && live !== e.reports ? `${e.engine} ${live}` : e.label;
+}
 // When systemctl did not say ('?'), the lifecycle's list decides: it leaves out a diffusion lane
 // with no unit file. Read as installed, '?' showed the image and video lanes of a box whose
 // systemctl did not answer as installed, their checkpoint "…" for good (a CI runner, 2026-10-02).

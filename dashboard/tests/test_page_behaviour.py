@@ -1067,10 +1067,10 @@ class RunningIsWhatTheEngineRuns(unittest.TestCase):
 
 
 class EachVersionIsNamedOnce(unittest.TestCase):
-    """The Now view's card of a lane adds the version it serves to the lane's name, unless the
-    name already says it: the Nemotron lane's card read "Nemotron 3.5 Bolt Bolt" on the reference
-    box (2026-10-16), and the FP4-Local lane's "Flash FP4-Local (NVIDIA) FP4-Local" (2026-10-20),
-    its name saying its version without ending with it."""
+    """The Now view's card of a lane says the official name of the version it loads (decision 1180), its model said
+    once: the lane's name with a version after it read "Nemotron 3.5 Bolt Bolt" on the reference box (2026-10-16),
+    and the FP4-Local lane's "Flash FP4-Local (NVIDIA) FP4-Local" (2026-10-20). Who publishes the build comes after
+    " · " and may share a word with the model (Ornith 1.5 122B NVFP4 · Ornith AI)."""
 
     def test_no_card_repeats_its_version(self):
         r = run(self, r"""
@@ -1085,11 +1085,11 @@ class EachVersionIsNamedOnce(unittest.TestCase):
         self.assertGreaterEqual(len(r), 14, r)
         for t, title in r.items():
             with self.subTest(target=t):
-                words = title.split()
+                words = title.split(" · ")[0].split()
                 self.assertEqual(len(words), len(set(words)), title)
         self.assertEqual((r["nemotron"], r["nemotron-super"], r["kolibri-nvfp4"], r["stock"], r["flash-local"]),
-                         ("Nemotron 3.5 Bolt", "Nemotron 3.5 Super VL", "Kolibri-1 NVFP4", "Qwen3.8 27B stock",
-                          "Flash FP4-Local (NVIDIA)"))
+                         ("Nemotron 3.5 Bolt 24GB · NVIDIA", "Nemotron 3.5 Super VL NVFP4 · NVIDIA",
+                          "Kolibri-1 NVFP4 · Quantinine", "Qwen3.8 27B NVFP4 · RadixArk", "Qwen3.8 Flash-Next FP4-Local · NVIDIA"))
 
 
 class TheLanesViewCountsNoLanes(unittest.TestCase):
@@ -1190,9 +1190,9 @@ class TheStartGuardAndALostSchedulerAreSaidAsTheyAre(unittest.TestCase):
         feed({config: CONFIG, units, lifecycle: life({'qwen38-flash.service': cannot, 'qwen38-sglang.service': eng('ready')})});
         report({alone, served: txt('banners'), why: laneCard('qwen38-flash.service').why.textContent});
         """)
-        self.assertIn("flash 176B cannot start on this box.", r["alone"])
+        self.assertIn("Qwen3.8 Flash-Next cannot start on this box.", r["alone"])
         self.assertNotIn("cannot start on this box.", r["served"])
-        self.assertNotIn("flash 176B failed.", r["served"])
+        self.assertNotIn("Qwen3.8 Flash-Next failed.", r["served"])
         self.assertIn("This GPU cannot start it", r["why"])
 
     def test_the_card_of_a_lane_its_gpu_cannot_start_says_so_too(self):
@@ -1366,8 +1366,8 @@ class TheBootLaneIsSaidOnlyWhenOneIs(unittest.TestCase):
 
     def test_the_lane_enabled_at_boot_is_named_and_not_switched_to_again(self):
         r = self.page("null")
-        self.assertEqual(r["sub"], "27B starts at boot; load a lane from Lanes", r)
-        self.assertIn("Boot lane27B", r["facts"])
+        self.assertEqual(r["sub"], "Qwen3.8 27B starts at boot; load a lane from Lanes", r)
+        self.assertIn("Boot laneQwen3.8 27B", r["facts"])
         self.assertEqual(len(r["steps"]), 1, r["steps"])
         self.assertIn("systemctl start qwen38-sglang.service", r["steps"][0])
 
@@ -1459,18 +1459,18 @@ class ASwitchNotRestartedYetIsSaidAndFinished(unittest.TestCase):
         r = self.page("flash", FLASH_REPO, "flash-uncensored", FLASH_UNC_REPO, 5, "flash-uncensored")
         self.assertTrue(r["open"], r)
         self.assertEqual(len(r["steps"]), 1, r["steps"])
-        self.assertIn("Restart flash 176B on the new checkpoint", r["steps"][0])
+        self.assertIn("Restart Qwen3.8 Flash-Next on the new checkpoint", r["steps"][0])
         self.assertIn("systemctl restart qwen38-flash.service", r["steps"][0])
         self.assertNotIn("already serving", r["toast"])
 
     def test_the_banner_and_the_card_say_what_serves_and_what_comes_next(self):
         r = self.page("flash", FLASH_REPO, "flash-uncensored", FLASH_UNC_REPO, 5, "flash-uncensored")
-        self.assertIn("flash 176B, NVFP4 is serving, and the lane's next start loads flash 176B uncensored.", r["banners"])
-        self.assertIn("clients still get flash 176B, NVFP4", r["banners"])
+        self.assertIn("Qwen3.8 Flash-Next NVFP4 · RadixArk is serving, and the lane's next start loads Qwen3.8 Flash-Next abliterated NVFP4 · dealignai.", r["banners"])
+        self.assertIn("clients still get Qwen3.8 Flash-Next NVFP4 · RadixArk", r["banners"])
         self.assertEqual(r["card"]["Checkpoint"], "Qwen3.8-Flash-Next-NVFP4", r["card"])
-        self.assertEqual(r["card"]["Target"], "flash 176B, NVFP4", r["card"])
-        self.assertEqual(r["card"]["Next start loads"], "flash 176B uncensored", r["card"])
-        self.assertEqual(r["label"], "flash 176B", r)
+        self.assertEqual(r["card"]["Target"], "Qwen3.8 Flash-Next NVFP4 · RadixArk", r["card"])
+        self.assertEqual(r["card"]["Next start loads"], "Qwen3.8 Flash-Next abliterated NVFP4 · dealignai", r["card"])
+        self.assertEqual(r["label"], "Qwen3.8 Flash-Next NVFP4 · RadixArk", r)
 
     def test_a_lane_serving_what_its_unit_loads_owes_nothing(self):
         r = self.page("flash", FLASH_REPO, "flash", FLASH_REPO, 5, "flash")
@@ -1488,7 +1488,7 @@ class ASwitchNotRestartedYetIsSaidAndFinished(unittest.TestCase):
         self.assertIn("already serving", r["toast"])
         self.assertNotIn("next start loads", r["banners"])
         self.assertNotIn("Next start loads", r["card"])
-        self.assertEqual(r["card"]["Target"], "flash 176B uncensored", r["card"])
+        self.assertEqual(r["card"]["Target"], "Qwen3.8 Flash-Next abliterated NVFP4 · dealignai", r["card"])
         self.assertEqual(r["card"]["Checkpoint"], "Qwen3.8-Flash-Next-ABLITERATED-NVFP4", r["card"])
 
     def test_a_diffusion_lane_never_takes_the_text_engines_target(self):
@@ -1569,7 +1569,7 @@ class AnUpdateOwedToTheServingEngineIsSaidAndFinished(unittest.TestCase):
         const c = LCARDS.get('qwen38-flash.service');
         report({banners: txt('banners'), loadText: c.load.textContent});
         """ % (FLASH_REPO, FLASH_UNC_REPO))
-        self.assertIn("next start loads flash 176B uncensored", r["banners"])
+        self.assertIn("next start loads Qwen3.8 Flash-Next abliterated NVFP4 · dealignai", r["banners"])
         self.assertNotIn("not what the update installed", r["banners"])
         self.assertNotIn("to apply the update", r["loadText"])
 
@@ -1641,13 +1641,13 @@ class AnUpdateOwedToTheServingEngineIsSaidAndFinished(unittest.TestCase):
         self.assertTrue(r["open"], r)
         self.assertEqual(len(r["steps"]), 2, r["steps"])
         self.assertIn("Point the boot at", r["steps"][0])
-        self.assertIn("Restart flash 176B", r["steps"][1])
+        self.assertIn("Restart Qwen3.8 Flash-Next", r["steps"][1])
 
     def test_a_degraded_engine_with_a_switch_waiting_is_said(self):
         # the update banner keeps quiet while a switch waits; the switch's banner had to say it in
         # degraded too, or nothing did (found in review, 2026-10-17)
         r = self.flash_page("degraded", "flash-uncensored", FLASH_UNC_REPO, "flash-uncensored")
-        self.assertIn("next start loads flash 176B uncensored", r["banners"])
+        self.assertIn("next start loads Qwen3.8 Flash-Next abliterated NVFP4 · dealignai", r["banners"])
         self.assertNotIn("not what the update installed", r["banners"])
 
     def test_an_engine_up_to_date_owes_nothing(self):
@@ -1806,7 +1806,7 @@ class TheLoadWindowCanBeHiddenWhileItsStepsRun(unittest.TestCase):
         $('jobpip').click(); await __settle();
         report({between, back: !$('scrim').hidden, pipAfter: !$('jobpip').hidden});
         """)
-        self.assertEqual(r["between"], {"pip": True, "what": "Load 27B uncensored, NVFP4: between steps"}, r)
+        self.assertEqual(r["between"], {"pip": True, "what": "Load Qwen3.8 27B abliterated NVFP4 · edp1096: between steps"}, r)
         self.assertTrue(r["back"])
         self.assertFalse(r["pipAfter"], "the window is back and no job runs: the button has nothing left to bring back")
 
@@ -1849,7 +1849,7 @@ class TheLoadWindowCanBeHiddenWhileItsStepsRun(unittest.TestCase):
         self.assertEqual(r["posts"], [], "nothing was sent to a lane")
         for name, (disabled, why) in r["buttons"].items():
             self.assertTrue(disabled, name)
-            self.assertIn("A load is running (27B uncensored, NVFP4)", why, name)
+            self.assertIn("A load is running (Qwen3.8 27B abliterated NVFP4 · edp1096)", why, name)
         for t in r["toasts"]:
             self.assertIn("A load is running", t)
 
@@ -1859,7 +1859,7 @@ class TheLoadWindowCanBeHiddenWhileItsStepsRun(unittest.TestCase):
         report({disabled: b.disabled, title: b.title});
         """)
         self.assertTrue(r["disabled"])
-        self.assertIn("A load is running (27B uncensored, NVFP4)", r["title"])
+        self.assertIn("A load is running (Qwen3.8 27B abliterated NVFP4 · edp1096)", r["title"])
 
     def test_a_failure_brings_the_window_back_with_the_focus_on_its_status(self):
         r = run(self, self.BODY + self.HIDE + r"""
@@ -2004,7 +2004,7 @@ class ALoadBringsBackWhatALaneLacks(unittest.TestCase):
         const s = laneJourneySteps('flash-local')[0];
         report({title: s.title, desc: s.desc});
         """)
-        self.assertEqual(r["title"], "Bring back what Flash FP4-Local lacks")
+        self.assertEqual(r["title"], "Bring back what Qwen3.8 Flash-Next FP4-Local lacks")
         self.assertIn("Fetches what its checkpoint lacks and copies its n-gram table again", r["desc"])
         self.assertNotIn("Verifies", r["desc"])
 
@@ -2136,7 +2136,7 @@ class EveryVersionOfALaneIsInSight(unittest.TestCase):
                 roles: c.opts.map(b => b.getAttribute('role')), label: c.pickBox.querySelector('.pick-label').textContent,
                 selects: c.root.querySelectorAll('select').length});
         """)
-        self.assertEqual(r["names"], ["Stock", "Uncensored", "FP8", "FP8 uncensored"])
+        self.assertEqual(r["names"], ["NVFP4 · RadixArk", "NVFP4 abliterated · edp1096", "FP8 · Qwen", "FP8 abliterated · edp1096"])
         self.assertEqual(r["label"], "Version (4)")
         self.assertEqual((r["group"], set(r["roles"])), ("radiogroup", {"radio"}))
         self.assertEqual(r["selects"], 0, "the buttons are the control: no select behind them")
@@ -2144,9 +2144,9 @@ class EveryVersionOfALaneIsInSight(unittest.TestCase):
         self.assertTrue(r["before"]["line"].endswith("Serving now."), r["before"]["line"])
         self.assertIsNone(r["before"]["load"], "the version that serves is not offered again")
         self.assertEqual((r["after"]["checked"], r["after"]["tabbable"], r["after"]["value"]), (["fp8"], ["fp8"], "fp8"))
-        self.assertEqual(r["after"]["line"], "27B FP8, Qwen official. Qwen's own weights: the most faithful, and heavier.")
-        self.assertEqual(r["after"]["load"], "Load 27B FP8, Qwen official")
-        self.assertEqual(r["loads"], ["Load flash 176B, NVFP4", "Load MiniMax-H3"])
+        self.assertEqual(r["after"]["line"], "Qwen3.8 27B FP8 · Qwen. Qwen's own weights: the most faithful, and heavier.")
+        self.assertEqual(r["after"]["load"], "Load Qwen3.8 27B FP8 · Qwen")
+        self.assertEqual(r["loads"], ["Load Qwen3.8 Flash-Next NVFP4 · RadixArk", "Load MiniMax-H3"])
         self.assertEqual((r["held"]["checked"], r["held"]["value"]), (["fp8"], "fp8"), "a click holds its choice")
 
     def test_the_arrow_keys_move_the_choice_and_the_focus(self):
@@ -2465,10 +2465,10 @@ class TheBoxItIs(unittest.TestCase):
         btn.click(); await __settle();
         report({label: btn.textContent, why: txt('s1-why'), title: txt('sh-title'), toast: toastText()});
         """ % self.MACHINE_64)
-        self.assertEqual(r["label"], "Load 27B stock")
+        self.assertEqual(r["label"], "Load Qwen3.8 27B NVFP4 · RadixArk")
         self.assertIn("the 27B answers it", r["why"])
         self.assertNotIn("flash", r["why"])
-        self.assertEqual(r["title"], "Load 27B stock, NVFP4")
+        self.assertEqual(r["title"], "Load Qwen3.8 27B NVFP4 · RadixArk")
         self.assertNotIn("128 GB", r["toast"])
 
     def test_the_versions_follow_a_machine_panel_that_comes_after_the_card(self):
@@ -2511,7 +2511,7 @@ class TheBoxItIs(unittest.TestCase):
         self.assertIn("FP8", r["before"][1], r)
         self.assertEqual(r["after"][0], ["stock"], r)
         self.assertNotIn("FP8", r["after"][1] + r["after"][2], r)
-        self.assertEqual(r["title"], "Load 27B stock, NVFP4", r)
+        self.assertEqual(r["title"], "Load Qwen3.8 27B NVFP4 · RadixArk", r)
         self.assertNotIn("128 GB", r["toast"], r)
 
     def test_decide_follows_a_machine_panel_that_comes_after_its_probe(self):
@@ -2526,8 +2526,8 @@ class TheBoxItIs(unittest.TestCase):
         feed({machine: %s}); await __settle();
         report({before, after: [label(), txt('s1-why')]});
         """ % self.MACHINE_64)
-        self.assertEqual(r["before"][0], "Load flash 176B", r)
-        self.assertEqual(r["after"][0], "Load 27B stock", r)
+        self.assertEqual(r["before"][0], "Load Qwen3.8 Flash-Next NVFP4 · RadixArk", r)
+        self.assertEqual(r["after"][0], "Load Qwen3.8 27B NVFP4 · RadixArk", r)
         self.assertIn("the 27B answers it", r["after"][1])
         self.assertNotIn("flash", r["after"][1])
 
@@ -2700,6 +2700,34 @@ class EachLaneSaysItsEngine(unittest.TestCase):
         self.assertEqual(r["pinned"], "SGLang 0.5.22 lmsysorg/sglang@e3a4f06001a2…")
         # an image of the operator's is not the pin: named by itself, never given the pin's version
         self.assertEqual(r["theirs"], "example.org/my-sglang@ffffffffffff…")
+
+    LIVE = r"""
+    const engines = {'qwen38-sglang.service': {engine: 'SGLang', version: '0.5.22', label: 'SGLang 0.5.22', pin: 'p', reports: '0.5.22'},
+                     'qwen38-flash.service': {engine: 'SGLang', version: 'nightly 53295c6', label: 'SGLang nightly 53295c6',
+                                              pin: 'q', reports: '0.0.0.dev1+g53295c697'}};
+    const U = JSON.parse(JSON.stringify(UNITS));
+    U.units['qwen38-sglang.service'] = {active: 'inactive', enabled: 'disabled'};
+    U.units['qwen38-flash.service'] = {active: 'active', enabled: 'enabled'};
+    feed({config: Object.assign({}, CONFIG, {engines}), units: U,
+          lifecycle: life({'qwen38-flash.service': eng('ready', {target: 'flash'})}),
+          engine_info: {served_target: 'flash', info: {version: %s}}});
+    report({sub: txt('serving-sub'), ver: txt('eng-ver'), card: LCARDS.get('qwen38-flash.service').right.textContent,
+            other: LCARDS.get('qwen38-sglang.service').right.textContent});
+    """
+
+    def test_the_lane_that_serves_says_the_version_its_engine_reports(self):
+        # decision 1178: the serving lane's version is read on its engine. The pinned image's: the table's words
+        # (the nightly's own string, "0.0.0.dev1+g53295c697", read "SGLang 0.0.0.dev1" in the engine facts)
+        r = run(self, self.LIVE % "'0.0.0.dev1+g53295c697'")
+        self.assertTrue(r["sub"].startswith("SGLang nightly 53295c6 · "), r["sub"])
+        self.assertEqual(r["ver"], "SGLang nightly 53295c6")
+        self.assertIn("EngineSGLang nightly 53295c6", r["card"])
+        # an image of the operator's: what its engine says, never the pin's version
+        r = run(self, self.LIVE % "'0.0.0.dev1+g043cfc4aa'")
+        self.assertTrue(r["sub"].startswith("SGLang 0.0.0.dev1+g043cfc4aa · "), r["sub"])
+        self.assertIn("EngineSGLang 0.0.0.dev1+g043cfc4aa", r["card"])
+        # a lane that does not serve keeps its pin's version
+        self.assertIn("EngineSGLang 0.5.22", r["other"])
 
     def test_without_the_table_nothing_is_said(self):
         # a cockpit of an older release beside this page (the table came with v1.45.0): no line reads "undefined"

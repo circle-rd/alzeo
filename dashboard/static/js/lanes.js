@@ -212,10 +212,13 @@ on('engine_info', d => {
     : i.speculative_num_draft_tokens != null ? `${i.speculative_algorithm}, ${i.speculative_num_draft_tokens} draft tokens` : i.speculative_algorithm);
   setText('eng-attn', i.prefill_attention_backend ? `${i.prefill_attention_backend} / ${i.decode_attention_backend}` : (i.attention_backend ?? 'n/a'));
   setText('eng-radix', i.mamba_radix_cache_strategy ?? 'n/a');
-  // which engine, named: SGLang gives a bare number, the Kolibri lane "vLLM 0.29.0" (the row read
-  // "SGLang vLLM 0.29.0" there: review, 2026-10-14)
+  // the version the serving engine reports, which engineLabel says for its lane (decision 1178)
+  F.liveEngine = d.served_target ? {unit: TARGET_UNIT(d.served_target), version: i.version ?? null} : null;
+  // which engine, named as everywhere else on the page: SGLang gives a bare number, the Kolibri lane "vLLM 0.29.0"
+  // (the row read "SGLang vLLM 0.29.0" there: review, 2026-10-14), the flash lane's nightly "0.0.0.dev1+g53295c697"
+  const named = F.liveEngine ? engineLabel(F.liveEngine.unit) : '';
   const ver = String(i.version ?? 'n/a').split('+')[0];
-  setText('eng-ver', /^\d/.test(ver) ? 'SGLang ' + ver : ver);
+  setText('eng-ver', named || (/^\d/.test(ver) ? 'SGLang ' + ver : ver));
 });
 on('containers', d => {
   const serving = Object.entries(d.containers || {}).find(([, c]) => c.image);

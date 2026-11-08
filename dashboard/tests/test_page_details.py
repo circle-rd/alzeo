@@ -103,7 +103,7 @@ class AProblemIsSaidOnceTheFormIsTouched(unittest.TestCase):
         self.assertIn("not serving", r["why"])
         self.assertFalse(r["after"], "once touched, the missing prompt is said")
         self.assertIn("Load MiniMax-H3", r["lane"])
-        self.assertIn("flash 176B", r["lane"], "and it says which lane holds the box")
+        self.assertIn("Qwen3.8 Flash-Next", r["lane"], "and it says which lane holds the box")
 
 
 class TheVideoShowsTheLanesRealProgress(unittest.TestCase):
@@ -209,8 +209,8 @@ class ANewLaneIsNotNamedAfterTheOldCheckpoint(unittest.TestCase):
         feed({lifecycle: life({'qwen38-sglang.service': eng('stopped'), 'qwen38-flash.service': eng('ready', {target: 'flash-uncensored'})})});
         report({label: laneLabel('qwen38-flash.service'), spine: txt('serving-name'), sel: LCARDS.get('qwen38-flash.service').target});
         """)
-        self.assertEqual(r["label"], "flash 176B uncensored")
-        self.assertIn("flash 176B uncensored", r["spine"])
+        self.assertEqual(r["label"], "Qwen3.8 Flash-Next abliterated NVFP4 · dealignai")
+        self.assertIn("Qwen3.8 Flash-Next abliterated NVFP4 · dealignai", r["spine"])
         self.assertEqual(r["sel"], "flash-uncensored")
 
 
@@ -272,7 +272,7 @@ class SwitchPhrasesNameTheLane(unittest.TestCase):
         """)
         self.assertEqual(len(set(r)), len(r), r)
         self.assertIn("27B", r[1])
-        self.assertIn("flash", r[5])
+        self.assertIn("Flash-Next abliterated", r[5])
         self.assertIn("MiniMax-H3", r[8])
         self.assertIn("Turbo", r[9])
 
@@ -818,7 +818,8 @@ class AVideoLaneIsNotNamedAfterItsOwnModel(unittest.TestCase):
         feed({lifecycle: life({'qwen38-video.service': eng('ready', {target: 'video'}), 'qwen38-image.service': eng('ready', {target: 'image'})})});
         report([laneLabel('qwen38-video.service'), laneLabel('qwen38-image.service')]);
         """)
-        self.assertEqual(r, ["MiniMax-H3", "Qwen-Image 2.1"])
+        # their official names (decision 1180): the model once, then who publishes it
+        self.assertEqual(r, ["MiniMax-H3 · MiniMax", "Qwen-Image 2.1 · Qwen"])
 
 
 class LoadingALaneIsOneJourney(unittest.TestCase):

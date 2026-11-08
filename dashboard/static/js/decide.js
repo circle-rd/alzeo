@@ -176,8 +176,8 @@ async function s1Probe(){
       const t = el('span', null, why); t.style.flex = '1'; t.style.minWidth = '240px';
       // a 64 GB box holds no flash lane: the lane it offers is the 27B, which answers it too (found in
       // review, 2026-10-23)
-      const [label, target] = laneFits(UFLASH) ? ['Load flash 176B', 'flash'] : ['Load 27B stock', 'stock'];
-      const b = el('button', 'btn primary sm', label); b.type = 'button'; b.addEventListener('click', () => askJourney(target));
+      const target = laneFits(UFLASH) ? 'flash' : 'stock';
+      const b = el('button', 'btn primary sm', `Load ${TARGET_NAME[target]}`); b.type = 'button'; b.addEventListener('click', () => askJourney(target));
       note.append(t, b);
     }
     badge('decide', d.available ? '' : 'off', '');
