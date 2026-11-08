@@ -1,0 +1,78 @@
+"""dashboard/engines.py names each lane's engine and its version everywhere in the cockpit (decision 1178): a
+version said there must be the one the box installs. Each entry's pin is read back in the lane's installer; a pin
+that moves without the table fails here."""
+import importlib.util
+import pathlib
+import re
+import unittest
+
+REPO = pathlib.Path(__file__).resolve().parents[2]
+DASH = REPO / "dashboard"
+
+
+def load(name):
+    spec = importlib.util.spec_from_file_location(f"{name}_under_test", DASH / f"{name}.py")
+    m = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m)
+    return m
+
+
+EN = load("engines")
+LC = load("lifecycle")
+
+
+def assigned(script, var):
+    """The value a script gives var (VAR="..." or VAR="${VAR:-...}"), or None."""
+    m = re.search(rf'(?m)^{var}="(?:\$\{{[A-Z0-9_]+:-)?([^"}}]+)', (REPO / script).read_text())
+    return m.group(1) if m else None
+
+
+class EachLaneHasItsEngine(unittest.TestCase):
+    def test_every_engine_unit_and_none_other(self):
+        self.assertEqual(set(EN.ENGINES), set(LC.ENGINE_UNITS))
+
+    def test_a_label_is_the_engine_and_its_version(self):
+        self.assertEqual(EN.label("qwen38-sglang.service"), "SGLang 0.5.22")
+        self.assertEqual(EN.label("qwen38-keepalive.service"), "")
+        table = EN.page_table()
+        self.assertEqual(table["qwen38-kolibri.service"]["label"], "vLLM 0.29.0 + Aleph Alpha plugin 1.0.0")
+        self.assertEqual(set(table), set(EN.ENGINES))
+
+
+class EachVersionIsTheOneInstalled(unittest.TestCase):
+    def pin(self, unit):
+        return EN.ENGINES[unit]["pin"]
+
+    def test_the_sglang_text_lanes(self):
+        self.assertEqual(self.pin("qwen38-sglang.service"), assigned("install.sh", "IMAGE"))
+        self.assertEqual(self.pin("qwen38-flash.service"), assigned("install.sh", "FLASH_IMAGE"))
+        text = (REPO / "install.sh").read_text()
+        # the image's own tag, written beside its digest
+        self.assertIn("lmsysorg/sglang:v" + EN.ENGINES["qwen38-sglang.service"]["version"], text)
+        self.assertIn("nightly-cu134-20261011-" + EN.ENGINES["qwen38-flash.service"]["version"].split()[-1], text)
+
+    def test_the_vllm_lanes(self):
+        local = assigned("install-flash-local.sh", "FLASH_LOCAL_IMAGE")
+        self.assertEqual(self.pin("qwen38-flash-local.service"), local)
+        self.assertIn('LOCAL_IMAGE="$FLASH_LOCAL_IMAGE"', (REPO / "install-ornith-122b.sh").read_text())
+        self.assertEqual(self.pin("qwen38-ornith-122b.service"), local)
+        self.assertEqual(self.pin("qwen38-kolibri.service"), assigned("install-kolibri.sh", "KOLIBRI_BASE_IMAGE"))
+        self.assertIn("Aleph Alpha plugin " + assigned("install-kolibri.sh", "KOLIBRI_PLUGIN_VERSION"),
+                      EN.ENGINES["qwen38-kolibri.service"]["version"])
+        for unit in ("qwen38-nemotron.service", "qwen38-nemotron-super.service"):
+            with self.subTest(unit=unit):
+                self.assertEqual(self.pin(unit), assigned("install-nemotron.sh", "NEMOTRON_BASE_IMAGE"))
+                v = EN.ENGINES[unit]["version"]
+                self.assertIn(assigned("install-nemotron.sh", "NEMOTRON_VLLM_LABEL").replace("-", " "), v)
+                self.assertIn("b12x " + assigned("install-nemotron.sh", "NEMOTRON_B12X_VERSION"), v)
+
+    def test_the_diffusion_lanes(self):
+        for unit, script in (("qwen38-image.service", "install-image.sh"), ("qwen38-video.service", "install-video.sh")):
+            with self.subTest(unit=unit):
+                wheel = assigned(script, "WHEEL")
+                self.assertEqual(EN.ENGINES[unit]["version"], wheel)
+                self.assertEqual(self.pin(unit), f"sglang[diffusion]=={wheel}")
+
+
+if __name__ == "__main__":
+    unittest.main()
