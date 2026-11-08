@@ -1,5 +1,48 @@
 # Changelog
 
+## v1.45.0 (2026-11-08): the cockpit names each lane's engine and each version by its official name
+
+**Each lane says its engine and its version.** The cockpit names the engine each lane runs, with its version, wherever
+the lane appears: first on the second line of the header's capsule ("SGLang 0.5.22 · idle, KV pool 3 %, up 2 h"), at
+the head of each bay's facts in Now, in an Engine row on each Lanes card, and in the Library's recipes, whose column
+is now named Engine, when a recipe runs the image its lane pins. The lane that serves says the version its engine
+reports: the pinned image reads as the versions below, and an image of yours is named by its own version, never by
+the pin's. The Lanes engine facts said "SGLang 0.0.0.dev1" for the flash lane's nightly: they now say "SGLang nightly
+53295c6". The versions, each read in the pinned image on the reference box: SGLang 0.5.22 (Qwen3.8 27B), SGLang
+nightly 53295c6 (Qwen3.8 Flash-Next), vLLM b12x build 8244d1c (Qwen3.8 Flash-Next FP4-Local and Ornith 1.5 122B),
+vLLM 0.29.0 + Aleph Alpha plugin 1.0.0 (Kolibri-1), vLLM nightly 77154ca6 + b12x 1.5.1 (Nemotron 3.5 Bolt and Super
+VL), SGLang Diffusion 0.5.21 (image and video). `dashboard/tests/test_engines.py` reads each pin back from its
+installer and fails when one moves without the table.
+
+**Each version has its official name.** The cockpit said "27B stock" and "flash 176B", names of our own. Each version
+is now named as its makers publish it, with its precision and who publishes the build, read off the repository its
+installer pins: Qwen3.8 27B NVFP4 · RadixArk, Qwen3.8 27B FP8 · Qwen, Qwen3.8 Flash-Next NVFP4 · RadixArk, Qwen3.8
+Flash-Next NVFP4 · NVIDIA, Qwen3.8 Flash-Next FP4-Local · NVIDIA, Kolibri-1 FP8 · Aleph Alpha, Nemotron 3.5 Super VL
+NVFP4 · NVIDIA, Ornith 1.5 122B NVFP4 · Ornith AI, Qwen-Image 2.1 · Qwen, MiniMax-H3 · MiniMax, and the others the
+same way. The builds with refusals removed are "abliterated", the word of their makers (Qwen3.8 27B abliterated NVFP4
+· edp1096), never "uncensored". The ids commands take (`stock`, `uncensored`, `flash`...) do not change.
+`dashboard/tests/test_target_names.py` reads each name back from the pinned repository and finds no old name in any
+text of the page: it fails on the page before.
+
+**The header's capsule fits its text.** On a MacBook it grew to its 560 px whatever it said, and left a gap before
+Change lane. It is now as wide as its text, up to the same 560 px. On a phone it still fills its row, and says the
+lane's family and its state ("Qwen3.8 27B, ready"): the whole name pushed the state out of it. A bay's title breaks
+before the version's precision and publisher, never right after its " · ". Each view was captured before and after
+at the size of two MacBooks (1512 x 982 and 1440 x 900) and three phones (375, 393 and 430 px wide), and looked at:
+no line runs off the screen, and the page reports no error.
+
+**An update keeps a file of yours that the release starts to track.** get.sh resets the clone to the release. A file
+of yours, untracked or ignored, at a path the release tracks (a note, an AGENTS.md an agent wrote, a file a later
+release adds) was said "kept in place", then written over by the reset. It is now copied aside first, under
+`~/.local/share/alzeo/kept-before-update-<date>/`, and the update says where. A copy that fails stops the update before
+anything is written over. `tests/test_get_sh.py` (case 3b) fails on the get.sh before.
+
+**The cockpit watches all of its own code.** It says when its code on disk changed under it, and engine_metrics.py,
+one of its modules, was not watched. A test reads the cockpit's imports and fails when one of its own modules is not.
+
+**What an update does.** The update runs the new get.sh. The cockpit restarts and serves the new page. Nothing else
+this release ships is read by an engine, the proxy or the Agent tab's opencode-web.
+
 ## v1.44.3 (2026-11-08): the local CI starts every job, and its pair tests take 16% less time
 
 **The local CI starts every job.** ci-local.sh runs the workflow's first six jobs side by side, each in a git worktree
