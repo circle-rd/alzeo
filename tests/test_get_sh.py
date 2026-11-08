@@ -125,6 +125,13 @@ def main() -> None:
             return {os.path.relpath(os.path.join(dp, f), os.path.join(root, os.listdir(root)[0])):
                     open(os.path.join(dp, f)).read() for dp, _, fs in os.walk(root) for f in fs} if os.path.isdir(root) else {}
 
+        def kept_in_place(out):
+            """The names under "Untracked files kept in place", up to the line that says where the clone is."""
+            if "Untracked files kept in place" not in out:
+                return []
+            listed = out.split("Untracked files kept in place", 1)[1].split("── At:", 1)[0]
+            return [ln.strip() for ln in listed.splitlines()[1:] if ln.startswith("     ")]
+
         def publish(path, text, msg):
             os.makedirs(os.path.dirname(os.path.join(pub, path)) or pub, exist_ok=True)
             with open(os.path.join(pub, path), "w") as f:
@@ -154,8 +161,7 @@ def main() -> None:
         assert open(os.path.join(work, "drafts")).read() == "the release's drafts file\n"
         assert kept_files() == {"drafts/idea.txt": "my idea\n"}, kept_files()
         # and the folder the reset removed is not said kept in place (code review of v1.45.0)
-        assert "drafts" not in r.stdout.split("Untracked files kept in place")[-1] or \
-            "Untracked files kept in place" not in r.stdout, r.stdout
+        assert not [n for n in kept_in_place(r.stdout) if n.startswith("drafts")], r.stdout
         shutil.rmtree(os.path.join(base, ".local/share/alzeo"))
 
         # 3e. A name out of ASCII: copied aside, and not said "kept in place" too (the two lists quoted it two ways)
@@ -165,7 +171,7 @@ def main() -> None:
         r = run_get(work)
         assert r.returncode == 0, f"the update failed: {r.stderr}"
         assert kept_files() == {"notes-\u00e9.md": "mine, accented\n"}, kept_files()
-        assert "Untracked files kept in place" not in r.stdout or "notes-" not in r.stdout.split("Untracked files kept in place")[-1], r.stdout
+        assert not [n for n in kept_in_place(r.stdout) if n.startswith("notes-")], r.stdout
         shutil.rmtree(os.path.join(base, ".local/share/alzeo"))
 
         # 3f. A name git quotes even with core.quotePath=false (a double quote in it): copied aside, and not said kept
@@ -176,8 +182,27 @@ def main() -> None:
         r = run_get(work)
         assert r.returncode == 0, f"the update failed: {r.stderr}"
         assert kept_files() == {'say "hi".md': "mine, quoted\n"}, kept_files()
-        assert "Untracked files kept in place" not in r.stdout or "say" not in r.stdout.split("Untracked files kept in place")[-1], r.stdout
+        assert not [n for n in kept_in_place(r.stdout) if "say" in n], r.stdout
         shutil.rmtree(os.path.join(base, ".local/share/alzeo"))
+
+        # 3g. A link of the user's where the release needs a folder: the link is what the reset replaces, kept; what
+        #     lies past it is not the clone's, and is neither copied nor counted (third review of v1.45.0)
+        outside = os.path.join(base, "elsewhere")
+        os.makedirs(outside)
+        with open(os.path.join(outside, "plan.md"), "w") as f:
+            f.write("not the clone's\n")
+        os.symlink(outside, os.path.join(work, "linked"))
+        publish("linked/plan.md", "the release's plan\n", "the release adds linked/")
+        r = run_get(work)
+        assert r.returncode == 0, f"the update failed: {r.stderr}"
+        root = os.path.join(base, ".local/share/alzeo")
+        copied = [os.path.relpath(os.path.join(dp, n), os.path.join(root, os.listdir(root)[0]))
+                  for dp, ds, fs in os.walk(root) for n in fs + [d for d in ds if os.path.islink(os.path.join(dp, d))]]
+        assert copied == ["linked"], copied
+        assert "── 1 file(s) of yours" in r.stdout, r.stdout
+        assert open(os.path.join(outside, "plan.md")).read() == "not the clone's\n"
+        assert open(os.path.join(work, "linked", "plan.md")).read() == "the release's plan\n"
+        shutil.rmtree(root)
 
         # 4. A modified tracked file DOES block, and says so.
         with open(os.path.join(work, "install.sh"), "a") as f:

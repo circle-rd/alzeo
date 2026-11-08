@@ -139,6 +139,22 @@ class OffMain(Fixture):
         self.assertEqual([k.read_text() for k in kept], ["my notes\n"], r.stdout)
 
 
+    def test_an_untracked_file_where_main_has_one_does_not_stop_the_switch(self):
+        # third review of v1.45.0: git's checkout refused an untracked file at a path main tracks, then its fallback
+        # (-b main) said a branch named main already exists, rc 128, the copy aside never said
+        git("checkout", "-q", "main", cwd=self.work)
+        (self.work / "plan.md").write_text("main's plan\n")
+        git("add", "plan.md", cwd=self.work); git("commit", "-qm", "local main tracks plan.md", cwd=self.work)
+        git("checkout", "-q", "HEAD~1", cwd=self.work)                 # detached, before plan.md
+        git("checkout", "-qb", "side", cwd=self.work)
+        (self.work / "plan.md").write_text("my plan\n")                 # untracked here, not ignored
+        r = self.run_get()
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertTrue(self.at_origin())
+        kept = sorted((self.base / "home" / ".local/share/alzeo").glob("kept-before-update-*/plan.md"))
+        self.assertEqual([k.read_text() for k in kept], ["my plan\n"], r.stdout)
+
+
 class TheAdviceKeepsUntrackedFiles(unittest.TestCase):
     def test_no_git_clean_in_the_advice(self):
         text = (REPO / "get.sh").read_text()

@@ -155,9 +155,11 @@ main() {
   # adds extra/notes.md, the user has a file named extra). Comparing whole lists missed the last two, and listed every
   # ignored file of the clone, a .venv-mirror/ of thousands (code review of v1.45.0). Names go NUL-separated (-z,
   # find -print0), so a name with a newline or a quote is found as it is.
-  NKEPT=0; KEPTLIST=""; KEPT=""; REPLACED=""
-  keep_aside() {
-    git --literal-pathspecs -C "$DIR" ls-files --error-unmatch -- "$1" >/dev/null 2>&1 && return 0   # the release's
+  NKEPT=0; KEPTLIST=""; KEPT=""; SAID_KEPT=""; REPLACED_DIRS=()
+  keep_aside() {   # $1: a path of the clone; $2 "untracked" when the caller read it among git's untracked files
+    if [ "${2:-}" != untracked ]; then
+      git --literal-pathspecs -C "$DIR" ls-files --error-unmatch -- "$1" >/dev/null 2>&1 && return 0   # the release's
+    fi
     case $'\n'"$KEPTLIST" in *$'\n'"$1"$'\n'*) return 0 ;; esac                                     # copied already
     # a folder of its own each time: two updates within one second shared one, the second's copies over the first's
     [ -n "$KEPT" ] || KEPT=$(mkdir -p "$HOME/.local/share/alzeo" &&
@@ -171,20 +173,34 @@ main() {
   }
   keep_aside_against() {   # each target the update will write: the paths it has and HEAD lacks
     local target p f d
+    local -a ups
     for target in "$@"; do
       while IFS= read -r -d '' p; do
+        # each folder above it first, from the top: a file or a link of the user's where the release needs a folder is
+        # what the reset replaces, and what lies past a link is not the clone's (code review of v1.45.0)
+        ups=(); d=$p
+        while [ "${d%/*}" != "$d" ]; do d=${d%/*}; ups=("$d" ${ups[@]+"${ups[@]}"}); done
+        for d in ${ups[@]+"${ups[@]}"}; do
+          if [ -L "$DIR/$d" ] || [ -f "$DIR/$d" ]; then keep_aside "$d"; continue 2; fi
+        done
         if [ -L "$DIR/$p" ] || [ -f "$DIR/$p" ]; then keep_aside "$p"
         elif [ -d "$DIR/$p" ]; then
-          REPLACED+="$p/"$'\n'
-          while IFS= read -r -d '' f; do keep_aside "$f"; done < <(cd "$DIR" && find "$p" \( -type f -o -type l \) -print0)
+          REPLACED_DIRS+=("$p/")
+          # the user's files in it, untracked or ignored, as git lists them: no tracked one, no git process each
+          while IFS= read -r -d '' f; do keep_aside "$f" untracked; done < <(
+            git --literal-pathspecs -C "$DIR" ls-files -z --others -- "$p")
         fi
-        d=$p
-        while [ "${d%/*}" != "$d" ]; do      # each folder above it, without a process per level
-          d=${d%/*}
-          if [ -L "$DIR/$d" ] || [ -f "$DIR/$d" ]; then keep_aside "$d"; fi
-        done
       done < <(git -C "$DIR" diff -z --name-only --no-renames --diff-filter=A HEAD "$target")
     done
+    say_kept
+  }
+  say_kept() {   # said once, as soon as the copies are made: a switch that fails after them still leaves this said
+    [ "$NKEPT" -gt 0 ] && [ -z "$SAID_KEPT" ] || return 0
+    SAID_KEPT=1
+    echo "── $NKEPT file(s) of yours where this release puts its own, copied aside first to:"
+    echo "     $KEPT"
+    printf '%s' "$KEPTLIST" | sed -n '1,5s/^/     /p'
+    [ "$NKEPT" -le 5 ] || echo "     ... and $((NKEPT - 5)) more, in that folder"
   }
   # Off main under FORCE_UPDATE, the switch comes after the stash, and a detached HEAD's
   # commit is put on a branch first. Switched first, a change that conflicted with main
@@ -201,7 +217,11 @@ main() {
     if git -C "$DIR" rev-parse -q --verify main >/dev/null; then keep_aside_against origin/main main
     else keep_aside_against origin/main; fi
     echo "── FORCE_UPDATE=1: switching from '$CUR' to main (your branch is kept)"
-    git -C "$DIR" checkout -q main 2>/dev/null || git -C "$DIR" checkout -qb main origin/main
+    # forced: the tracked changes are stashed above and every file of the user's in its way copied aside, and an
+    # untracked one at a path main tracks made the checkout fail, then its fallback (-b main: "a branch named main
+    # already exists"), rc 128 (code review of v1.45.0)
+    if git -C "$DIR" rev-parse -q --verify main >/dev/null; then git -C "$DIR" checkout -qf main
+    else git -C "$DIR" checkout -qfb main origin/main; fi
   fi
   AHEAD=$(git -C "$DIR" rev-list --count origin/main..HEAD 2>/dev/null || echo 1)
   if [ "$AHEAD" != "0" ]; then
@@ -216,13 +236,7 @@ main() {
     fi
   fi
   # Copied aside, then said: here when the clone is on main; off main, before the switch above.
-  [ "$CUR" = "main" ] && keep_aside_against origin/main
-  if [ "$NKEPT" -gt 0 ]; then
-    echo "── $NKEPT file(s) of yours where this release puts its own, copied aside first to:"
-    echo "     $KEPT"
-    printf '%s' "$KEPTLIST" | sed -n '1,5s/^/     /p'
-    [ "$NKEPT" -le 5 ] || echo "     ... and $((NKEPT - 5)) more, in that folder"
-  fi
+  [ "$CUR" != "main" ] || keep_aside_against origin/main
   # Untracked files are kept, but say so: neither those copied aside, which the release's own replace, nor a folder
   # the release puts a file in place of (drafts/, removed by the reset: code review of v1.45.0). A folder untracked
   # whole is named once (--directory): a .venv-mirror/ in the clone, as MIRROR.md makes one, listed its thousands of
@@ -232,9 +246,7 @@ main() {
   while IFS= read -r -d '' u; do
     case $'\n'"$KEPTLIST" in *$'\n'"$u"$'\n'*) continue ;; esac
     gone=0
-    while IFS= read -r r; do
-      [ -n "$r" ] && case "$u" in "$r"*) gone=1 ;; esac
-    done < <(printf '%s' "$REPLACED")
+    for r in ${REPLACED_DIRS[@]+"${REPLACED_DIRS[@]}"}; do case "$u" in "$r"*) gone=1; break ;; esac; done
     [ "$gone" = 0 ] || continue
     NUNTRACKED=$((NUNTRACKED + 1)); [ "$NUNTRACKED" -gt 5 ] || UNTRACKED+="     $u"$'\n'
   done < <(git -C "$DIR" ls-files -z --others --exclude-standard --directory)
