@@ -577,9 +577,10 @@ button.bay.soon:hover{border-color:rgba(120,150,255,.45)}
 .pick .opt{min-height:40px; padding:0 16px; border-radius:20px; border:0; background:transparent; color:var(--fg-2);
   font:600 var(--t-14) var(--f-ui); white-space:nowrap; cursor:pointer; transition:background .15s, color .15s; flex:1 1 auto}
 /* a row of versions that wraps no longer leaves its last choice alone on a second line: the choices of a row share
-   its width, and four stand two by two (2026-10-17 on a phone; the 27B's four, wrapped three and one at the 640 px of
-   the box on every larger screen, the same since 2026-11-08) */
-.pick:has(> .opt:nth-child(4)){display:grid; grid-template-columns:1fr 1fr; width:100%}
+   its width, four stand two by two where two fit (the 27B's four wrapped three and one at the 640 px of the box), and
+   one under the other where they do not: two columns of "Abliterated NVFP4 · edp1096" (224 px) ran 45 px off a 390 px
+   phone (the click storm of the CI, 2026-11-08) */
+.pick:has(> .opt:nth-child(4)){display:grid; grid-template-columns:repeat(auto-fit, minmax(min(100%, 240px), 1fr)); width:100%}
 .pick .opt:hover{color:var(--fg-1); background:rgba(255,255,255,.08)}
 .pick .opt[aria-checked="true"]{color:var(--brand-ink); background:#fff}
 /* the version that serves now carries a small green dot */

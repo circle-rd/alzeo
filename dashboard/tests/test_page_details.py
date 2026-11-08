@@ -292,6 +292,13 @@ class ThePageFitsEveryScreen(unittest.TestCase):
         self.assertIn(cols(4), self.rules(".wide4", "@media (min-width:3000px)")[0])
         self.assertIn('<div class="grid g2 wide4">', (pagejs.STATIC / "index.html").read_text(), "the Machine view's four panels")
 
+    def test_four_versions_stand_two_by_two_only_where_two_fit(self):
+        # the CI's click storm (2026-11-08): two fixed columns of "Abliterated NVFP4 · edp1096" (224 px) ran 45 px off
+        # a 390 px phone; the columns now come from the width, one under the other where two do not fit
+        (d,) = self.rules(".pick:has(> .opt:nth-child(4))")
+        self.assertIn("grid-template-columns:repeat(auto-fit,minmax(min(100%,240px),1fr))", d)
+        self.assertNotIn("1fr1fr", d)
+
     def test_a_views_head_is_its_name_with_its_sentence_beside_it(self):
         (h1,) = self.rules(".vhead h1")
         self.assertIn("font-size:var(--t-24)", h1)

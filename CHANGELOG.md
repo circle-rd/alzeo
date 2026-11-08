@@ -38,7 +38,8 @@ other view says its name in 24 px with its sentence beside it. The header's caps
 MacBook it grew to its 560 px whatever it said, and left a gap before Change lane. On a phone or a tablet held upright
 it still fills its row, and says the lane's family and its state ("Qwen3.8 27B, ready"): the whole name pushed the
 state out of it. A bay's title breaks before the version's precision and publisher, never right after its " · ", and
-the four versions of Qwen3.8 27B stand two by two instead of three and one. Each view was captured
+the four versions of Qwen3.8 27B stand two by two instead of three and one, and one under the other on a phone, where
+two columns of their names ran off the screen. Each view was captured
 before and after at ten sizes, from a 3440 px screen to a 375 px phone (2560 and 1920 px screens, two MacBooks at
 1512 x 982 and 1440 x 900, an iPad on its side and upright, phones of 430 and 393 px), and looked at: no line runs
 off the screen, and the page reports no error.
