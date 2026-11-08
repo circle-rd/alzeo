@@ -2746,6 +2746,14 @@ class EachLaneSaysItsEngine(unittest.TestCase):
         self.assertTrue(phone and "display:none" in phone[0].replace(" ", ""), phone)
         whole = [d for s, media, d in css_rules() if s == ".bay h3 .ver" and not media]
         self.assertTrue(whole and "white-space:nowrap" in whole[0].replace(" ", ""), whole)
+        # the second line's small grey type is its own: given to every span of the capsule, it shrank "NVFP4 ·
+        # RadixArk" on a MacBook (captures of 2026-11-08)
+        rules = css_rules()
+        self.assertFalse([s for s, _, _ in rules if s == ".serving .what span"])
+        self.assertTrue([s for s, _, _ in rules if s == ".serving .what > span"])
+        # and at 375 px "Qwen3.8 27B, ready" lacked some 10 px: the name a size down there
+        small = [d for s, media, d in rules if s == ".serving .what b" and any("max-width:380px" in m for m in media)]
+        self.assertTrue(small and "--t-13" in small[0], small)
 
     def test_without_the_table_nothing_is_said(self):
         # a cockpit of an older release beside this page (the table came with v1.45.0): no line reads "undefined"
