@@ -1,4 +1,4 @@
-# The Flash FP4-Local lane: NVIDIA's FP4 build of Qwen3.8-Flash-Next, on vLLM
+# The Qwen3.8 Flash-Next FP4-Local lane: NVIDIA's FP4 build of Qwen3.8-Flash-Next, on vLLM
 
 `nvidia/Qwen3.8-Flash-Next-FP4-Local` is NVIDIA's own build of Qwen3.8-Flash-Next for one local
 GPU, released on Hugging Face on 2026-10-05: its experts in NVFP4 and its other layers in MXFP8,
@@ -21,7 +21,7 @@ NVMe) on 2026-10-19 and 20, with the scripts and their raw output kept beside th
 
 ## The two flash lanes side by side
 
-| | flash (SGLang, RadixArk's export) | Flash FP4-Local (vLLM, NVIDIA's build) |
+| | flash (SGLang, RadixArk's export) | Qwen3.8 Flash-Next FP4-Local (vLLM, NVIDIA's build) |
 |---|---|---|
 | checkpoint on disk | 135.3 GB | 102.3 GB |
 | n-gram table | FP8, 47.7 GiB, written beside the home directory at every boot | NVFP4, 26.8 GiB, read in place from the checkpoint's files |

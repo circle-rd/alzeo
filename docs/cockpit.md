@@ -139,7 +139,7 @@ marks and scripts are all served by the box: the page fetches nothing from elsew
   is no panel for the API key, which is what you log in with; the diagnostics
   bundle masks it.
 - **Checkpoints.** Library lists every lane's checkpoints, the text lanes', the image
-  and video lanes', Kolibri's, the two Nemotron lanes' (their drafters too), Flash FP4-Local's and Ornith's, in the caches the lanes read (each lane's unit says
+  and video lanes', Kolibri's, the two Nemotron lanes' (their drafters too), Qwen3.8 Flash-Next FP4-Local's and Ornith's, in the caches the lanes read (each lane's unit says
   which), each revision pinned or stray, with what it holds on disk. A stray revision
   is one no pin, no installed unit and no ref names: the line says what deleting it
   frees, or why it stays (a ref names it, and a load by name reads it), and one button

@@ -69,7 +69,7 @@ GPU** with the reason:
 preflight: qwen38-flash.service cannot start: the GPU's addressing mode is None (nvidia-smi --query-gpu=addressing_mode) and the flash lane needs ATS: ...
 ```
 
-The Flash FP4-Local unit then asks whether what its engine reads is there
+The Qwen3.8 Flash-Next FP4-Local unit then asks whether what its engine reads is there
 (`flash-local-files.sh`, the head of its `ExecStart`, after the guard above): its checkpoint at the pinned revision,
 its index and every file the index names (a fetch cut short leaves the index first), and the copies of
 its n-gram table, each of its original's size, when the cache is on another disk

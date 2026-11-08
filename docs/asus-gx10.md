@@ -10,7 +10,7 @@ Dashboard, then the one command of the README. This page is what it measured, on
 |---|---|---|
 | One command on a new box, to the first token of Qwen3.8-27B | **97 min**, downloads included (v1.37.2) | |
 | Qwen3.8-27B, one stream (`bench.sh`, greedy median) | **62 to 64 tok/s** | 72 to 73.5 tok/s |
-| Flash FP4-Local 176B, one stream (`bench.sh`, greedy median) | **52 to 53 tok/s** | 53 tok/s, the same day |
+| Qwen3.8 Flash-Next FP4-Local (176B), one stream (`bench.sh`, greedy median) | **52 to 53 tok/s** | 53 tok/s, the same day |
 | GSM8K (1,314) / MMLU (500) / HumanEval (164), on the 27B | **97.7% / 88.2% / 95.7%** | 97.6% / 87.6% / 97.6%, the same morning |
 | One prompt of 400,025 tokens, a passphrase hidden in it | **returned exactly**, in 821 s | |
 | A coding agent alone (opencode on the 27B), from one paragraph | **a command-line app and 21 passing tests, in 117 s** | |
@@ -41,7 +41,7 @@ released within the day:
 
 They run the same software and the same memory (LPDDR5 at 8533 MT/s), at the same GPU clocks. They
 differ in kernel (7.0.0-1019, which the new box's own update installed, against 6.17.0-1032) and in
-firmware (BIOS 0106 against 0105). Their answers are the same. On Flash FP4-Local their speeds are
+firmware (BIOS 0106 against 0105). Their answers are the same. On Qwen3.8 Flash-Next FP4-Local their speeds are
 within 2%; on the 27B lane the new box decodes 13% slower, and its GPU copies memory 10% slower (212
 against 237 GB/s). Which of the two differences causes that was not isolated: it takes a reboot into
 the other kernel or firmware.

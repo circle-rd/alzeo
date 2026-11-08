@@ -8,7 +8,7 @@ one MTP layer. ModelOpt quantized it in mixed precision: the routed and shared e
 head in NVFP4, read as W4A16 (groups of 16), the attention and linear-attention projections in FP8,
 the MTP layer left as it was, and a KV cache in FP8. This lane serves it on the text lanes' port,
 behind the same proxy and key, as model `ornith-1.5-122b`, on vLLM with NVIDIA's b12x kernels in the
-Flash FP4-Local lane's image, which reads that mixed precision with the same kernels and the same
+Qwen3.8 Flash-Next FP4-Local lane's image, which reads that mixed precision with the same kernels and the same
 loader it serves FP4-Local with.
 
 Every number on this page was measured on the reference box (an ASUS Ascent GX10: GB10, 124 GiB of
@@ -103,7 +103,7 @@ on random tokens, as eight drafted tokens are paid for at every step and thrown 
 requests the two engines are within 6 % of each other. And SGLang holds half the window: at a window of a million its KV
 cache is 566,943 tokens, and it refused a prompt of 900,000. The lane serves vLLM, for the whole
 window, a speed that holds on any text, a boot four times shorter, more of the box's memory left free,
-and the image the Flash FP4-Local lane already pulls. SGLang's turns of an agent come back from its
+and the image the Qwen3.8 Flash-Next FP4-Local lane already pulls. SGLang's turns of an agent come back from its
 cache in 0.2 to 0.3 s, the one thing it does better here: an option of this vLLM build brought this
 lane's from 5.3 to 5.6 s down to 0.54 to 0.58 s on the second GX10 (v1.38.3, below), which narrows the
 gap without closing it.
@@ -288,13 +288,13 @@ lane.
 
 ## Installing, loading, removing
 
-A plain install puts its unit in, and its first Load from the cockpit pulls the Flash FP4-Local
+A plain install puts its unit in, and its first Load from the cockpit pulls the Qwen3.8 Flash-Next FP4-Local
 lane's image when that lane has not (18.2 GB on disk), fetches the checkpoint at its pinned revision
 (77.7 GB) and starts it: 5 min 31 s for the first boot on the second GX10, b12x tuning its kernels
 for this model, then 1 min 52 s there, its checkpoint on the internal disk, and 2 min 46 s to 3 min
 46 s on the reference box, whose cache is on a USB SSD. From a terminal: `./prepare-lane.sh ornith-122b` the first time, then
 `./switch-model.sh ornith-122b`. `--with-ornith-122b` installs it whole at install time and proves it,
 `--no-ornith-122b` leaves it out of that run, and `./install-ornith-122b.sh --uninstall` removes its unit,
-its chat template, its opencode and pi providers, its caches, its image's pin tag and, when the Flash FP4-Local lane is not
-installed, the io_uring filter the two lanes share. The image (which the Flash FP4-Local lane's own tag
+its chat template, its opencode and pi providers, its caches, its image's pin tag and, when the Qwen3.8 Flash-Next FP4-Local lane is not
+installed, the io_uring filter the two lanes share. The image (which the Qwen3.8 Flash-Next FP4-Local lane's own tag
 keeps, when that lane is installed) and the checkpoint stay, and it prints how to delete them.

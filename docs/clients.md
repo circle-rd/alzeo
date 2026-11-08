@@ -95,7 +95,7 @@ A client of a listed key never names the engine's request id (proxy v6.51): its
 its body. Bodies are JSON in UTF-8: another encoding gets a 415.
 
 Served model names: `qwen3.8-27b` (27B lane, both context modes),
-`qwen3.8-flash-next` (flash lane), `qwen3.8-flash-next-fp4` (Flash FP4-Local lane),
+`qwen3.8-flash-next` (flash lane), `qwen3.8-flash-next-fp4` (Qwen3.8 Flash-Next FP4-Local lane),
 `kolibri-1` (Kolibri lane), `nemotron-3.5-bolt` (Nemotron lane), `nemotron-3.5-super-vl`
 (Nemotron Super lane) and `ornith-1.5-122b` (Ornith lane). Send the name, not the checkpoint path. A client set up for one lane
 keeps working on another: SGLang answers any name, and on the vLLM lanes, whose vLLM
@@ -109,7 +109,7 @@ its own (`low`, `medium`, `high`, which its template defaults to, and `none`, in
 `chat_template_kwargs.reasoning_effort` or the top-level `reasoning_effort`), and it
 has no vision. `/v1/systemone` needs one of the SGLang Qwen lanes and says so there.
 
-The Flash FP4-Local lane (vLLM, [docs/flash-local-lane.md](flash-local-lane.md)) serves the flash
+The Qwen3.8 Flash-Next FP4-Local lane (vLLM, [docs/flash-local-lane.md](flash-local-lane.md)) serves the flash
 model with the flash lane's chat template, so a client sees the Qwen levels below, `lean`, `low`,
 `medium` and `xhigh`, with one difference: a request that names no level gets `xhigh`, its model
 card's default. `none` turns the reasoning off there too (the proxy says it in the template's words,
@@ -195,7 +195,7 @@ below (`0` turns a ceiling off).
   its pool, its window and the proxy's ceiling:
   `CLAUDE_CODE_MAX_CONTEXT_TOKENS` is opencode's context plus 23,000, so Claude
   Code's longest prompt is opencode's context, and `max_tokens` is opencode's
-  answer budget (228,000 and 32,000 on Flash FP4-Local, 578,000 and 185,000 on
+  answer budget (228,000 and 32,000 on Qwen3.8 Flash-Next FP4-Local, 578,000 and 185,000 on
   the 27B in its 1M mode). opencode may reach one worst step past its context,
   and that step is the margin left for what Claude Code adds to a prompt and
   only estimates. A lane opencode has no limits for gets 205,000 and 32,000,

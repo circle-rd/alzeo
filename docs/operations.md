@@ -149,7 +149,7 @@ from the cockpit; `--all-weights` builds them all on that run and proves each, t
 stopped meanwhile and proved again after. To keep a box as it is,
 say so on every run, as a `--no-<lane>` counts for the run that passes it only: `./install.sh --no-flash --no-image --no-video`
 (or `--no-27b` on a flash box). A lane already installed is updated and not proved again.
-On a box that boots a side lane (images, video, Kolibri, a Nemotron lane, Flash FP4-Local, Ornith), a run
+On a box that boots a side lane (images, video, Kolibri, a Nemotron lane, Qwen3.8 Flash-Next FP4-Local, Ornith), a run
 brings up to date the text lane the box served last; left out by its flag, or not prepared, that lane gets its units only, at
 the release's pins, none of its downloads, and the box keeps its port, cache and binds, while the
 other text lane follows its own rule (since v1.37.7). Its way back is a Load from the cockpit;
