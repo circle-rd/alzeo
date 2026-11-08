@@ -773,7 +773,7 @@ class TheWholeScripts(unittest.TestCase):
                 ((), {"MODEL_CHOICE": "fp8"}, "MODEL_CHOICE=fp8 (Qwen's FP8 weights, 30.9 GB) leaves the 27B's KV pool too little"),
                 ((), {"CONTEXT_MODE": "1m"}, "CONTEXT_MODE=1m needs a 128 GB DGX Spark"),
                 (("--with-video",), {}, "The video (MiniMax-H3) lane needs a 128 GB DGX Spark, and this box is a 64 GB one. Drop --with-video."),
-                (("--with-flash-local",), {}, "The Flash FP4-Local lane needs a 128 GB DGX Spark")):
+                (("--with-flash-local",), {}, "The Qwen3.8 Flash-Next FP4-Local lane needs a 128 GB DGX Spark")):
             with self.subTest(args or env):
                 box = box_for_step_1(docker_err="", docker_rc=0, member=True, in_session=True)
                 copy = pathlib.Path(wall.walled(at=GRANT_LINE, after=True))

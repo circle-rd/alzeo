@@ -297,7 +297,7 @@ pin_tag() {   # $1 lane, $2 image: a digest reference present on this box gets i
 }
 # A lane's own local tags, and only its own: qwen38-pinned:<lane>-<12 hex>. A glob on the lane's
 # name and a dash also takes the tags of every lane whose name starts with it: the flash lane's
-# install would have untagged the Flash FP4-Local lane's image, whose tag starts with flash-
+# install would have untagged the Qwen3.8 Flash-Next FP4-Local lane's image, whose tag starts with flash-
 # (found in review, 2026-10-19).
 pin_tags_of() {   # $1 lane: its tags, one per line, each with its image id
   docker images --no-trunc --format '{{.Repository}}:{{.Tag}} {{.ID}}' qwen38-pinned 2>/dev/null \
@@ -310,7 +310,7 @@ pin_tags_of() {   # $1 lane: its tags, one per line, each with its image id
 unpin_stale() {   # $1 lane, $2 the image the lane is pinned to now
   local cur tag id
   cur="$(docker image inspect "$2" --format '{{.Id}}' 2>/dev/null)" || return 0
-  # the lane's own tags only: flash- is how the Flash FP4-Local lane's tags begin too
+  # the lane's own tags only: flash- is how the Qwen3.8 Flash-Next FP4-Local lane's tags begin too
   pin_tags_of "$1" \
     | while read -r tag id; do
         if [ "$id" = "$cur" ] || [ -n "$(docker ps -aq --filter "ancestor=$id" 2>/dev/null)" ]; then

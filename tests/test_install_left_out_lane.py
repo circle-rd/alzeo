@@ -278,7 +278,7 @@ class ItsEndSaysSo(unittest.TestCase):
         out = self.ending("flash")
         self.assertIn("STEP Done: the flash lane is left out (--no-flash), so it got its units only, none of its downloads", out)
         self.assertNotIn("this box is up to date", out)   # the side lanes' own NOTEs can say otherwise
-        self.assertIn("the Flash FP4-Local lane stays this box's serving lane", out)
+        self.assertIn("the Qwen3.8 Flash-Next FP4-Local lane stays this box's serving lane", out)
         self.assertIn("back to it: Load it from the cockpit's Lanes view, which fetches what it lacks", out)
         self.assertIn("./install.sh --with-flash prepares it whole instead: that run fetches it all at once", out)
         self.assertNotIn("every update", out)     # a --no-<lane> no longer outlives its run
@@ -421,7 +421,7 @@ class TheRunOfALaneLeftOutToItsEnd(unittest.TestCase):
                              f"3/10 The GPU from a container: not asked, as the flash lane is {why}",
                              f"4/10 The Flash-Next checkpoint: not fetched, as the flash lane is {why} (its next Load fetches what it lacks)",
                              f"Done: the flash lane is {why}, so it got its units only, none of its downloads",
-                             "the Flash FP4-Local lane stays this box's serving lane",
+                             "the Qwen3.8 Flash-Next FP4-Local lane stays this box's serving lane",
                              "back to it: Load it from the cockpit's Lanes view, which fetches what it lacks",
                              "./install.sh --with-flash prepares it whole instead: that run fetches it all at once",
                              "the 27B lane got its units: its first Load fetches its image and weights"):

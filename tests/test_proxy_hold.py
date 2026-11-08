@@ -774,7 +774,7 @@ class WhereItIsSwitchedOn(unittest.TestCase):
     def test_the_installed_proxy_names_every_text_lane(self):
         """In a unit file, an unquoted value with a space is two assignments. Every lane
         that serves text behind this proxy is named: the 27B, the flash, Kolibri, the two Nemotron lanes and
-        the Flash FP4-Local lane."""
+        the Qwen3.8 Flash-Next FP4-Local lane."""
         tpl = (HERE.parents[1] / "qwen38-keepalive.service.template").read_text()
         self.assertIn(f'Environment="PROXY_HOLD_UNITS={UNITS} qwen38-kolibri.service qwen38-nemotron.service '
                       f'qwen38-nemotron-super.service qwen38-flash-local.service qwen38-ornith-122b.service"\n', tpl)

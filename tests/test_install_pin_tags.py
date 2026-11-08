@@ -75,7 +75,7 @@ class RetiredPinsAreUntagged(unittest.TestCase):
         self.assertEqual(removed, [])
 
     def test_a_lane_whose_name_starts_with_this_ones_keeps_its_tag(self):
-        # the flash lane's pins move; the Flash FP4-Local lane's tag begins with flash- too, and
+        # the flash lane's pins move; the Qwen3.8 Flash-Next FP4-Local lane's tag begins with flash- too, and
         # a glob on "flash-" untagged it, its 18 GB image then deleted by the next prune
         out, removed = run([(f"qwen38-pinned:{FL}", "sha256:NEW"), (f"qwen38-pinned:{FLL}", "sha256:FLL"),
                             ("qwen38-pinned:flash-old", "sha256:ODD")], lane="flash")

@@ -473,7 +473,7 @@ if [ "$CHOICE" = "nemotron" ] || [ "$CHOICE" = "nemotron-super" ]; then
   exit 0
 fi
 
-# ── The Flash FP4-Local lane: NVIDIA's FP4 build of the flash model, on vLLM ─────────
+# ── The Qwen3.8 Flash-Next FP4-Local lane: NVIDIA's FP4 build of the flash model, on vLLM ─────────
 # A text lane for the proxy, served by vLLM with b12x like the Nemotron lanes, under the same
 # contract: verify the checkpoint (the first switch fetches it), put the unit for it in place, make
 # it the one unit enabled at boot, never start or stop anything, print the exact commands. The unit
@@ -487,7 +487,7 @@ FLASH_LOCAL_UNIT_NAME="qwen38-flash-local.service"
 # as the other lanes' units are.
 FLL_STAGE="$CONFIG_DIR/qwen38-flash-local.service.switch-stage"
 if [ "$CHOICE" = "flash-local" ]; then
-  [ -f "$FLASH_LOCAL_UNIT" ] || die "the Flash FP4-Local lane is not installed on this box (no $FLASH_LOCAL_UNIT). Install it once: ./install.sh --with-flash-local (about 121 GB)"
+  [ -f "$FLASH_LOCAL_UNIT" ] || die "the Qwen3.8 Flash-Next FP4-Local lane is not installed on this box (no $FLASH_LOCAL_UNIT). Install it once: ./install.sh --with-flash-local (about 121 GB)"
   # The checkpoint, its pinned revision, the image and the size, from the lane's installer, the one
   # place they are declared.
   eval "$(grep -E '^FLASH_LOCAL_(REPO|REV|IMAGE|GB)=' "$REPO_DIR/install-flash-local.sh" || true)"
@@ -496,7 +496,7 @@ if [ "$CHOICE" = "flash-local" ]; then
   done
   unset _v
   docker image inspect "$FLASH_LOCAL_IMAGE" >/dev/null 2>&1 \
-    || die "the Flash FP4-Local lane's image (${FLASH_LOCAL_IMAGE:0:40}...) is missing: ./prepare-lane.sh flash-local pulls it (no sudo; its first Load from the cockpit runs it), then switch again"
+    || die "the Qwen3.8 Flash-Next FP4-Local lane's image (${FLASH_LOCAL_IMAGE:0:40}...) is missing: ./prepare-lane.sh flash-local pulls it (no sudo; its first Load from the cockpit runs it), then switch again"
   FLL_HF="$(unit_hf_cache "$FLASH_LOCAL_UNIT")"
   FLL_HF="${FLL_HF:-$HF_CACHE}"
   # the room its table's copies need on their disk, before the download (install-flash-local.sh)
@@ -607,7 +607,7 @@ if [ "$CHOICE" = "flash-local" ]; then
 fi
 
 # ── The Ornith 1.5 122B lane: Ornith AI's mixture of experts, on vLLM ─────────────────────
-# A text lane for the proxy, served by vLLM with b12x in the Flash FP4-Local lane's image, under the
+# A text lane for the proxy, served by vLLM with b12x in the Qwen3.8 Flash-Next FP4-Local lane's image, under the
 # same contract: verify the checkpoint (the first switch fetches it), put the unit for it in place,
 # make it the one unit enabled at boot, never start or stop anything, print the exact commands. The
 # unit is rendered by the lane's installer (install-ornith-122b.sh --stage, no sudo): one renderer,
@@ -620,7 +620,7 @@ ORN_STAGE="$CONFIG_DIR/qwen38-ornith-122b.service.switch-stage"
 if [ "$CHOICE" = "ornith-122b" ]; then
   [ -f "$ORNITH_122B_UNIT" ] || die "the Ornith 1.5 122B lane is not installed on this box (no $ORNITH_122B_UNIT). Install it once: ./install.sh --with-ornith-122b (about 96 GB)"
   # The checkpoint, its pinned revision and the size, from the lane's installer, and the image from
-  # the Flash FP4-Local lane's, the one place each is declared.
+  # the Qwen3.8 Flash-Next FP4-Local lane's, the one place each is declared.
   eval "$(grep -E '^ORNITH_122B_(REPO|REV|GB)=' "$REPO_DIR/install-ornith-122b.sh" || true)"
   eval "$(grep -E '^FLASH_LOCAL_IMAGE=' "$REPO_DIR/install-flash-local.sh" || true)"
   for _v in ORNITH_122B_REPO ORNITH_122B_REV ORNITH_122B_GB FLASH_LOCAL_IMAGE; do
@@ -628,7 +628,7 @@ if [ "$CHOICE" = "ornith-122b" ]; then
   done
   unset _v
   docker image inspect "$FLASH_LOCAL_IMAGE" >/dev/null 2>&1 \
-    || die "the Ornith 1.5 122B lane's image (${FLASH_LOCAL_IMAGE:0:40}..., the Flash FP4-Local lane's) is missing: ./prepare-lane.sh ornith-122b pulls it (no sudo; its first Load from the cockpit runs it), then switch again"
+    || die "the Ornith 1.5 122B lane's image (${FLASH_LOCAL_IMAGE:0:40}..., the Qwen3.8 Flash-Next FP4-Local lane's) is missing: ./prepare-lane.sh ornith-122b pulls it (no sudo; its first Load from the cockpit runs it), then switch again"
   ORN_HF="$(unit_hf_cache "$ORNITH_122B_UNIT")"
   ORN_HF="${ORN_HF:-$HF_CACHE}"
   printf '\n\033[1;36m── Verifying %s @ %s in the cache (resumable)\033[0m\n' "$ORNITH_122B_REPO" "${ORNITH_122B_REV:0:12}"
@@ -1333,7 +1333,7 @@ if [ -f "$NEMOTRON_SUPER_UNIT" ] && systemctl is-enabled --quiet "$NEMOTRON_SUPE
   echo "disabling $NEMOTRON_SUPER_UNIT_NAME at boot (unit file kept for switching back)"
   sudo systemctl disable "$NEMOTRON_SUPER_UNIT_NAME"
 fi
-# The Flash FP4-Local lane is the eighth: the same reason.
+# The Qwen3.8 Flash-Next FP4-Local lane is the eighth: the same reason.
 if [ -f "$FLASH_LOCAL_UNIT" ] && systemctl is-enabled --quiet "$FLASH_LOCAL_UNIT_NAME" 2>/dev/null; then
   echo "disabling $FLASH_LOCAL_UNIT_NAME at boot (unit file kept for switching back)"
   sudo systemctl disable "$FLASH_LOCAL_UNIT_NAME"

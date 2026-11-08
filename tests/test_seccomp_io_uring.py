@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """seccomp-io-uring.json is Docker's own default seccomp profile, unchanged, with one rule more.
 
-The Flash FP4-Local lane's engine reads its n-gram table over io_uring, whose three system calls
+The Qwen3.8 Flash-Next FP4-Local lane's engine reads its n-gram table over io_uring, whose three system calls
 Docker's default profile refuses, and its model card turns seccomp off for it. The lane's unit passes
 this file instead (qwen38-flash-local.service.template says why): Docker 29.6.2's default profile,
 moby's profiles/seccomp/default.json at moby 3d80467, a git blob of 13,470 bytes, with a rule that

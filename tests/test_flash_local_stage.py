@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""install-flash-local.sh --stage: the unit a switch to the Flash FP4-Local lane puts in place.
+"""install-flash-local.sh --stage: the unit a switch to the Qwen3.8 Flash-Next FP4-Local lane puts in place.
 
 switch-model.sh flash-local fetches the checkpoint, then has the lane's installer write its unit
 to a fixed staging path with no sudo (the one renderer, so a switch puts in the unit an install

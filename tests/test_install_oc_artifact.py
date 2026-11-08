@@ -262,7 +262,7 @@ class ABoxBootingNemotronSuper(unittest.TestCase):
 
 
 class ABoxBootingFlashLocal(unittest.TestCase):
-    """The Flash FP4-Local lane, its own provider (its own served model): serving at boot it is
+    """The Qwen3.8 Flash-Next FP4-Local lane, its own provider (its own served model): serving at boot it is
     opencode's default, its compaction sized from its window; installed beside another lane it is
     offered; with no unit, absent. Its levels are the flash lane's Qwen levels, xhigh first: its
     template's default (Hasan's choice, 2026-10-19)."""

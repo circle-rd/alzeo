@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Install the Flash FP4-Local lane: NVIDIA's own build of Qwen3.8-Flash-Next for a local GPU
+# Install the Qwen3.8 Flash-Next FP4-Local lane: NVIDIA's own build of Qwen3.8-Flash-Next for a local GPU
 # (nvidia/Qwen3.8-Flash-Next-FP4-Local: its experts in NVFP4 and its other layers in MXFP8, by
 # NVIDIA's quantization-aware distillation, its n-gram embedding table in NVFP4 too), served by
 # the community b12x vLLM image its model card names for a DGX Spark, on the text lanes' port
@@ -80,7 +80,7 @@ CONFIG_DIR="$HOME/.config/qwen38"
 . "$HERE/lanes.sh"
 # A 64 GB DGX Spark cannot hold this lane (boxmem.py): refused there before anything is fetched,
 # and --uninstall still takes away what an older release put there (found in review, 2026-10-23).
-[ "$ACTION" = uninstall ] || [ "$(box_mem_class)" != 64 ] || lane_fits flash-local || die "The Flash FP4-Local lane needs a 128 GB DGX Spark, and this box is a 64 GB one."
+[ "$ACTION" = uninstall ] || [ "$(box_mem_class)" != 64 ] || lane_fits flash-local || die "The Qwen3.8 Flash-Next FP4-Local lane needs a 128 GB DGX Spark, and this box is a 64 GB one."
 # A terminal opened before the account joined the docker group: the run goes on with it (lanes.sh).
 docker_session bash "$HERE/${BASH_SOURCE[0]##*/}" "$@"
 # what the vLLM lanes' installers share: the engine's cache and port, the uninstall, the service,
@@ -117,7 +117,7 @@ IMAGE_GB=28
 vlane_engine_env "${FLASH_LOCAL_PORT:-}"
 
 if [ "$ACTION" = uninstall ]; then
-  step "Removing the Flash FP4-Local lane"
+  step "Removing the Qwen3.8 Flash-Next FP4-Local lane"
   # The folders the copies of the n-gram table can be in, read before the unit goes: the one the unit
   # mounts them from, the one chosen (FLASH_LOCAL_PLE_DIR, kept) and the default one. In each, the
   # copies ple-table.py lists as its own go, and nothing else (Hasan's choice, 2026-10-20: they go with
@@ -283,7 +283,7 @@ if [ "$MODE" = units ]; then
   lane_table mounts
   vlane_template_if_cached "$TEMPLATE" "${TEMPLATE_FIXES[@]}"
   install_service
-  step "Done: the Flash FP4-Local lane is installed; its first Load prepares it"
+  step "Done: the Qwen3.8 Flash-Next FP4-Local lane is installed; its first Load prepares it"
   echo "  the cockpit: Load on Flash FP4-Local (NVIDIA) in the Lanes view pulls its image (about 18 GB, 10 to"
   echo "               download), fetches its checkpoint (about $WEIGHTS_GB GB), then starts it"
   echo "  a terminal : ./install-flash-local.sh --prepare, then ./switch-model.sh flash-local and the commands it prints"
@@ -304,7 +304,7 @@ pin_tag flash-local "$FLASH_LOCAL_IMAGE"
 unpin_stale flash-local "$FLASH_LOCAL_IMAGE" || true
 
 if [ "$MODE" = prepare ]; then
-  step "Done: the Flash FP4-Local lane's image is ready; its Load fetches the checkpoint and starts it"
+  step "Done: the Qwen3.8 Flash-Next FP4-Local lane's image is ready; its Load fetches the checkpoint and starts it"
   exit 0
 fi
 
@@ -323,6 +323,6 @@ VLANE_SERVED=qwen3.8-flash-next-fp4; VLANE_KWARGS='{"enable_thinking":false}'
 VLANE_PARSERS="the qwen3_xml parser is"; VLANE_BOOT="about 6 min, 17 at its first boot"; VLANE_WAIT_MIN=40
 vlane_prove
 
-step "Done: the Flash FP4-Local lane is installed and proved it serves on $ENGINE_BIND:$PORT"
+step "Done: the Qwen3.8 Flash-Next FP4-Local lane is installed and proved it serves on $ENGINE_BIND:$PORT"
 echo "  switch to it : Load on Flash FP4-Local (NVIDIA) in the cockpit, or ./switch-model.sh flash-local"
 echo "  clients      : the proxy on :30001 with the box's key, model qwen3.8-flash-next-fp4 (OpenAI and Anthropic APIs)"

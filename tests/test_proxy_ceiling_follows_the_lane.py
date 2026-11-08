@@ -51,7 +51,7 @@ def fit_module():
 CASES = [  # (PROMPT_CEILING_TOKENS, FLASH_PROMPT_CEILING_TOKENS, served, expected)
     (0, 250000, ("qwen3.8-27b",), 0),
     (0, 250000, ("qwen3.8-flash-next",), 250000),
-    (0, 250000, ("qwen3.8-flash-next-fp4",), 250000),   # the Flash FP4-Local lane: the flash window
+    (0, 250000, ("qwen3.8-flash-next-fp4",), 250000),   # the Qwen3.8 Flash-Next FP4-Local lane: the flash window
     (0, 250000, (), 250000),                      # unknown: the tighter, retryable mistake
     (100000, 250000, ("qwen3.8-flash-next",), 100000),
     (100000, 250000, ("qwen3.8-27b",), 100000),
@@ -91,7 +91,7 @@ class TheFitToolAndTheCockpitAgree(unittest.TestCase):
         cockpit = (REPO / "dashboard/cockpit.py").read_text()
         block = cockpit[cockpit.index("def collect_engine_info():"):cockpit.index("CANARY: dict =")]
         # one reading of it for the SGLang lanes' panel and the vLLM lanes' (proxy_prompt_ceiling,
-        # since the Flash FP4-Local lane, which the proxy holds to the flash lane's ceiling)
+        # since the Qwen3.8 Flash-Next FP4-Local lane, which the proxy holds to the flash lane's ceiling)
         self.assertIn('proxy_prompt_ceiling(slim.get("served_model_name"))', block)
         helper = cockpit[cockpit.index("def proxy_prompt_ceiling(served)"):]
         helper = helper[:helper.index("\n\n\n")]

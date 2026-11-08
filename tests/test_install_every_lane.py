@@ -403,7 +403,7 @@ class ABoxBootingNemotronSuper(unittest.TestCase):
 
 
 class ABoxBootingFlashLocal(unittest.TestCase):
-    """The Flash FP4-Local lane keeps the same promise, on its own unit."""
+    """The Qwen3.8 Flash-Next FP4-Local lane keeps the same promise, on its own unit."""
 
     def resolve(self, text_lane, env=None):
         home = tmp("lane-flash-local-home-")
@@ -419,7 +419,7 @@ class ABoxBootingFlashLocal(unittest.TestCase):
 
     def test_it_stays_the_boot_lane_and_the_flash_before_it_is_brought_up_to_date(self):
         out = self.resolve("qwen38-flash.service")
-        self.assertIn("The Flash FP4-Local lane is this box's boot lane", out)
+        self.assertIn("The Qwen3.8 Flash-Next FP4-Local lane is this box's boot lane", out)
         self.assertNotIn("The Nemotron Super lane is this box's boot lane", out)
         self.assertIn("INSTALLED=flash", out)
 
@@ -428,8 +428,8 @@ class ABoxBootingFlashLocal(unittest.TestCase):
 
     def test_an_explicit_target_takes_the_boot_back(self):
         out = self.resolve("qwen38-flash.service", env={"MODEL_CHOICE": "flash"})
-        self.assertIn("MODEL_CHOICE=flash given on a box booting the Flash FP4-Local lane", out)
-        self.assertNotIn("The Flash FP4-Local lane is this box's boot lane", out)
+        self.assertIn("MODEL_CHOICE=flash given on a box booting the Qwen3.8 Flash-Next FP4-Local lane", out)
+        self.assertNotIn("The Qwen3.8 Flash-Next FP4-Local lane is this box's boot lane", out)
 
     def test_the_run_that_takes_the_boot_back_disables_it(self):
         self.assertEqual(vllm_lane_disabled(self, "flash-local", "", 0),
@@ -456,7 +456,7 @@ class ABoxBootingOrnith(unittest.TestCase):
     def test_it_stays_the_boot_lane_and_the_flash_before_it_is_brought_up_to_date(self):
         out = self.resolve("qwen38-flash.service")
         self.assertIn("The Ornith 1.5 122B lane is this box's boot lane", out)
-        self.assertNotIn("The Flash FP4-Local lane is this box's boot lane", out)
+        self.assertNotIn("The Qwen3.8 Flash-Next FP4-Local lane is this box's boot lane", out)
         self.assertIn("INSTALLED=flash", out)
 
     def test_a_27b_before_it_stays_the_27b(self):
@@ -1001,7 +1001,7 @@ class TheOtherLanesAndTheirProofs(unittest.TestCase):
         self.assertFalse([c for c in calls if c.startswith("install-ornith-122b.sh")], calls)
 
     def test_the_ornith_lane_is_begun_by_its_own_checkpoint_not_by_the_image_it_shares(self):
-        # the Flash FP4-Local lane loaded: the image the two run is here, Ornith's checkpoint is not;
+        # the Qwen3.8 Flash-Next FP4-Local lane loaded: the image the two run is here, Ornith's checkpoint is not;
         # read by the image alone, the next update would have fetched 78 GB nobody asked for (the
         # Nemotron lanes' lesson, 2026-10-16)
         units = ("qwen38-flash-local.service", "qwen38-ornith-122b.service")
@@ -1026,7 +1026,7 @@ class TheOtherLanesAndTheirProofs(unittest.TestCase):
     def test_a_failed_flash_local_install_is_said_and_the_rest_goes_on(self):
         rc, out, calls = self.end(want_flocal=1, flocal_rc=1, all_weights=1)
         self.assertEqual(rc, 0, out)
-        self.assertIn("NOTE: the Flash FP4-Local lane did not install", out)
+        self.assertIn("NOTE: the Qwen3.8 Flash-Next FP4-Local lane did not install", out)
         self.assertNotIn("install-flash-local.sh ", calls)           # nothing to prove
         self.assertIn("flocal=failed", out)
 

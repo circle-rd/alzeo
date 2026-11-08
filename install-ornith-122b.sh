@@ -16,7 +16,7 @@
 # install.sh puts this lane's unit in on every plain install, like the other lanes, and its first
 # Load from the cockpit pulls its image and fetches its checkpoint; ./install.sh --no-ornith-122b
 # leaves it out of the run that passes it. It takes a checkpoint of 78 GB and the
-# Flash FP4-Local lane's image, 18 GB (10 to download), which the two lanes share: when the disk
+# Qwen3.8 Flash-Next FP4-Local lane's image, 18 GB (10 to download), which the two lanes share: when the disk
 # does not have the room, this refuses before downloading anything.
 #
 # WHY THIS IMAGE. The checkpoint mixes NVFP4 experts read as W4A16 and FP8 projections, which
@@ -89,7 +89,7 @@ ORNITH_122B_SEQS="8"
 ORNITH_122B_SPEC="2"
 MODEL="$ORNITH_122B_REPO"; MODEL_REV="$ORNITH_122B_REV"
 GMU="$ORNITH_122B_GMU"; WEIGHTS_GB="$ORNITH_122B_GB"; SEQS="$ORNITH_122B_SEQS"
-# The image is the Flash FP4-Local lane's, by its pin in install-flash-local.sh, the one place it is
+# The image is the Qwen3.8 Flash-Next FP4-Local lane's, by its pin in install-flash-local.sh, the one place it is
 # declared, pulled as published, by digest: nothing is built on the box. Its pull at its peak, as
 # that installer counts it (its IMAGE_GB, read there).
 eval "$(grep -E '^FLASH_LOCAL_IMAGE=' "$HERE/install-flash-local.sh" || true)"
@@ -106,13 +106,13 @@ if [ "$ACTION" = uninstall ]; then
   vlane_uninstall_unit
   vlane_uninstall_clients
   # The image is pulled, not built: no build of it to prune (qwen38-ornith-122b names none), and
-  # its local tag goes alone (lanes.sh), the Flash FP4-Local lane's own staying.
+  # its local tag goes alone (lanes.sh), the Qwen3.8 Flash-Next FP4-Local lane's own staying.
   vlane_uninstall_runtime qwen38-ornith-122b "$FLASH_LOCAL_IMAGE" "$ORNITH_122B_REPO"
   pin_untag ornith-122b
   rm -f "$CONFIG_DIR/chat-template-ornith-122b.jinja"
-  # The seccomp profile is the Flash FP4-Local lane's too: it stays while that lane's unit reads it.
+  # The seccomp profile is the Qwen3.8 Flash-Next FP4-Local lane's too: it stays while that lane's unit reads it.
   if [ -f "$LANES_UNIT_DIR/qwen38-flash-local.service" ]; then
-    echo "seccomp-io-uring.json kept: the Flash FP4-Local lane reads it too"
+    echo "seccomp-io-uring.json kept: the Qwen3.8 Flash-Next FP4-Local lane reads it too"
   else
     rm -f "$CONFIG_DIR/seccomp-io-uring.json"
   fi
@@ -153,7 +153,7 @@ install_service(){
   step "4/5 Service"
   vlane_service_files "${CACHES[@]}"
   # Docker's default seccomp profile and the three io_uring calls b12x's loader reads the checkpoint
-  # with (the unit says why), the Flash FP4-Local lane's file; the docker client reads it at every
+  # with (the unit says why), the Qwen3.8 Flash-Next FP4-Local lane's file; the docker client reads it at every
   # start, as the user
   cmp -s "$HERE/seccomp-io-uring.json" "$CONFIG_DIR/seccomp-io-uring.json" \
     || install -m 644 "$HERE/seccomp-io-uring.json" "$CONFIG_DIR/seccomp-io-uring.json"
@@ -170,7 +170,7 @@ install_service(){
 
 # --stage: the unit for the checkpoint in the cache, for switch-model.sh, with no sudo. This lane's
 # own files only, as the other lanes' switches touch nothing but their unit: the start scripts every
-# lane runs (vlane_service_files) are ./install.sh's to put in (the Flash FP4-Local lane's rule). Its
+# lane runs (vlane_service_files) are ./install.sh's to put in (the Qwen3.8 Flash-Next FP4-Local lane's rule). Its
 # caches made as the user, so that docker does not make them as root, and its filter only when it
 # is missing.
 if [ "$MODE" = stage ]; then
@@ -191,13 +191,13 @@ if [ "$MODE" = units ]; then
   vlane_template_if_cached "$TEMPLATE" "${TEMPLATE_FIXES[@]}"
   install_service
   step "Done: the Ornith 1.5 122B lane is installed; its first Load prepares it"
-  echo "  the cockpit: Load on Ornith 1.5 122B in the Lanes view pulls its image (the Flash FP4-Local lane's,"
+  echo "  the cockpit: Load on Ornith 1.5 122B in the Lanes view pulls its image (the Qwen3.8 Flash-Next FP4-Local lane's,"
   echo "               about 18 GB, 10 to download, once for the two), fetches its checkpoint (about $WEIGHTS_GB GB), then starts it"
   echo "  a terminal : ./install-ornith-122b.sh --prepare, then ./switch-model.sh ornith-122b and the commands it prints"
   exit 0
 fi
 
-step "2/5 Image (${FLASH_LOCAL_IMAGE:0:40}..., the Flash FP4-Local lane's)"
+step "2/5 Image (${FLASH_LOCAL_IMAGE:0:40}..., the Qwen3.8 Flash-Next FP4-Local lane's)"
 if docker image inspect "$FLASH_LOCAL_IMAGE" >/dev/null 2>&1; then
   echo "already here"
 else
@@ -205,7 +205,7 @@ else
     || die "docker pull of $FLASH_LOCAL_IMAGE failed. Causes: no internet, a Docker Hub rate limit (retry in a few minutes, or docker login), or the digest removed upstream."
 fi
 # its local tag, so that a docker image prune leaves it alone while this lane is installed, and the
-# tags of the images it was pinned to before go (lanes.sh); the Flash FP4-Local lane keeps its own
+# tags of the images it was pinned to before go (lanes.sh); the Qwen3.8 Flash-Next FP4-Local lane keeps its own
 pin_tag ornith-122b "$FLASH_LOCAL_IMAGE"
 unpin_stale ornith-122b "$FLASH_LOCAL_IMAGE" || true
 

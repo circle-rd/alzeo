@@ -325,9 +325,9 @@ class TheInstaller(Box):
         end = self.TEXT.index("\n    }\n", start) + len("\n    }\n")
         script = ("set -u\nCOCKPIT=1\n"
                   'SECOND_CANNOT="the GPU\'s addressing mode is None (nvidia-smi) and the flash lane needs ATS"\n'
-                  + self.TEXT[start:end] + 'lane_line "Flash 176B " cannot flash flash "223 GB" /nonexistent\n')
+                  + self.TEXT[start:end] + 'lane_line "Flash-Next " cannot flash flash "223 GB" /nonexistent\n')
         r = subprocess.run(["bash", "-c", script], capture_output=True, text=True, timeout=30)
-        self.assertEqual(r.stdout.strip(), "Flash 176B : installed, and it cannot start on this box: "
+        self.assertEqual(r.stdout.strip(), "Flash-Next : installed, and it cannot start on this box: "
                          "the GPU's addressing mode is None (nvidia-smi) and the flash lane needs ATS")
         # its units did not install either: --with-flash would only give it its units again
         r = subprocess.run(["bash", "-c", script.replace(' cannot flash flash ', ' failed flash flash ')],

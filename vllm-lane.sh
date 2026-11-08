@@ -219,7 +219,7 @@ vlane_put_unit(){  # $1 the rendered unit, $2... what else the lane's start read
           echo "unit installed at $INSTALLED" ;;
   esac
   LANE_FILES=("$INSTALLED" "$CONFIG_DIR/vllm-auth/vllm_engine_auth.py" "$CONFIG_DIR/engine-preflight.sh" "$CONFIG_DIR/engine-secrets.sh")
-  # A unit that runs no engine-secrets.sh does not read it (the Flash FP4-Local lane's), and the files a
+  # A unit that runs no engine-secrets.sh does not read it (the Qwen3.8 Flash-Next FP4-Local lane's), and the files a
   # lane's own start reads come before the note: added after it, a change of them alone said nothing
   # (found in review, 2026-10-20).
   grep -q 'engine-secrets\.sh' "$INSTALLED" 2>/dev/null || unset 'LANE_FILES[3]'

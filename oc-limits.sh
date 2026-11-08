@@ -262,7 +262,7 @@ case "$CHOICE" in
     CTX=990000; OUT=32000; LABEL="local, 1M"
     ;;
   flash-local)
-    # The Flash FP4-Local lane serves the flash lane's 262,144-token window, and vLLM refuses any
+    # The Qwen3.8 Flash-Next FP4-Local lane serves the flash lane's 262,144-token window, and vLLM refuses any
     # request whose prompt + max_tokens passes it. Its KV cache holds 921,090 tokens at the card's
     # memory share (measured 2026-10-19), the window 3.5 times over, so the window decides, by the
     # flash lane's rule and numbers (the same model, the same window, the proxy's same ceiling):

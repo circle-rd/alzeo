@@ -234,7 +234,7 @@ class PureParts(unittest.TestCase):
 
     def test_system_one_names_the_lanes_it_serves_on(self):
         # on every vLLM lane, the Qwen one included: "needs a Qwen lane" read as a contradiction
-        # while the Flash FP4-Local lane, a Qwen lane, served (found in review, 2026-10-19)
+        # while the Qwen3.8 Flash-Next FP4-Local lane, a Qwen lane, served (found in review, 2026-10-19)
         for served in ("kolibri-1", "qwen3.8-flash-next-fp4"):
             with self.subTest(served=served):
                 self.mod._SERVED.update(names=(served,), engine="vllm", ts=time.time())
@@ -444,7 +444,7 @@ class ThroughTheProxy(unittest.TestCase):
         # the clients set up for Kolibri send "none" for "off", and the Qwen templates refuse
         # it with a 400: a client left on kolibri-1 broke on the next Qwen lane (found in
         # review, 2026-10-14)
-        # and on the Flash FP4-Local lane, a Qwen lane on vLLM whose template is the flash lane's
+        # and on the Qwen3.8 Flash-Next FP4-Local lane, a Qwen lane on vLLM whose template is the flash lane's
         for owner, served in (("sglang", "qwen3.8-flash-next"), ("vllm", "kolibri-1"), ("vllm", "qwen3.8-flash-next-fp4")):
             for how in ({"reasoning_effort": "none"}, {"chat_template_kwargs": {"reasoning_effort": "none"}}):
                 with self.subTest(owner=owner, how=how):

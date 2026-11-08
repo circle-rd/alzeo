@@ -2,7 +2,7 @@
 """What a vLLM lane's start reads, as vlane_put_unit (vllm-lane.sh) lists it to say a serving lane runs
 older files than the ones just installed.
 
-The Flash FP4-Local lane's start also reads its patched chat template and its seccomp filter, which its
+The Qwen3.8 Flash-Next FP4-Local lane's start also reads its patched chat template and its seccomp filter, which its
 installer added to the list only after the shared step had said its NOTE, so a run that changed only
 those said nothing; and the list named engine-secrets.sh, which its unit never runs, so a change of that
 script alone would have asked the lane for a restart it does not need (found in review, 2026-10-20).

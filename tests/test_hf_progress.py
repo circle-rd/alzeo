@@ -332,7 +332,7 @@ class EveryFetchCountsItsBytes(unittest.TestCase):
     def test_bars_go_only_without_a_terminal(self):
         self.assertIn('DL_NO_BARS=""; [ -t 1 ] || DL_NO_BARS=1', SWITCH)
         # the text lanes', the image lane's, the video lane's, the Kolibri lane's, the Nemotron lane's,
-        # the Flash FP4-Local lane's and the Ornith lane's
+        # the Qwen3.8 Flash-Next FP4-Local lane's and the Ornith lane's
         self.assertEqual(SWITCH.count('HF_HUB_DISABLE_PROGRESS_BARS="$DL_NO_BARS"'), 7, "all seven fetches")
 
 

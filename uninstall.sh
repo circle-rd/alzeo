@@ -32,7 +32,7 @@ HF_CACHES="$( { printf '%s\n' "${HF_CACHE:-}"; unit_mount /root/.cache/huggingfa
                { grep -m1 -E '^Environment=HF_HOME=' "$SYSTEMD_DIR/qwen38-video.service" 2>/dev/null || true; } | cut -d= -f3-
                printf '%s\n' "$HOME/.cache/huggingface"; } | tr -s / | awk 'NF && !seen[$0]++')"
 PLE_DIRS="$( { printf '%s\n' "${PLE_DIR:-}"; unit_mount /ple; printf '%s\n' "$HOME/flashnext-ple"; } | tr -s / | awk 'NF && !seen[$0]++')"
-# The Flash FP4-Local lane's copies of its n-gram table (ple-table.py), where its unit mounts them
+# The Qwen3.8 Flash-Next FP4-Local lane's copies of its n-gram table (ple-table.py), where its unit mounts them
 # from, where FLASH_LOCAL_PLE_DIR puts them (given now, or kept by its installer), and their
 # default folder.
 FL_TABLE_DIRS="$( { [ "${FLASH_LOCAL_PLE_DIR:-}" = none ] || printf '%s\n' "${FLASH_LOCAL_PLE_DIR:-}"
@@ -108,7 +108,7 @@ inventory_images() {
 }
 
 dir_size() { du -sh "$1" 2>/dev/null | cut -f1; }
-# The Flash FP4-Local lane's copies in a folder: the files its list names (ple-table.py keeps it), one
+# The Qwen3.8 Flash-Next FP4-Local lane's copies in a folder: the files its list names (ple-table.py keeps it), one
 # path a line. Never the folder's other files: FLASH_LOCAL_PLE_DIR can be a folder of the user's own.
 fl_copies() { awk -v d="$1" '/^[0-9a-f]{64}$/ {print d "/" $0}' "$1/.qwen38-ple-copies" 2>/dev/null; }
 # The reclaim command for a directory: the user's rm, or sudo when a directory in it is not
@@ -209,7 +209,7 @@ while IFS= read -r p; do
 done <<< "$PLE_DIRS"
 while IFS= read -r p; do
   if [ -n "$p" ] && [ -f "$p/.qwen38-ple-copies" ]; then
-    echo "  table     $p ($(fl_copies "$p" | xargs -r du -ch 2>/dev/null | tail -1 | cut -f1), the Flash FP4-Local lane's copies of its n-gram table)"
+    echo "  table     $p ($(fl_copies "$p" | xargs -r du -ch 2>/dev/null | tail -1 | cut -f1), the Qwen3.8 Flash-Next FP4-Local lane's copies of its n-gram table)"
   fi
 done <<< "$FL_TABLE_DIRS"
 if [ -d "$SPILL_DIR" ]; then echo "  spill     $SPILL_DIR ($(dir_size "$SPILL_DIR"), the diffusion runtime's transformed weights)"; fi
@@ -374,7 +374,7 @@ while IFS= read -r p; do
 done <<< "$PLE_DIRS"
 while IFS= read -r p; do
   if [ -n "$p" ] && [ -f "$p/.qwen38-ple-copies" ]; then
-    echo "  rm -f $(fl_copies "$p" | sed "s/.*/'&' '&.part'/" | tr '\n' ' ')'$p/.qwen38-ple-copies'; rmdir '$p'    # the Flash FP4-Local lane's copies of its n-gram table, and nothing else there"
+    echo "  rm -f $(fl_copies "$p" | sed "s/.*/'&' '&.part'/" | tr '\n' ' ')'$p/.qwen38-ple-copies'; rmdir '$p'    # the Qwen3.8 Flash-Next FP4-Local lane's copies of its n-gram table, and nothing else there"
   fi
 done <<< "$FL_TABLE_DIRS"
 if [ -d "$SPILL_DIR" ]; then echo "  $(rm_cmd "$SPILL_DIR") '$SPILL_DIR'    # $(dir_size "$SPILL_DIR"), the diffusion runtime's transformed weights"; fi

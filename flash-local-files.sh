@@ -1,5 +1,5 @@
 #!/bin/bash
-# flash-local-files.sh <index> <copy>...: what the Flash FP4-Local lane's engine reads has to be there
+# flash-local-files.sh <index> <copy>...: what the Qwen3.8 Flash-Next FP4-Local lane's engine reads has to be there
 # before it runs, and its unit asks this before the engine, as its main process (the head of its
 # ExecStart, after the memory guard every lane runs).
 #

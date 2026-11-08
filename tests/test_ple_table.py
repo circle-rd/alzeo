@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""The Flash FP4-Local lane reads its n-gram table from the disk of the home directory.
+"""The Qwen3.8 Flash-Next FP4-Local lane reads its n-gram table from the disk of the home directory.
 
 The table lives in seven of the checkpoint's files and is read at every token: from a USB SSD the
 lane decoded 15.6 tokens a second for eight requests, from the internal NVMe 77.7 (reference box,

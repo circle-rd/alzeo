@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """The Ornith 1.5 122B lane (install-ornith-122b.sh, v1.38): the unit its --stage writes for a switch,
-what its --uninstall removes and keeps, and the two things it shares with the Flash FP4-Local lane,
+what its --uninstall removes and keeps, and the two things it shares with the Qwen3.8 Flash-Next FP4-Local lane,
 the image (each lane its own local tag on it) and the seccomp profile b12x's loader needs.
 
 --stage runs the installer as written, in a throwaway home, with no sudo and no docker. The uninstall
@@ -70,7 +70,7 @@ class TheStagedUnit(unittest.TestCase):
         unit = self.out.read_text()
         self.assertNotRegex(unit, r"__[A-Z][A-Z0-9_]*__", "a placeholder left")
         self.assertIn(f"vllm serve {PINS['ORNITH_122B_REPO']} --revision {PINS['ORNITH_122B_REV']}", unit)
-        self.assertIn(f"  {FL_IMAGE} \\\n", unit, "the image is the Flash FP4-Local lane's pin")
+        self.assertIn(f"  {FL_IMAGE} \\\n", unit, "the image is the Qwen3.8 Flash-Next FP4-Local lane's pin")
         self.assertIn(f"--security-opt seccomp={self.home}/.config/qwen38/seccomp-io-uring.json", unit)
         self.assertNotIn("unconfined", unit)
         self.assertIn(f"-v {self.hf}:/root/.cache/huggingface", unit)
@@ -197,7 +197,7 @@ class TheStagedUnit(unittest.TestCase):
         self.assertIn("-e VLLM_NO_USAGE_STATS=1", cmd)
 
     def test_its_boot_leaves_the_box_its_memory(self):
-        # the Flash FP4-Local lane's allocator settings, for the same b12x loader: the ceiling above the
+        # the Qwen3.8 Flash-Next FP4-Local lane's allocator settings, for the same b12x loader: the ceiling above the
         # share vLLM is given, the collection under it (test_flash_local_stage.py says why)
         rc, out = self.stage()
         self.assertEqual(rc, 0, out)
@@ -285,7 +285,7 @@ class TheUninstalls(unittest.TestCase):
     def test_beside_flash_local_ornith_leaves_the_profile(self):
         out, _ = self.run_block("ornith-122b", others=["flash-local"])
         self.assertTrue((self.cfg / "seccomp-io-uring.json").exists())
-        self.assertIn("seccomp-io-uring.json kept: the Flash FP4-Local lane reads it too", out)
+        self.assertIn("seccomp-io-uring.json kept: the Qwen3.8 Flash-Next FP4-Local lane reads it too", out)
 
     def test_beside_ornith_flash_local_leaves_the_profile(self):
         out, _ = self.run_block("flash-local", others=["ornith-122b"])

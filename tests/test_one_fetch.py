@@ -45,7 +45,7 @@ CALLS = {
     "switch-model.sh, the Nemotron lane":
         ("switch-model.sh", '"$NEM_IMAGE" /opt/qwen38/ckpt-fetch.py "$NEM_R" "$NEM_V" --offline-first \\\n'
                             '      --need-gb "$NEM_ASK" --free-gb "$(dl_free_gb "$NEM_HF")"'),
-    "switch-model.sh, the Flash FP4-Local lane":
+    "switch-model.sh, the Qwen3.8 Flash-Next FP4-Local lane":
         ("switch-model.sh", '"$FLASH_LOCAL_IMAGE" /opt/qwen38/ckpt-fetch.py "$FLASH_LOCAL_REPO" "$FLASH_LOCAL_REV" --offline-first \\\n'
                             '    --need-gb "$FLASH_LOCAL_GB" --free-gb "$(dl_free_gb "$FLL_HF")"'),
     "switch-model.sh, the Ornith lane":

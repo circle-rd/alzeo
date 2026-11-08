@@ -78,7 +78,7 @@ class Box:
             f"  {self.super_pins['NEMOTRON_SUPER_REPO']} --revision {self.super_pins['NEMOTRON_SUPER_REV']} \\\n"
             f"  --gpu-memory-utilization {self.super_pins['NEMOTRON_SUPER_GMU']} \\\n"
             "  --port 30000\n")
-        # the Flash FP4-Local lane's unit: its image by digest, its cache, its checkpoint
+        # the Qwen3.8 Flash-Next FP4-Local lane's unit: its image by digest, its cache, its checkpoint
         fpins = dict(line.split("=", 1) for line in (REPO / "install-flash-local.sh").read_text().splitlines()
                      if line.startswith("FLASH_LOCAL_") and "=" in line)
         self.flocal_pins = {k: v.strip('"') for k, v in fpins.items()}
@@ -89,7 +89,7 @@ class Box:
             f"  {self.flocal_pins['FLASH_LOCAL_IMAGE']} \\\n"
             f"  vllm serve {self.flocal_pins['FLASH_LOCAL_REPO']} --revision {self.flocal_pins['FLASH_LOCAL_REV']} \\\n"
             "    --gpu-memory-utilization 0.8 --port 30000'\n")
-        # the Ornith lane's unit: the Flash FP4-Local lane's image by digest, its cache, its checkpoint
+        # the Ornith lane's unit: the Qwen3.8 Flash-Next FP4-Local lane's image by digest, its cache, its checkpoint
         opins = dict(line.split("=", 1) for line in (REPO / "install-ornith-122b.sh").read_text().splitlines()
                      if line.startswith("ORNITH_122B_") and "=" in line)
         self.ornith_pins = {k: v.strip('"') for k, v in opins.items()}
@@ -195,7 +195,7 @@ class FetchOnly(unittest.TestCase):
         self.assertEqual(len(runs), 1, runs)
         self.assertIn(f"/opt/qwen38/ckpt-fetch.py {pins['ORNITH_122B_REPO']} {pins['ORNITH_122B_REV']} ", runs[0])
         self.assertIn(f"--need-gb {pins['ORNITH_122B_GB']} ", runs[0])
-        self.assertIn(f" {box.flocal_pins['FLASH_LOCAL_IMAGE']} ", runs[0], "in the Flash FP4-Local lane's image, by digest")
+        self.assertIn(f" {box.flocal_pins['FLASH_LOCAL_IMAGE']} ", runs[0], "in the Qwen3.8 Flash-Next FP4-Local lane's image, by digest")
         self.assertEqual(box.ornith_unit.read_bytes(), unit_before)
         self.assertFalse([c for c in calls if re.search(r"\b(enable|disable|daemon-reload|restart|start|stop)\b", c)], calls)
 
