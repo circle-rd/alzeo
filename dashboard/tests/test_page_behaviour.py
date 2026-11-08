@@ -2674,7 +2674,7 @@ class EachLaneSaysItsEngine(unittest.TestCase):
     const engines = {'qwen38-sglang.service': {engine: 'SGLang', version: '0.5.22', label: 'SGLang 0.5.22', pin: PIN},
                      'qwen38-kolibri.service': {engine: 'vLLM', version: '0.29.0 + Aleph Alpha plugin 1.0.0',
                                                 label: 'vLLM 0.29.0 + Aleph Alpha plugin 1.0.0', pin: 'vllm/vllm-openai@sha256:18'}};
-    feed({config: Object.assign({}, CONFIG, {engines}), units: UNITS,
+    feed({config: CONFIG, engine_table: {table: engines}, units: UNITS,
           lifecycle: life({'qwen38-sglang.service': eng('ready')})});
     const tb = $('rcp-table').tBodies[0]; clear(tb);
     const recipe = image => ({recipe: {id: 'stock', lane: '27b', builtin: true, engine: {image},
@@ -2708,7 +2708,7 @@ class EachLaneSaysItsEngine(unittest.TestCase):
     const U = JSON.parse(JSON.stringify(UNITS));
     U.units['qwen38-sglang.service'] = {active: 'inactive', enabled: 'disabled'};
     U.units['qwen38-flash.service'] = {active: 'active', enabled: 'enabled'};
-    feed({config: Object.assign({}, CONFIG, {engines}), units: U,
+    feed({config: CONFIG, engine_table: {table: engines}, units: U,
           lifecycle: life({'qwen38-flash.service': eng('ready', {target: 'flash'})}),
           engine_info: {served_target: 'flash', info: {version: %s}}});
     report({sub: txt('serving-sub'), ver: txt('eng-ver'), card: LCARDS.get('qwen38-flash.service').right.textContent,
@@ -2778,7 +2778,7 @@ class EachLaneSaysItsEngine(unittest.TestCase):
 
     def test_without_the_table_nothing_is_said(self):
         # a cockpit of an older release beside this page (the table came with v1.45.0): no line reads "undefined"
-        r = run(self, self.BODY.replace("Object.assign({}, CONFIG, {engines})", "CONFIG"))
+        r = run(self, self.BODY.replace("engine_table: {table: engines}, ", ""))
         self.assertFalse(r["sub"].startswith(" · "), r["sub"])
         self.assertNotIn("Engine", r["card27"])
         self.assertNotIn("undefined", r["card27"] + r["bay27"] + r["sub"])

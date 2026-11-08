@@ -3073,9 +3073,9 @@ def engine_table() -> dict:
 
 
 def collect_engine_table() -> dict:
-    """engine_table() again every 30 s: the config's copy is read once, at the cockpit's start, and an
-    install-<lane>.sh run alone after it (no restart of the cockpit) changed what a unit starts unsaid (code review
-    of v1.45.0)."""
+    """Each lane's engine and its version, named the same way everywhere on the page (decision 1178): engine_table()
+    every 30 s, the first time at the cockpit's start. Read once into the page's config, an install-<lane>.sh run
+    alone afterwards (no restart of the cockpit) changed what a unit starts unsaid (code review of v1.45.0)."""
     return {"node_id": "local", "table": engine_table()}
 
 
@@ -3104,9 +3104,6 @@ PERIODS = {name: period for period, cols in TIERS for name in cols}
 STATE["config"] = {"data": {"usable_frac": USABLE_FRAC, "version": VERSION, "dry_run": DRY_RUN,
                             "repo_dir": str(REPO_DIR), "periods": PERIODS,
                             "agent_port": AGENT_PORT,
-                            # each lane's engine and its version, named the same way everywhere on the
-                            # page (decision 1178): the table of engines.py, checked against the pins
-                            "engines": engine_table(),
                             # the page says what happens to a wedged engine, and on a default
                             # install that is nothing: it promised the belt's restart regardless
                             "autoheal": AUTOHEAL, "autoheal_grace_s": AUTOHEAL_GRACE,

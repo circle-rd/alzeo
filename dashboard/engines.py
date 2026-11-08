@@ -17,11 +17,13 @@ ENGINES = {
     # install.sh IMAGE ; the image's sglang distribution says 0.5.22
     "qwen38-sglang.service": {
         "engine": "SGLang", "version": "0.5.22", "reports": "0.5.22",
-        "pin": "lmsysorg/sglang@sha256:e3a4f06001a29542fc4a8638536d9ffc5eb9c9942b08603c09b19a56eae4a1ae"},
+        "pin": "lmsysorg/sglang@sha256:e3a4f06001a29542fc4a8638536d9ffc5eb9c9942b08603c09b19a56eae4a1ae",
+        "tag": "lmsysorg/sglang:v0.5.22"},
     # install.sh FLASH_IMAGE, the nightly-cu134-20261011-53295c6 tag ; its sglang says 0.0.0.dev1+g53295c697
     "qwen38-flash.service": {
         "engine": "SGLang", "version": "nightly 53295c6", "reports": "0.0.0.dev1+g53295c697",
-        "pin": "lmsysorg/sglang@sha256:3e79541d1e2a6818979c4aa9ca1fa63d6961d7bc50120867953ea6baaf1d8f62"},
+        "pin": "lmsysorg/sglang@sha256:3e79541d1e2a6818979c4aa9ca1fa63d6961d7bc50120867953ea6baaf1d8f62",
+        "tag": "lmsysorg/sglang:nightly-cu134-20261011-53295c6"},
     # install-flash-local.sh FLASH_LOCAL_IMAGE ; build-metadata.yaml: vLLM of local-inference-lab, branch
     # dev/karmic-kraken, commit 8244d1c, built 2026-10-15, with b12x
     "qwen38-flash-local.service": {
@@ -72,11 +74,12 @@ def page_table() -> dict:
 def runs_pin(unit: str, images) -> "bool | None":
     """Whether a unit that starts these images runs its pinned engine: the pin by its digest, or, for a lane that
     builds its image on the pin, the exact tag its installer gives that build (unit_image: its plugin, its b12x and
-    its base in the name). None when that cannot be told: no image read (no unit file), or a pin that is a wheel (the
+    its base in the name), or the moving tag of the pin (tag). None when that cannot be told: no image read (no unit file), or a pin that is a wheel (the
     diffusion lanes). A build tag guessed by its digest's first hex digits held 13 of them for Nemotron, one more
     character in its pins away from failing, and said nothing of its b12x (code review of v1.45.0)."""
     e = ENGINES[unit]
     if "@sha256:" not in e["pin"] or not images:
         return None
     digest = e["pin"].split("@sha256:", 1)[1]
-    return any(digest in image or image == e.get("unit_image") for image in images)
+    # or its moving tag, which install.sh itself offers when the digest cannot be pulled (IMAGE=lmsysorg/sglang:v0.5.22)
+    return any(digest in image or image in (e.get("unit_image"), e.get("tag")) for image in images)

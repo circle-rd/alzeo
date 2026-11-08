@@ -114,14 +114,16 @@ class Fingerprint(unittest.TestCase):
         for m in sorted(own):
             self.assertIn(f"{m}.py", self.ck.CODE_FILES, m)
 
-    def test_the_page_gets_each_lanes_engine_in_its_config(self):
-        # decision 1178: the page names each lane's engine from the config, engines.py's table
-        engines = self.ck.STATE["config"]["data"]["engines"]
-        # the table, and for each unit whether its unit file starts the pin (None here: no unit file in a test)
-        self.assertEqual({u: {k: v for k, v in row.items() if k != "pinned"} for u, row in engines.items()},
+    def test_the_page_gets_each_lanes_engine_from_its_collector(self):
+        # decision 1178: the page names each lane's engine from engine_table, read every 30 s (the config's copy, read
+        # once, missed a lane installed on its own afterwards: code review of v1.45.0)
+        self.assertNotIn("engines", self.ck.STATE["config"]["data"])
+        self.assertIn("engine_table", self.ck.PERIODS)
+        table = self.ck.collect_engine_table()["table"]
+        self.assertEqual({u: {k: v for k, v in row.items() if k != "pinned"} for u, row in table.items()},
                          self.ck.en.page_table())
-        self.assertTrue(all("pinned" in row for row in engines.values()), engines)
-        self.assertEqual(engines["qwen38-sglang.service"]["label"], "SGLang 0.5.22")
+        self.assertTrue(all("pinned" in row for row in table.values()), table)
+        self.assertEqual(table["qwen38-sglang.service"]["label"], "SGLang 0.5.22")
 
     def test_quiet_when_nothing_moved(self):
         self.assertEqual(self.ck.code_is_stale(), [])

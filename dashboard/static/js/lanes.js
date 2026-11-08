@@ -199,7 +199,14 @@ function renderEngineFacts(){
     : 'No engine is running.');
 }
 // each lane's engine, read again by the cockpit every 30 s (engineLabel in base.js)
-on('engine_table', d => { F.engineTable = d.table || null; });
+on('engine_table', d => {
+  F.engineTable = d.table || null;
+  // the engine facts' version, said again once the table is in: engine_info can come first in a frame
+  if (F.liveEngine) setText('eng-ver', engineLabel(F.liveEngine.unit) || $('eng-ver').textContent);
+});
+// the engine's word stops with its lane: kept, it named a stopped lane by the version of an engine gone (code
+// review of v1.45.0). Cleared here, where the lanes' states arrive, not read again in every label
+on('lifecycle', () => { if (F.liveEngine && (servingEngine() || [])[0] !== F.liveEngine.unit) F.liveEngine = null; });
 on('engine_info', d => {
   const i = d.info || {};
   setText('eng-model', (i.model_path || '…').split('/').pop()); setTitle('eng-model', i.model_path || '');

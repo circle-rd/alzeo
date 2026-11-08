@@ -60,6 +60,9 @@ class WhetherAUnitRunsThePin(unittest.TestCase):
         self.assertTrue(EN.runs_pin("qwen38-sglang.service", [pin]))
         self.assertFalse(EN.runs_pin("qwen38-sglang.service", ["lmsysorg/sglang@sha256:" + "a" * 64]))
         self.assertFalse(EN.runs_pin("qwen38-sglang.service", ["lmsysorg/sglang:v0.5.23"]))
+        # the moving tag of the pin, which install.sh offers when the digest cannot be pulled (third review of v1.45.0)
+        self.assertTrue(EN.runs_pin("qwen38-sglang.service", ["lmsysorg/sglang:v0.5.22"]))
+        self.assertTrue(EN.runs_pin("qwen38-flash.service", ["lmsysorg/sglang:nightly-cu134-20261011-53295c6"]))
         self.assertTrue(EN.runs_pin("qwen38-kolibri.service", ["qwen38-kolibri:vllm0.29.0-aai1.0.0-18372a72249386434"]))
         self.assertTrue(EN.runs_pin("qwen38-nemotron.service", ["qwen38-nemotron:vllm77154ca6-b12x1.5.1-1ee85ca80e0fc"]))
         # an older build on the same base is not the pinned engine: its b12x is in its name (second review of v1.45.0)
@@ -108,6 +111,9 @@ class EachVersionIsTheOneInstalled(unittest.TestCase):
         # the image's own tag, written beside its digest
         self.assertIn("lmsysorg/sglang:v" + EN.ENGINES["qwen38-sglang.service"]["version"], text)
         self.assertIn("nightly-cu134-20261011-" + EN.ENGINES["qwen38-flash.service"]["version"].split()[-1], text)
+        # the moving tag a unit may name instead: the one install.sh writes beside each digest
+        for unit in ("qwen38-sglang.service", "qwen38-flash.service"):
+            self.assertIn("= " + EN.ENGINES[unit]["tag"], text, unit)
 
     def test_the_vllm_lanes(self):
         local = assigned("install-flash-local.sh", "FLASH_LOCAL_IMAGE")

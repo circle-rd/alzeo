@@ -263,7 +263,7 @@ function recipeRow(tb, row){
   // the engine and its version when the recipe runs the image its lane pins (decision 1178); an image of the
   // operator's is named by itself, as before
   const img = r.engine.image.replace(/@sha256:([0-9a-f]{12})[0-9a-f]+/, '@$1…');
-  const pinned = ((F.config || {}).engines || {})[r.lane === 'flash' ? UFLASH : U27];
+  const pinned = (F.engineTable || {})[r.lane === 'flash' ? UFLASH : U27];
   const c1 = tr.insertCell(); c1.title = r.engine.image;
   if (pinned && pinned.pin === r.engine.image) c1.append(pinned.label, ' ', el('span', 'faint num', img));
   else { c1.className = 'num'; c1.textContent = img; }
