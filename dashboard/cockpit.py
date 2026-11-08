@@ -3048,24 +3048,6 @@ def collect_lanes_startable():
     """30 s tier: which side lanes can start as installed (their Start), lane_startable."""
     return {lane: lane_startable(lane) for lane in ("image", "video", "kolibri", "nemotron", "nemotron-super", "flash-local", "ornith-122b", "flash", "27b")}
 
-TIERS = [
-    (1.0, {"machine": collect_machine, "engine_fast": collect_engine_fast, "job": collect_jobs}),
-    (2.0, {"lifecycle": collect_lifecycle}),
-    (90.0, {"canary": collect_canary}),
-    (3.0, {"gpu": collect_gpu, "decode": collect_decode_telemetry}),
-    (5.0, {"units": collect_units, "containers": collect_containers,
-           "feed": collect_feed, "agent": collect_agent}),
-    # its own thread: a /metrics read can wait its whole 4 s on an engine slow to answer,
-    # and the units, the feed and the agent must not wait with it
-    (5.0, {"metrics": collect_engine_metrics}),
-    # the other box of a pair (decision 975), its own thread too: a box that went holds its read 8 s
-    (5.0, {"pair": collect_pair}),
-    (30.0, {"engine_info": collect_engine_info, "repo": collect_repo, "kernel": collect_kernel,
-            "lanes_ready": collect_lanes_ready, "lanes_startable": collect_lanes_startable,
-            "opencode": collect_opencode, "reqguard": collect_guard,
-            "update": collect_update}),
-]
-
 
 def engine_table() -> dict:
     """engines.py's table for the page, each unit saying whether the unit file its installer wrote starts the image
@@ -3080,12 +3062,41 @@ def engine_table() -> dict:
     hf = str(Path.home() / ".cache/huggingface")
     for unit, row in table.items():
         path = UNIT_DIR / unit
+        if "@sha256:" not in row["pin"] or not path.is_file():    # a wheel, or no unit: nothing to read
+            row["pinned"] = None
+            continue
         try:
-            images = ei.inputs(str(path), str(CONFIG_DIR), hf, [])[1] if path.is_file() else []
+            row["pinned"] = en.runs_pin(unit, ei.inputs(str(path), str(CONFIG_DIR), hf, [])[1])
         except Exception:  # noqa: BLE001
-            images = []
-        row["pinned"] = en.runs_pin(unit, images)
+            row["pinned"] = None
     return table
+
+
+def collect_engine_table() -> dict:
+    """engine_table() again every 30 s: the config's copy is read once, at the cockpit's start, and an
+    install-<lane>.sh run alone after it (no restart of the cockpit) changed what a unit starts unsaid (code review
+    of v1.45.0)."""
+    return {"node_id": "local", "table": engine_table()}
+
+
+TIERS = [
+    (1.0, {"machine": collect_machine, "engine_fast": collect_engine_fast, "job": collect_jobs}),
+    (2.0, {"lifecycle": collect_lifecycle}),
+    (90.0, {"canary": collect_canary}),
+    (3.0, {"gpu": collect_gpu, "decode": collect_decode_telemetry}),
+    (5.0, {"units": collect_units, "containers": collect_containers,
+           "feed": collect_feed, "agent": collect_agent}),
+    # its own thread: a /metrics read can wait its whole 4 s on an engine slow to answer,
+    # and the units, the feed and the agent must not wait with it
+    (5.0, {"metrics": collect_engine_metrics}),
+    # the other box of a pair (decision 975), its own thread too: a box that went holds its read 8 s
+    (5.0, {"pair": collect_pair}),
+    (30.0, {"engine_info": collect_engine_info, "engine_table": collect_engine_table, "repo": collect_repo,
+            "kernel": collect_kernel,
+            "lanes_ready": collect_lanes_ready, "lanes_startable": collect_lanes_startable,
+            "opencode": collect_opencode, "reqguard": collect_guard,
+            "update": collect_update}),
+]
 
 
 # expected refresh period per collector, so the UI can tell a stale panel from a slow one

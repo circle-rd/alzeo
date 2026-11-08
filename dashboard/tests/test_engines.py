@@ -54,19 +54,47 @@ class WhatEachEngineReports(unittest.TestCase):
 
 
 class WhetherAUnitRunsThePin(unittest.TestCase):
-    def test_the_pin_by_its_digest_or_a_build_on_it_and_nothing_else(self):
+    def test_the_pin_by_its_digest_or_the_exact_tag_its_installer_builds_on_it(self):
         # decision 1178: a lane is given its pin's version only when its unit starts that image (code review of v1.45.0)
         pin = EN.ENGINES["qwen38-sglang.service"]["pin"]
         self.assertTrue(EN.runs_pin("qwen38-sglang.service", [pin]))
         self.assertFalse(EN.runs_pin("qwen38-sglang.service", ["lmsysorg/sglang@sha256:" + "a" * 64]))
         self.assertFalse(EN.runs_pin("qwen38-sglang.service", ["lmsysorg/sglang:v0.5.23"]))
-        # the images this repo builds on a pin carry its digest's first hex digits in their tag
         self.assertTrue(EN.runs_pin("qwen38-kolibri.service", ["qwen38-kolibri:vllm0.29.0-aai1.0.0-18372a72249386434"]))
         self.assertTrue(EN.runs_pin("qwen38-nemotron.service", ["qwen38-nemotron:vllm77154ca6-b12x1.5.1-1ee85ca80e0fc"]))
-        self.assertFalse(EN.runs_pin("qwen38-nemotron.service", ["qwen38-nemotron:vllm77154ca6-b12x1.5.1-0123456789abc"]))
+        # an older build on the same base is not the pinned engine: its b12x is in its name (second review of v1.45.0)
+        self.assertFalse(EN.runs_pin("qwen38-nemotron.service", ["qwen38-nemotron:vllm77154ca6-b12x1.5.0-1ee85ca80e0fc"]))
+        self.assertFalse(EN.runs_pin("qwen38-kolibri.service", ["qwen38-kolibri:vllm0.29.0-aai0.9.0-18372a72249386434"]))
         # what it cannot tell: no unit file read, a wheel
         self.assertIsNone(EN.runs_pin("qwen38-sglang.service", []))
         self.assertIsNone(EN.runs_pin("qwen38-image.service", ["anything"]))
+
+    def test_the_tag_of_a_build_is_the_one_its_installer_gives_it(self):
+        # the installers name the image they build on the pin (LOCAL_IMAGE, cut at 52 characters): the table's tag is
+        # that name, read back from their variables, or every box would read "another image" after a pin moved
+        for script, unit, line in (
+                ("install-kolibri.sh", "qwen38-kolibri.service",
+                 'LOCAL_IMAGE="qwen38-kolibri:vllm0.29.0-aai${KOLIBRI_PLUGIN_VERSION}-${KOLIBRI_BASE_IMAGE##*:}"'),
+                ("install-nemotron.sh", "qwen38-nemotron.service",
+                 'LOCAL_IMAGE="qwen38-nemotron:vllm${NEMOTRON_VLLM_LABEL#nightly-}-b12x${NEMOTRON_B12X_VERSION}-'
+                 '${NEMOTRON_BASE_IMAGE##*:}"'),
+                ("install-nemotron-super.sh", "qwen38-nemotron-super.service",
+                 'LOCAL_IMAGE="qwen38-nemotron:vllm${NEMOTRON_VLLM_LABEL#nightly-}-b12x${NEMOTRON_B12X_VERSION}-'
+                 '${NEMOTRON_BASE_IMAGE##*:}"')):
+            with self.subTest(script=script):
+                text = (REPO / script).read_text()
+                self.assertIn(line, text)
+                self.assertIn('LOCAL_IMAGE="${LOCAL_IMAGE:0:52}"', text)
+        kol = ("qwen38-kolibri:vllm0.29.0-aai" + assigned("install-kolibri.sh", "KOLIBRI_PLUGIN_VERSION") + "-"
+               + assigned("install-kolibri.sh", "KOLIBRI_BASE_IMAGE").split(":")[-1])[:52]
+        self.assertEqual(EN.ENGINES["qwen38-kolibri.service"]["unit_image"], kol)
+        label = assigned("install-nemotron.sh", "NEMOTRON_VLLM_LABEL")
+        nem = ("qwen38-nemotron:vllm" + label[len("nightly-"):] if label.startswith("nightly-") else
+               "qwen38-nemotron:vllm" + label)
+        nem = (nem + "-b12x" + assigned("install-nemotron.sh", "NEMOTRON_B12X_VERSION") + "-"
+               + assigned("install-nemotron.sh", "NEMOTRON_BASE_IMAGE").split(":")[-1])[:52]
+        for unit in ("qwen38-nemotron.service", "qwen38-nemotron-super.service"):
+            self.assertEqual(EN.ENGINES[unit]["unit_image"], nem)
 
 
 class EachVersionIsTheOneInstalled(unittest.TestCase):

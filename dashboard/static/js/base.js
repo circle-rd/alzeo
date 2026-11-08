@@ -275,9 +275,13 @@ function nameParts(full, unit){
 // serves says the version its engine reports (engine_info): when that is not the one the pinned image reports (an
 // image of the operator's), the engine's own word is said, never the pin's.
 function engineLabel(unit){
-  const e = (((F.config || {}).engines || {})[unit]);
+  // the table the cockpit reads again every 30 s (engine_table), its config's copy before the first one
+  const e = ((F.engineTable || (F.config || {}).engines || {})[unit]);
   if (!e) return '';
-  const live = F.liveEngine && F.liveEngine.unit === unit ? String(F.liveEngine.version || '').replace(/^vLLM /, '') : '';
+  // the engine's own word only while that lane serves: kept after it stopped, it named a stopped lane by the version
+  // of an engine gone (code review of v1.45.0)
+  const serves = (servingEngine() || [])[0] === unit;
+  const live = serves && F.liveEngine && F.liveEngine.unit === unit ? String(F.liveEngine.version || '').replace(/^vLLM /, '') : '';
   if (live) return e.reports && live !== e.reports ? `${e.engine} ${live}` : e.label;
   // a lane its installer set on an image of the operator's: not the pin's version (pinned, read in its unit)
   return e.pinned === false ? `${e.engine}, another image` : e.label;

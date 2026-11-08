@@ -198,6 +198,8 @@ function renderEngineFacts(){
     : s ? `The engine is ${STATE_LABEL[s[1].state] || s[1].state}: these facts arrive from the engine itself, once it answers.`
     : 'No engine is running.');
 }
+// each lane's engine, read again by the cockpit every 30 s (engineLabel in base.js)
+on('engine_table', d => { F.engineTable = d.table || null; });
 on('engine_info', d => {
   const i = d.info || {};
   setText('eng-model', (i.model_path || '…').split('/').pop()); setTitle('eng-model', i.model_path || '');

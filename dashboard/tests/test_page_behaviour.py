@@ -2762,6 +2762,20 @@ class EachLaneSaysItsEngine(unittest.TestCase):
         self.assertIn("EnginevLLM, another image", r["cardKol"])
         self.assertIn("EngineSGLang 0.5.22", r["card27"])
 
+    def test_the_table_read_again_wins_and_a_stopped_lane_drops_its_engines_word(self):
+        # code review of v1.45.0: the config's table is read once at the cockpit's start (engine_table refreshes it
+        # every 30 s), and the version an engine reported was kept after its lane stopped
+        r = run(self, self.LIVE % "'0.0.0.dev1+g043cfc4aa'" + r"""
+        feed({engine_table: {table: Object.assign({}, engines, {'qwen38-sglang.service': {engine: 'SGLang', version: '0.5.22',
+              label: 'SGLang 0.5.22', pin: 'p', reports: '0.5.22', pinned: false}})}});
+        const U2 = JSON.parse(JSON.stringify(U)); U2.units['qwen38-flash.service'] = {active: 'inactive', enabled: 'enabled'};
+        feed({units: U2, lifecycle: life({'qwen38-flash.service': eng('stopped', {target: 'flash'})})});
+        report({other: LCARDS.get('qwen38-sglang.service').right.textContent, stopped: engineLabel('qwen38-flash.service')});
+        """)
+        self.assertIn("EngineSGLang, another image", r["other"])
+        # stopped, the flash lane is named by its table again, not by the version its engine reported while it served
+        self.assertEqual(r["stopped"], "SGLang nightly 53295c6", r)
+
     def test_without_the_table_nothing_is_said(self):
         # a cockpit of an older release beside this page (the table came with v1.45.0): no line reads "undefined"
         r = run(self, self.BODY.replace("Object.assign({}, CONFIG, {engines})", "CONFIG"))

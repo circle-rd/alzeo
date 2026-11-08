@@ -13,8 +13,6 @@ reports: the version string the engine itself says when it serves the pinned ima
 serving lane's engine by what it reports: a version other than this one is an image of the operator's. None for the
 diffusion lanes, whose version the cockpit does not read."""
 
-import re
-
 ENGINES = {
     # install.sh IMAGE ; the image's sglang distribution says 0.5.22
     "qwen38-sglang.service": {
@@ -36,14 +34,19 @@ ENGINES = {
     # install-kolibri.sh KOLIBRI_BASE_IMAGE (vLLM 0.29.0) and KOLIBRI_PLUGIN_VERSION, Aleph Alpha's plugin
     "qwen38-kolibri.service": {
         "engine": "vLLM", "version": "0.29.0 + Aleph Alpha plugin 1.0.0", "reports": "0.29.0",
-        "pin": "vllm/vllm-openai@sha256:18372a7224938643461b846fb64c5c9d3d6e9727e82caf2dc3043e620c9d4d7a"},
+        "pin": "vllm/vllm-openai@sha256:18372a7224938643461b846fb64c5c9d3d6e9727e82caf2dc3043e620c9d4d7a",
+        # the image install-kolibri.sh builds on the pin with the plugin, the tag its unit starts (LOCAL_IMAGE)
+        "unit_image": "qwen38-kolibri:vllm0.29.0-aai1.0.0-18372a72249386434"},
     # install-nemotron.sh NEMOTRON_VLLM_LABEL and NEMOTRON_B12X_VERSION, built on NEMOTRON_BASE_IMAGE
     "qwen38-nemotron.service": {
         "engine": "vLLM", "version": "nightly 77154ca6 + b12x 1.5.1", "reports": "0.32.0rc1.dev100+g77154ca61",
-        "pin": "vllm/vllm-openai@sha256:1ee85ca80e0fc110017d79ea2081a0cbef9a208a05d7f22724801bcf6a956620"},
+        "pin": "vllm/vllm-openai@sha256:1ee85ca80e0fc110017d79ea2081a0cbef9a208a05d7f22724801bcf6a956620",
+        # the image install-nemotron.sh builds on the pin with b12x, the tag its unit starts (LOCAL_IMAGE)
+        "unit_image": "qwen38-nemotron:vllm77154ca6-b12x1.5.1-1ee85ca80e0fc"},
     "qwen38-nemotron-super.service": {
         "engine": "vLLM", "version": "nightly 77154ca6 + b12x 1.5.1", "reports": "0.32.0rc1.dev100+g77154ca61",
-        "pin": "vllm/vllm-openai@sha256:1ee85ca80e0fc110017d79ea2081a0cbef9a208a05d7f22724801bcf6a956620"},
+        "pin": "vllm/vllm-openai@sha256:1ee85ca80e0fc110017d79ea2081a0cbef9a208a05d7f22724801bcf6a956620",
+        "unit_image": "qwen38-nemotron:vllm77154ca6-b12x1.5.1-1ee85ca80e0fc"},
     # install-image.sh and install-video.sh WHEEL: SGLang's diffusion runtime in the lane's own venv
     "qwen38-image.service": {"engine": "SGLang Diffusion", "version": "0.5.21", "reports": None,
                              "pin": "sglang[diffusion]==0.5.21"},
@@ -67,15 +70,13 @@ def page_table() -> dict:
 
 
 def runs_pin(unit: str, images) -> "bool | None":
-    """Whether a unit that starts these images runs its pinned engine: the pin's digest, or a local build tag that ends
-    with 13 or more of its first hex digits (qwen38-kolibri:vllm0.29.0-aai1.0.0-18372a72249386434, built on the pin).
-    None when that cannot be told: no image read (no unit file), or a pin that is a wheel (the diffusion lanes)."""
-    pin = ENGINES[unit]["pin"]
-    if "@sha256:" not in pin or not images:
+    """Whether a unit that starts these images runs its pinned engine: the pin by its digest, or, for a lane that
+    builds its image on the pin, the exact tag its installer gives that build (unit_image: its plugin, its b12x and
+    its base in the name). None when that cannot be told: no image read (no unit file), or a pin that is a wheel (the
+    diffusion lanes). A build tag guessed by its digest's first hex digits held 13 of them for Nemotron, one more
+    character in its pins away from failing, and said nothing of its b12x (code review of v1.45.0)."""
+    e = ENGINES[unit]
+    if "@sha256:" not in e["pin"] or not images:
         return None
-    digest = pin.split("@sha256:", 1)[1]
-    for image in images:
-        m = re.search(r"-([0-9a-f]{13,64})$", image)
-        if digest in image or (m and digest.startswith(m.group(1))):
-            return True
-    return False
+    digest = e["pin"].split("@sha256:", 1)[1]
+    return any(digest in image or image == e.get("unit_image") for image in images)
