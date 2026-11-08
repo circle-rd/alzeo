@@ -95,6 +95,31 @@ def main() -> None:
         assert "Untracked files kept in place" in r.stdout, r.stdout
         os.remove(note)
 
+        # 3b. An untracked file at a path the new release TRACKS: the reset writes the release's file over it.
+        #     It was said "kept in place", then lost (third review of v1.40.8, 2026-11-01). It is copied aside
+        #     under the user's own dated folder first, said, and no longer listed as kept in place (v1.45.0).
+        pub = os.path.join(base, "publisher")
+        git("clone", "-q", os.path.join(base, "hasso5703", "dgx-spark-qwen38.git"), pub, cwd=base)
+        for k, v in (("user.email", "t@t"), ("user.name", "t")):
+            git("config", k, v, cwd=pub)
+        with open(os.path.join(pub, "AGENTS.md"), "w") as f:
+            f.write("the release's own\n")
+        git("add", "AGENTS.md", cwd=pub); git("commit", "-qm", "the release adds AGENTS.md", cwd=pub)
+        git("push", "-q", "origin", "main", cwd=pub)
+        mine = os.path.join(work, "AGENTS.md")
+        with open(mine, "w") as f:
+            f.write("an agent wrote this here\n")
+        r = run_get(work)
+        assert r.returncode == 0, f"the update failed: {r.stderr}"
+        assert open(mine).read() == "the release's own\n", "the release's file is not in place"
+        kept = [os.path.join(d, "AGENTS.md") for d in
+                (os.path.join(base, ".local/share/alzeo", n) for n in os.listdir(os.path.join(base, ".local/share/alzeo")))]
+        assert len(kept) == 1 and open(kept[0]).read() == "an agent wrote this here\n", kept
+        assert "copied aside first to:" in r.stdout and os.path.dirname(kept[0]) in r.stdout, r.stdout
+        assert "AGENTS.md" not in r.stdout.split("Untracked files kept in place")[-1] or \
+            "Untracked files kept in place" not in r.stdout, r.stdout
+        shutil.rmtree(os.path.join(base, ".local/share/alzeo"))
+
         # 4. A modified tracked file DOES block, and says so.
         with open(os.path.join(work, "install.sh"), "a") as f:
             f.write("# local edit\n")

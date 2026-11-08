@@ -171,10 +171,37 @@ main() {
       exit 1
     fi
   fi
-  # Untracked files are kept, but say so: if one of them is a path that origin/main
-  # now tracks, the reset below writes over it. A folder that is untracked whole is named once
+  # A file of the clone that git does not track (untracked or ignored) at a path origin/main tracks is written
+  # over by the reset below: a note, an AGENTS.md an agent wrote, a file a later release adds. It is copied
+  # aside first, under a dated folder of the user's own, and said; a copy that fails stops the update before
+  # anything is written over (third review of v1.40.8, 2026-11-01; fixed in v1.45.0).
+  KEPT="$HOME/.local/share/alzeo/kept-before-update-$(date +%Y%m%d-%H%M%S)"
+  # Lists line by line (BSD comm, as macOS has, has no -z); a name git still quotes (a newline, a quote) is not
+  # found on disk, its copy fails, and the update stops with nothing written over.
+  NKEPT=0; KEPTLIST=""
+  COLLIDE=$(LC_ALL=C comm -12 <(git -C "$DIR" -c core.quotePath=false ls-files --others | LC_ALL=C sort) \
+                     <(git -C "$DIR" -c core.quotePath=false ls-tree -r --name-only origin/main | LC_ALL=C sort))
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    mkdir -p "$KEPT/$(dirname "$f")" && cp -pP "$DIR/$f" "$KEPT/$f" || {
+      echo "ERROR: could not copy $DIR/$f aside before the update (it would be written over): nothing was changed." >&2
+      exit 1; }
+    NKEPT=$((NKEPT + 1)); KEPTLIST+="$f"$'\n'
+  done <<EOF
+$COLLIDE
+EOF
+  if [ "$NKEPT" -gt 0 ]; then
+    echo "── $NKEPT file(s) of yours at paths this release tracks, replaced by the release's, copied aside first to:"
+    echo "     $KEPT"
+    printf '%s' "$KEPTLIST" | sed -n '1,5s/^/     /p'
+  fi
+  # Untracked files are kept, but say so (those copied aside above are not kept in place: the release's own
+  # replace them). A folder that is untracked whole is named once
   # (--directory): a .venv-mirror/ in the clone, as MIRROR.md makes one, listed its thousands of files.
   UNTRACKED=$(git -C "$DIR" ls-files --others --exclude-standard --directory)
+  if [ -n "$KEPTLIST" ]; then
+    UNTRACKED=$(printf '%s\n' "$UNTRACKED" | grep -v -x -F -f <(printf '%s' "$KEPTLIST") || true)
+  fi
   if [ -n "$UNTRACKED" ]; then
     echo "── Untracked files kept in place (not part of the update):"
     # the first five, read to the end: with head, a long list took SIGPIPE under pipefail and get.sh stopped
