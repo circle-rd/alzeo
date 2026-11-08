@@ -12,7 +12,9 @@ the pin's. The Lanes engine facts said "SGLang 0.0.0.dev1" for the flash lane's 
 nightly 53295c6 (Qwen3.8 Flash-Next), vLLM b12x build 8244d1c (Qwen3.8 Flash-Next FP4-Local and Ornith 1.5 122B),
 vLLM 0.29.0 + Aleph Alpha plugin 1.0.0 (Kolibri-1), vLLM nightly 77154ca6 + b12x 1.5.1 (Nemotron 3.5 Bolt and Super
 VL), SGLang Diffusion 0.5.21 (image and video). `dashboard/tests/test_engines.py` reads each pin back from its
-installer and fails when one moves without the table.
+installer and fails when one moves without the table. A lane whose unit starts another image than its installer
+pins, an image of yours, is not given the pin's version: it says "vLLM, another image". The cockpit reads each
+unit again every 30 s, so a lane installed on its own after the cockpit started is said as it is.
 
 **Each version has its official name.** The cockpit said "27B stock" and "flash 176B", names of our own. Each version
 is now named as its makers publish it, with its precision and who publishes the build, read off the repository its
@@ -31,11 +33,15 @@ before the version's precision and publisher, never right after its " · ". Each
 at the size of two MacBooks (1512 x 982 and 1440 x 900) and three phones (375, 393 and 430 px wide), and looked at:
 no line runs off the screen, and the page reports no error.
 
-**An update keeps a file of yours that the release starts to track.** get.sh resets the clone to the release. A file
-of yours, untracked or ignored, at a path the release tracks (a note, an AGENTS.md an agent wrote, a file a later
-release adds) was said "kept in place", then written over by the reset. It is now copied aside first, under
-`~/.local/share/alzeo/kept-before-update-<date>/`, and the update says where. A copy that fails stops the update before
-anything is written over. `tests/test_get_sh.py` (case 3b) fails on the get.sh before.
+**An update keeps your files where the release puts its own.** get.sh resets the clone to the release. A file of
+yours that git does not track (untracked or ignored) where the release puts something of its own was said "kept in
+place", then written over or removed by the reset: a file at a path the release adds (a note, an AGENTS.md an
+agent wrote), a folder of yours where the release puts a file, a file of yours where it needs a folder. Each is now
+copied aside first, into a folder of its own under `~/.local/share/alzeo/` that the update names, and a copy that
+fails stops the update before its reset. Off main, FORCE_UPDATE=1 looks before it switches to main, whose checkout
+writes over ignored files too. The list of untracked files kept in place no longer names what the update replaced,
+whatever its name, and both lists say how many more there are past their first five. `tests/test_get_sh.py` (cases
+3b to 3f) and `tests/test_get_sh_force_update.py` fail on the get.sh before.
 
 **The cockpit watches all of its own code.** It says when its code on disk changed under it, and engine_metrics.py,
 one of its modules, was not watched. A test reads the cockpit's imports and fails when one of its own modules is not.
