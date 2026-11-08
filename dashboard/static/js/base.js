@@ -263,6 +263,13 @@ function laneLabel(unit){
   const t = laneTarget(unit);
   return (t && TARGET_NAME[t]) || LANE_NAME[unit] || unit.replace('.service', '');
 }
+// A lane's name in two parts, the family (LANE_NAME) and what follows it (its precision and who publishes it), for
+// the places too narrow for the whole: a phone's capsule says the family alone (the version's full name pushed
+// its state, "ready", out of it, 2026-11-08), and a bay's title breaks between the two, never after the " · ".
+function nameParts(full, unit){
+  const fam = LANE_NAME[unit] || '';
+  return fam && full.startsWith(fam + ' ') ? [fam, full.slice(fam.length + 1)] : [full, ''];
+}
 // The engine a lane runs and its version, the one way the page says them (decision 1178): dashboard/engines.py's
 // table, which its tests check against the installers' pins. 'SGLang 0.5.22'; '' for a unit with none. The lane that
 // serves says the version its engine reports (engine_info): when that is not the one the pinned image reports (an

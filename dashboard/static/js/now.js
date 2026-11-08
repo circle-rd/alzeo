@@ -125,7 +125,8 @@ function renderRack(){
     const t = laneTarget(unit);
     // its version's official name once the lane says which it loads, the lane's own title before (decision 1180):
     // the title and a short version after it read "Nemotron 3.5 Bolt Bolt", and named the 27B's default by its id
-    setText(b.h, (t && TARGET_NAME[t]) || LANE_META[unit].title);
+    const full = (t && TARGET_NAME[t]) || LANE_META[unit].title, [fam, rest] = nameParts(full, unit);
+    if (b.h.textContent !== full){ clear(b.h); b.h.append(fam); if (rest) b.h.append(' ', el('span', 'ver', rest)); }
     // the boot bar, when it boots
     if (e && TRANSITIONAL.has(st)){
       b.boot.hidden = false; clear(b.boot);
@@ -201,7 +202,10 @@ function renderServing(){
   const mark = $('serving-mark'), src = `/static/img/logos/${LANE_META[unit].maker}.svg`;
   if (mark.firstChild.getAttribute('src') !== src) mark.firstChild.setAttribute('src', src);
   mark.hidden = false;
-  setText('serving-name', `${laneLabel(unit)}, ${stateLabel(e)}`);
+  const [fam, rest] = nameParts(laneLabel(unit), unit), nm = $('serving-name');
+  if (nm.textContent !== `${fam}${rest ? ' ' + rest : ''}, ${stateLabel(e)}`){
+    clear(nm); nm.append(fam); if (rest) nm.append(el('span', 'ver', ' ' + rest)); nm.append(`, ${stateLabel(e)}`);
+  }
   let sub = '';
   const l = F.load || {};
   if ((st === 'ready' || st === 'degraded') && unit === VIDEO_UNIT) sub = VID_NOW.label || 'idle, one video at a time';

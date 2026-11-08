@@ -2729,6 +2729,24 @@ class EachLaneSaysItsEngine(unittest.TestCase):
         # a lane that does not serve keeps its pin's version
         self.assertIn("EngineSGLang 0.5.22", r["other"])
 
+    def test_a_phone_capsule_keeps_the_lanes_state_and_a_bay_title_breaks_before_its_build(self):
+        # 375 to 430 px: "Qwen3.8 27B NV..." left "ready" out of the capsule (captures of 2026-11-08), and a bay's title
+        # broke right after its " · ". The part after the family is its own element: a phone hides it in the capsule,
+        # a bay keeps it whole
+        r = run(self, r"""
+        feed({config: CONFIG, units: UNITS, lifecycle: life({'qwen38-sglang.service': eng('ready')})});
+        const ver = el => { const v = el.querySelector('.ver'); return v ? v.textContent : null; };
+        report({name: txt('serving-name'), ver: ver($('serving-name')), bay: BAYS.get('qwen38-flash.service').h.textContent,
+                bayVer: ver(BAYS.get('qwen38-sglang.service').h)});
+        """)
+        self.assertEqual(r["name"], "Qwen3.8 27B NVFP4 · RadixArk, ready")
+        self.assertEqual(r["ver"], " NVFP4 · RadixArk")
+        self.assertEqual(r["bayVer"], "NVFP4 · RadixArk")
+        phone = [d for s, media, d in css_rules() if s == ".serving .what .ver" and any("max-width:720px" in m for m in media)]
+        self.assertTrue(phone and "display:none" in phone[0].replace(" ", ""), phone)
+        whole = [d for s, media, d in css_rules() if s == ".bay h3 .ver" and not media]
+        self.assertTrue(whole and "white-space:nowrap" in whole[0].replace(" ", ""), whole)
+
     def test_without_the_table_nothing_is_said(self):
         # a cockpit of an older release beside this page (the table came with v1.45.0): no line reads "undefined"
         r = run(self, self.BODY.replace("Object.assign({}, CONFIG, {engines})", "CONFIG"))

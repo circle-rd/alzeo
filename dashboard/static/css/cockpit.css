@@ -523,6 +523,7 @@ button.bay:hover{border-color:rgba(255,255,255,.22); background:linear-gradient(
 .bay .mark img{width:24px; height:24px}
 .bay .kind{font-size:var(--t-12); font-weight:500; color:var(--fg-3); margin-top:calc(-1 * var(--s-2))}
 .bay h3{font-size:var(--t-20); font-weight:640; line-height:1.15}
+.bay h3 .ver{white-space:nowrap}   /* "NVFP4 · RadixArk" stays whole: the title breaks before it */
 .bay .desc{font-size:var(--t-13); color:var(--fg-2)}
 .bay .facts-line{margin-top:auto; display:flex; flex-wrap:wrap; gap:var(--s-2) var(--s-4); font-size:var(--t-12); color:var(--fg-2)}
 .bay .facts-line b{color:var(--fg-1); font-weight:600; font-variant-numeric:tabular-nums}
@@ -840,6 +841,7 @@ body.agentmax .view{animation:none}
   .serving{padding:5px 6px 5px 12px}
   .serving .go{display:none}
   .serving .mark{display:none}
+  .serving .what .ver{display:none}   /* the family and its state: the whole name pushed "ready" out */
   /* .spine-right never shrinks: at 260 px the way back to a load ran off the screen of 375 and 393 px
      phones (measured 2026-10-13 from 320 to 430 px); a quarter of the screen fits them all */
   .jobpip.away{max-width:25vw}
