@@ -1,7 +1,7 @@
 # Kolibri-1 on a DGX Spark (German and English)
 
-Aleph Alpha's Kolibri-1, the official FP8 release (128x128 block scales), served through Aleph
-Alpha's own vLLM plugin with a native context of 262,144 tokens. The model built for German, and
+Aleph Alpha's Kolibri-1, the official FP8 release (128x128 block scales), served by vLLM 0.29.0 through Aleph
+Alpha's own plugin (1.0.0) with a native context of 262,144 tokens. The model built for German, and
 good at English too.
 
 ## One command

@@ -1,7 +1,7 @@
 # Ornith 1.5 122B on a DGX Spark
 
 Ornith AI's `Ornith-1.5-122B-NVFP4`, a mixture of experts with a vision encoder, served at a window of
-a million tokens on vLLM with NVIDIA's b12x kernels and its MTP head drafting 2 tokens, on one 128 GB
+a million tokens on vLLM (b12x build 8244d1c) with NVIDIA's b12x kernels and its MTP head drafting 2 tokens, on one 128 GB
 box.
 
 ## One command

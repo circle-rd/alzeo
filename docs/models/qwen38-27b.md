@@ -1,7 +1,7 @@
 # Qwen3.8-27B on a DGX Spark (and any GB10 box)
 
-Qwen's 27B in NVFP4 (`RadixArk/Qwen3.8-27B-NVFP4`), the `stock` target of [Alzeo](../../README.md)'s
-27B lane: served by SGLang with a DFlash2 speculative drafter, a calibrated NVFP4 head 16 deep, on one
+Qwen's 27B in NVFP4 (`RadixArk/Qwen3.8-27B-NVFP4`, Qwen3.8 27B NVFP4 · RadixArk in the cockpit), the `stock` target of [Alzeo](../../README.md)'s
+27B lane: served by SGLang 0.5.22 with a DFlash2 speculative drafter, a calibrated NVFP4 head 16 deep, on one
 DGX Spark or one ASUS Ascent GX10, with a window of 1,010,000 tokens.
 
 ## One command

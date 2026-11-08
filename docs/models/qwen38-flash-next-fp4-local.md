@@ -1,8 +1,8 @@
-# Flash FP4-Local on a DGX Spark (NVIDIA's FP4 build of Qwen3.8-Flash-Next)
+# Qwen3.8 Flash-Next FP4-Local on a DGX Spark (NVIDIA's FP4 build)
 
 `nvidia/Qwen3.8-Flash-Next-FP4-Local`, NVIDIA's own build of Qwen3.8-Flash-Next for one local GPU:
 its experts in NVFP4 and its other layers in MXFP8, refined by quantization-aware distillation, its
-n-gram (PLE) table in NVFP4 inside the checkpoint's own files. This stack serves it on vLLM with
+n-gram (PLE) table in NVFP4 inside the checkpoint's own files. This stack serves it on vLLM (b12x build 8244d1c) with
 NVIDIA's b12x kernels and its MTP head drafting 4 tokens, as a lane of its own beside the
 [flash lane](qwen38-flash-next.md), which serves the same model on SGLang. The lane comes from
 Dimitris Kontokostas's pull request #55.

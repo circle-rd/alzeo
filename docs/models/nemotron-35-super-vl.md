@@ -2,7 +2,7 @@
 
 NVIDIA's big vision-language model, `nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-NVFP4`, with a
 **1M-token window**, its LiLiCorr drafter, and NVIDIA's b12x on the same vLLM image as the Bolt
-lane. It holds the whole window with four requests at a time on one 128 GB box.
+lane (vLLM nightly 77154ca6 + b12x 1.5.1). It holds the whole window with four requests at a time on one 128 GB box.
 
 ## One command
 

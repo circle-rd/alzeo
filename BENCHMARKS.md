@@ -8,7 +8,7 @@ stock DGX OS), with the page that measured it and gives its date, version and me
 | Lane | Headline | Measured in |
 |---|---|---|
 | Qwen3.8-27B, NVFP4 + DFlash2 | **65.2 and 68.5 tok/s** greedy median (`./bench.sh`, two runs, 2026-11-05, SGLang v0.5.22 without torch.compile as v1.44.0 serves it), 44.0 tok/s alone and 80.6 in all at 4 requests on SGLang's official benchmark (8,192 tokens in, 1,024 out), 1M context; GSM8K 99.2% (250 questions) | [README](README.md#what-speed-and-quality-to-expect), [the boot lottery](#the-boot-lottery-and-how-we-killed-it-2026-08-20) |
-| Qwen3.8-Flash-Next 176B, NVFP4 + NEXTN, on one box | **47.9 tok/s** on code at the `context` tier; GSM8K 97.41% (1,314), MMLU 90.8% (500), HumanEval 95.73% (164) | [docs/flash-lane.md](docs/flash-lane.md), [RadixArk against NVIDIA](#radixark-against-nvidia-head-to-head-2026-09-18) |
+| Qwen3.8 Flash-Next (176B), NVFP4 + NEXTN, on one box | **47.9 tok/s** on code at the `context` tier; GSM8K 97.41% (1,314), MMLU 90.8% (500), HumanEval 95.73% (164) | [docs/flash-lane.md](docs/flash-lane.md), [RadixArk against NVIDIA](#radixark-against-nvidia-head-to-head-2026-09-18) |
 | Flash FP4-Local, NVIDIA's FP4 build of the flash model on vLLM | **55.4 tok/s** greedy median (`./bench.sh`, at its default effort, `xhigh`); at the `lean` effort, 47.4 tok/s alone and 106.6 in all at 8 streams on real text, GSM8K 97.64% (1,314), HumanEval 98.17% (164) | [docs/flash-local-lane.md](docs/flash-local-lane.md) |
 | Kolibri-1, Aleph Alpha's FP8 on vLLM | **48.0 / 121.9 / 165.8 / 202.0 tok/s** at 1 / 4 / 8 / 16 streams | [docs/kolibri-lane.md](docs/kolibri-lane.md) |
 | Nemotron 3.5 Bolt 74B on vLLM, with its drafter | **140 tok/s** rewriting code, one request, reasoning off; 74.8 / 113.4 / 163.6 / 201.2 tok/s at 1 / 4 / 8 / 16 streams | [docs/nemotron-lane.md](docs/nemotron-lane.md) |
@@ -380,7 +380,7 @@ unit and measured with the same probes:
 | probe | measured |
 |---|---|
 | boot to `/health` | 10 min 40 s |
-| KV pool | **473,664 tokens** (above the stock export's 454,016 on that pair of boots) |
+| KV pool | **473,664 tokens** (above the 454,016 of RadixArk's export on that pair of boots) |
 | decode, code / math / prose FR | 45.4-46.4 / 43.7-46.6 / 27.3-27.7 tok/s (2 repeats after a warm-up) |
 | **refusals** | **0 of 5** deliberately blunt probes, which is the point of the variant |
 | quality canaries | 4/4 |

@@ -6,7 +6,7 @@
 <p align="center"><a href="#see-it-in-49-seconds">Watch the 49-second tour, with sound</a></p>
 <p align="center"><a href="https://hasso5703.github.io/">The website: every model measured, guides, every GB10 machine</a></p>
 
-**Qwen3.8-27B at 65.2 to 68.5 tok/s with a 1M context, Qwen3.8-Flash-Next 176B on a single box, images,
+**Qwen3.8-27B at 65.2 to 68.5 tok/s with a 1M context, Qwen3.8 Flash-Next (176B) on a single box, images,
 video, Kolibri-1, Nemotron 3.5 Bolt, Nemotron 3.5 Super VL and Ornith 1.5 122B: installed and pinned by one command**, the lane that serves proved before it ends and every other built at its first Load, on a DGX Spark or another
 GB10 box such as the ASUS Ascent GX10. No prompt, image or video leaves the box.
 
@@ -25,7 +25,7 @@ its folder and services keep their names, and every old address of the repositor
 | Model | Measured on the reference box, an ASUS Ascent GX10 |
 |---|---|
 | Qwen3.8-27B, NVFP4 + DFlash2 | **65.2 and 68.5 tok/s** greedy median (two runs), 44.0 alone and 80.6 at 4 requests on 8,192-token prompts, 1M context (2026-11-05) |
-| Qwen3.8-Flash-Next 176B, on **one** box | **47.9 tok/s** on code (`FLASH_TIER=context`), 262K context |
+| Qwen3.8 Flash-Next (176B), on **one** box | **47.9 tok/s** on code (`FLASH_TIER=context`), 262K context |
 | Qwen-Image 2.1, 1024×1024 | **7.5 s** with its Turbo, 34 s without |
 
 A second ASUS Ascent GX10, set up from scratch with that one command: [what it measured](docs/asus-gx10.md).
@@ -79,7 +79,7 @@ its test on the 27B, Qwen-Image 2.1 made the image in 40 steps and MiniMax-H3 th
 
 One command installs a boot-persistent, hardened serving stack on a single DGX Spark,
 and it is not one model: **large language models** (the Qwen3.8 family, seven
-switchable targets, 27B at 71 tok/s and Flash-Next 176B on one box), **typed decisions**
+switchable targets, 27B at 71 tok/s and Qwen3.8 Flash-Next (176B) on one box), **typed decisions**
 (a System One endpoint speaking TypeSafe's Jev contract: calibrated probabilities
 instead of generated text), **image generation** (Qwen-Image 2.1) and **video generation**
 (MiniMax-H3), and on vLLM **Aleph Alpha's Kolibri-1** since v1.29, **NVIDIA's Nemotron 3.5
@@ -93,13 +93,13 @@ The two Qwen text lanes come with **seven switchable targets**, and speculation 
 
 | target | model | engine | headline (measured here) |
 |---|---|---|---|
-| `stock` (default) | Qwen3.8-27B NVFP4 | SGLang + DFlash2 | **65.2 and 68.5 tok/s** greedy median, 44.0 alone and 80.6 at 4 requests on 8,192-token prompts (2026-11-05), 1M context by default |
-| `uncensored` | Qwen3.8-27B abliterated NVFP4 | SGLang + DFlash2 | same speed and serving path as stock |
-| `fp8` | Qwen3.8-27B FP8, Qwen's own release | SGLang + DFlash2 | the quantization reference: 108 tok/s aggregate at 8 streams, ~92K less KV pool |
-| `uncensored-fp8` | Qwen3.8-27B abliterated FP8 | SGLang + DFlash2 | same serving path and same cost as `fp8` |
-| `flash` (default of its lane) | **Qwen3.8-Flash-Next 176B** hybrid MoE NVFP4 | SGLang + NEXTN | **47.9 tok/s on code, 47.1 on math, 29-31 on prose, 27.0 ms/tok on an agent loop (all at the `context` tier), prefix caching, vision**, 262K on ONE box |
-| `flash-uncensored` | the **abliterated** build of that same tree | SGLang + NEXTN | 205 of 206 shards identical in size to stock, so the same flags: 45-46 on code, **0 refusals of 5** |
-| `flash-nvda` | the same 176B from NVIDIA's mixed-precision export | SGLang + NEXTN | same N-gram table byte for byte, its own expert calibration: ties `flash` on every quality probe, with a KV pool about 9% smaller |
+| `stock` (default) | Qwen3.8 27B NVFP4 · RadixArk | SGLang 0.5.22 + DFlash2 | **65.2 and 68.5 tok/s** greedy median, 44.0 alone and 80.6 at 4 requests on 8,192-token prompts (2026-11-05), 1M context by default |
+| `uncensored` | Qwen3.8 27B abliterated NVFP4 · edp1096 | SGLang 0.5.22 + DFlash2 | same speed and serving path as `stock` |
+| `fp8` | Qwen3.8 27B FP8 · Qwen, Qwen's own release | SGLang 0.5.22 + DFlash2 | the quantization reference: 108 tok/s aggregate at 8 streams, ~92K less KV pool |
+| `uncensored-fp8` | Qwen3.8 27B abliterated FP8 · edp1096 | SGLang 0.5.22 + DFlash2 | same serving path and same cost as `fp8` |
+| `flash` (default of its lane) | **Qwen3.8 Flash-Next NVFP4 · RadixArk**, a 176B hybrid MoE | SGLang nightly 53295c6 + NEXTN | **47.9 tok/s on code, 47.1 on math, 29-31 on prose, 27.0 ms/tok on an agent loop (all at the `context` tier), prefix caching, vision**, 262K on ONE box |
+| `flash-uncensored` | Qwen3.8 Flash-Next abliterated NVFP4 · dealignai, the **abliterated** build of that same tree | SGLang nightly 53295c6 + NEXTN | 205 of 206 shards identical in size to `flash`, so the same flags: 45-46 on code, **0 refusals of 5** |
+| `flash-nvda` | Qwen3.8 Flash-Next NVFP4 · NVIDIA, the same 176B from NVIDIA's mixed-precision export | SGLang nightly 53295c6 + NEXTN | same N-gram table byte for byte, its own expert calibration: ties `flash` on every quality probe, with a KV pool about 9% smaller |
 
 The 27B path is the fastest configuration measured so far on GB10 (**SGLang + NVFP4 + DFlash2 speculative decoding with deterministic kernels, drafting from a calibrated NVFP4 head 16 deep**): **65.2 and 68.5 tok/s greedy median on `./bench.sh`** on 2026-11-05, two runs on SGLang v0.5.22 without torch.compile, the lane v1.44.0 serves (44.0 tok/s alone and 80.6 in all at 4 requests on SGLang's official benchmark, 8,192 tokens in and 1,024 out, GSM8K 99.2% on 250 questions; with torch.compile the same day, 71.0 and 67.4 on `./bench.sh`, 42.9 and 77.0 on the official benchmark, see the CHANGELOG). Before: 71.4 measured 2026-09-17 on SGLang v0.5.19, when this lane moved to the official release image (on v0.5.21 since v1.23: the same 105 to 108 ms per drafter step; on v0.5.22 since v1.39, faster at 1 and 4 streams in the same night's A/B), against 69.8 on the image it replaced and 65.3 on the v1.9 campaign before it (per probe then: code 64.2-65.3, reasoning 65.3-66.2, math 56.6-71.3, prose 23.0-24.7). Free prose is the slow case on any drafter. **135-148 tok/s aggregate at 8 concurrent streams, 258 at 32** (carried over from the v1.2 battery; the draft only helps concurrency, re-measure on your box with `./bench-matrix.sh`). Reproducible to the decimal across boots in the August study, once the kernels were made deterministic (BENCHMARKS.md, "The boot lottery"); on 2026-11-05, two runs on one boot of the lane v1.44.0 serves gave 65.2 and 68.5.
 
@@ -246,7 +246,7 @@ Everything below is optional and combinable. Variables ride on the `bash` side o
 
 | Choice | How | Default | Notes |
 |---|---|---|---|
-| Model | `MODEL_CHOICE=stock`, `uncensored`, `fp8`, `uncensored-fp8`, `flash`, `flash-uncensored`, `flash-nvda` | `stock` | 27B NVFP4 stock or abliterated, the same pair in Qwen's FP8, or Flash-Next 176B in one of three NVFP4 exports (see the seven targets) |
+| Model | `MODEL_CHOICE=stock`, `uncensored`, `fp8`, `uncensored-fp8`, `flash`, `flash-uncensored`, `flash-nvda` | `stock` | Qwen3.8 27B in NVFP4 (RadixArk's build, or edp1096's abliterated one), the same pair in FP8 (Qwen's own, or edp1096's abliterated one), or Qwen3.8 Flash-Next in one of three NVFP4 builds (RadixArk, dealignai's abliterated one, NVIDIA) (see the seven targets) |
 | Reduced draft vocabulary | `SPEC_TOKEN_MAP_SIZE=65536`, or `0` to serve without it | `65536` | flash only: hands the speculative draft the target's `lm_head` sliced to that many rows, which is 14 to 25% of decode and cannot change what the model may say |
 | Flash serving tier | `FLASH_TIER=context`, `concurrency`, `throughput` | **`concurrency`** since 2026-09-30 | flash only: 8 concurrent requests with 2 states per path (default; pool measured 477,056 tokens, so a full 262K prompt fits at 8 too, and opencode gets 205,000 tokens of context and 32,000 of output on it as on `context`), 4 requests so that long sessions queue less, or 24 without speculation |
 | Reasoning effort | `lean` (default), `xhigh`, `medium`, `low` | **`lean`** | the level this repo adds and defaults to: 74 words in the chat template that cost 0.71x the thinking tokens of `medium` on 364 public problems and 0.436x on 58 underspecified requests, with no measured quality cost. Qwen's three levels are left byte-identical. `LEAN_DEFAULT=0 ./install.sh` installs it without taking the default. Numbers, method and negative results in [LEAN.md](LEAN.md) |
@@ -272,14 +272,14 @@ Combinations that make sense:
 
 ```bash
 # one-liner forms (variables on the bash side, flags after "bash -s --")
-curl -fsSL https://get.alzeo.ai | bash                                  # 27B stock serving (1M), opencode, cockpit; every other lane prepared at its first Load
+curl -fsSL https://get.alzeo.ai | bash                                  # Qwen3.8 27B NVFP4 serving (1M), opencode, cockpit; every other lane prepared at its first Load
 curl -fsSL https://get.alzeo.ai | bash -s -- --all-weights              # the whole box now, every lane built and proved (about 763 GB of downloads, 930 of disk)
 curl -fsSL https://get.alzeo.ai | bash -s -- --no-flash --no-video --no-kolibri --no-nemotron --no-nemotron-super --no-flash-local --no-ornith-122b   # a smaller disk: the 27B and images only, on each run that passes them
 curl -fsSL https://get.alzeo.ai | CONTEXT_MODE=native bash              # the 262144 window instead
-curl -fsSL https://get.alzeo.ai | MODEL_CHOICE=flash bash               # Flash-Next lane (service only)
+curl -fsSL https://get.alzeo.ai | MODEL_CHOICE=flash bash               # Qwen3.8 Flash-Next lane (service only)
 curl -fsSL https://get.alzeo.ai | bash -s -- --no-opencode              # API only, no opencode files
 curl -fsSL https://get.alzeo.ai | bash -s -- --no-cockpit               # engine and proxy only, no web UI
-curl -fsSL https://get.alzeo.ai | MODEL_CHOICE=uncensored bash           # abliterated 27B, 1M context
+curl -fsSL https://get.alzeo.ai | MODEL_CHOICE=uncensored bash           # Qwen3.8 27B abliterated NVFP4, 1M context
 # clone forms
 ./install.sh --no-service && ./run.sh                    # no systemd, foreground, Ctrl+C stops it (128 GB box)
 CONTEXT_MODE=native ./install.sh                         # the 262144 window on a 1M box
@@ -646,7 +646,7 @@ re-run keeps the window the box chose, both directions. What it costs, the boot 
 the pool, the proxy guards it makes load-bearing, the 535,361-token field session, and how to go
 back: **[docs/context-1m.md](docs/context-1m.md)**.
 
-## The flash lane: Qwen3.8-Flash-Next 176B on one Spark
+## The flash lane: Qwen3.8 Flash-Next (176B) on one Spark
 
 Qwen's official validation environment for this model is a dual GB300 node and the public Spark
 recipes run it on two boxes. This lane runs it on **one**, at the model's full 262K window and
@@ -667,22 +667,25 @@ The same generated config is also the single source for **[pi](https://pi.dev)**
 
 ## The seven Qwen targets, and switching between them
 
-| choice | checkpoint | revision | engine, unit |
-|---|---|---|---|
-| `stock` (default) | `RadixArk/Qwen3.8-27B-NVFP4` | `52d1adc` | SGLang, `qwen38-sglang` |
-| `uncensored` | `edp1096/Huihui-RadixArk-Qwen3.8-27B-abliterated-NVFP4` | `21565d3` | SGLang, `qwen38-sglang` |
-| `fp8` | `Qwen/Qwen3.8-27B-FP8` | `017b9c7` | SGLang, `qwen38-sglang` |
-| `uncensored-fp8` | `edp1096/Huihui-Qwen3.8-27B-abliterated-FP8` | `603028a` | SGLang, `qwen38-sglang` |
-| `flash` | `RadixArk/Qwen3.8-Flash-Next-NVFP4` | `7b71922` | SGLang, `qwen38-flash` |
-| `flash-uncensored` | `dealignai/Qwen3.8-Flash-Next-ABLITERATED-NVFP4` | `be794b9` | SGLang, `qwen38-flash` |
-| `flash-nvda` | `nvidia/Qwen3.8-Flash-Next-NVFP4` | `fc694b5` | SGLang, `qwen38-flash` |
+| choice | version, as the cockpit names it | checkpoint | revision | engine, unit |
+|---|---|---|---|---|
+| `stock` (default) | Qwen3.8 27B NVFP4 · RadixArk | `RadixArk/Qwen3.8-27B-NVFP4` | `52d1adc` | SGLang 0.5.22, `qwen38-sglang` |
+| `uncensored` | Qwen3.8 27B abliterated NVFP4 · edp1096 | `edp1096/Huihui-RadixArk-Qwen3.8-27B-abliterated-NVFP4` | `21565d3` | SGLang 0.5.22, `qwen38-sglang` |
+| `fp8` | Qwen3.8 27B FP8 · Qwen | `Qwen/Qwen3.8-27B-FP8` | `017b9c7` | SGLang 0.5.22, `qwen38-sglang` |
+| `uncensored-fp8` | Qwen3.8 27B abliterated FP8 · edp1096 | `edp1096/Huihui-Qwen3.8-27B-abliterated-FP8` | `603028a` | SGLang 0.5.22, `qwen38-sglang` |
+| `flash` | Qwen3.8 Flash-Next NVFP4 · RadixArk | `RadixArk/Qwen3.8-Flash-Next-NVFP4` | `7b71922` | SGLang nightly 53295c6, `qwen38-flash` |
+| `flash-uncensored` | Qwen3.8 Flash-Next abliterated NVFP4 · dealignai | `dealignai/Qwen3.8-Flash-Next-ABLITERATED-NVFP4` | `be794b9` | SGLang nightly 53295c6, `qwen38-flash` |
+| `flash-nvda` | Qwen3.8 Flash-Next NVFP4 · NVIDIA | `nvidia/Qwen3.8-Flash-Next-NVFP4` | `fc694b5` | SGLang nightly 53295c6, `qwen38-flash` |
+
+The ids in the first column are what `MODEL_CHOICE`, `./switch-model.sh` and the cockpit's API take; they did not change
+when the cockpit took the official names (v1.45.0).
 
 `./switch-model.sh` also takes `image`, `image-turbo`, `video`, `kolibri`, `kolibri-nvfp4`, `nemotron`, `nemotron-super`, `flash-local` and `ornith-122b`: each lane's section above says what it serves.
 
 `flash-uncensored` is the abliterated build of the tree this lane already
 serves, and it was chosen on evidence rather than on downloads: of the
 abliterated Flash-Next exports published for this architecture, this one has
-**206 shards with the same names as the stock export and 205 of them
+**206 shards with the same names as RadixArk's export and 205 of them
 byte-identical in size**, the same index, the same `hf_quant_config` and the same
 chat template. It is an abliteration OF what this lane serves, so every serving
 flag transfers unchanged, MTP and the vision tower included. Validated here:
@@ -737,11 +740,11 @@ holding 74 GB of the 124). Both downloaders now answer that one refusal by
 retrying the repo that hit it with Xet, then turning Xet back off, so this
 target installs with the same command as the other six.
 
-The uncensored target is huihui-ai's abliteration of Qwen3.8-27B re-quantized
-with the identical RadixArk modelopt NVFP4 recipe (verified: same
+The `uncensored` target, Qwen3.8 27B abliterated NVFP4 · edp1096, is huihui-ai's abliteration of Qwen3.8 27B
+re-quantized with the identical RadixArk modelopt NVFP4 recipe (verified: same
 `text_config`, same mixed 8-bit attention / 4-bit MLP quant groups, same
 chat template, MTP + vision intact, ~22 GB). It refuses the least while keeping
-the stock NVFP4 serving path.
+the serving path of RadixArk's NVFP4 build.
 
 **NVIDIA published its own 27B NVFP4 export on 2026-09-08**
 ([`nvidia/Qwen3.8-27B-NVFP4`](https://huggingface.co/nvidia/Qwen3.8-27B-NVFP4)), and it

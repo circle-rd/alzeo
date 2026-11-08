@@ -1,6 +1,6 @@
 # MiniMax-H3 on a DGX Spark (video with sound)
 
-`MiniMaxAI/MiniMax-H3`, text to video **with sound**, served by SGLang Diffusion in its own venv on
+`MiniMaxAI/MiniMax-H3`, text to video **with sound**, served by SGLang Diffusion 0.5.21 in its own venv on
 the same box as your text lanes, with none of the offload flags.
 
 ## One command

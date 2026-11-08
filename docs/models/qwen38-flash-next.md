@@ -1,10 +1,10 @@
-# Qwen3.8-Flash-Next 176B on a single DGX Spark
+# Qwen3.8 Flash-Next (176B) on a single DGX Spark
 
-A 176B hybrid MoE in NVFP4 on **one** box, no second Spark, served by SGLang with its NEXTN drafter.
+A 176B hybrid MoE in NVFP4 on **one** box, no second Spark, served by SGLang (nightly 53295c6) with its NEXTN drafter.
 Its 47.7 GiB FP8 n-gram (PLE) table lives in a sparse file on NVMe while the unified pool goes to
 the compute weights and a real KV cache. Three builds share the lane: `flash`, RadixArk's export and
-the default, `flash-nvda`, NVIDIA's mixed-precision export, and `flash-uncensored`, an abliterated
-build.
+the default (Qwen3.8 Flash-Next NVFP4 · RadixArk), `flash-nvda`, NVIDIA's mixed-precision export (Qwen3.8 Flash-Next NVFP4 ·
+NVIDIA), and `flash-uncensored`, an abliterated build (Qwen3.8 Flash-Next abliterated NVFP4 · dealignai).
 
 ## One command
 

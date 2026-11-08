@@ -1,6 +1,6 @@
 # Qwen-Image 2.1 on a DGX Spark (text to image in 7.5 s)
 
-`Qwen/Qwen-Image-2.1` served by SGLang Diffusion in its own venv: text to image, image editing and
+`Qwen/Qwen-Image-2.1` served by SGLang Diffusion 0.5.21 in its own venv: text to image, image editing and
 native RGBA (transparent output) on the same box as your text lanes.
 
 ## One command

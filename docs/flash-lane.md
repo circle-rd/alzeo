@@ -1,4 +1,4 @@
-# The flash lane: Qwen3.8-Flash-Next 176B on one Spark
+# The flash lane: Qwen3.8 Flash-Next (176B) on one Spark
 
 How a 176B hybrid MoE serves on a single GB10, the three serving tiers, and what each one measured on this box.
 

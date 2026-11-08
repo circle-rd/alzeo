@@ -1,7 +1,7 @@
 # Nemotron 3.5 Bolt on a DGX Spark (64 GB boxes too)
 
-NVIDIA's Nemotron 3.5 Bolt, which reads images and video and reasons, served on the
-[Nemotron lane](../nemotron-lane.md) on vLLM with NVIDIA's b12x kernels and its drafter. A new 64 GB
+NVIDIA's Nemotron 3.5 Bolt (Nemotron 3.5 Bolt 24GB · NVIDIA in the cockpit), which reads images and video and reasons, served on the
+[Nemotron lane](../nemotron-lane.md) on vLLM (nightly 77154ca6 + b12x 1.5.1) with NVIDIA's b12x kernels and its drafter. A new 64 GB
 Spark ends its install on it.
 
 ## One command
