@@ -25,6 +25,12 @@ one a pause of the other box that its seconds used to let run out: an instrument
 else this release ships is read by an engine, the proxy or the Agent tab's opencode-web: it changes the CI and the
 tests only.
 
+**After the push.** GitHub's CI passed on f7e61d7, 89 steps, none skipped. The reference box updated in 1 min 35 s
+by the README's command (get.alzeo.ai), nothing of its owner's differing from the recommended state: the engine and
+the proxy kept running, the cockpit and the Agent tab's opencode-web restarted. On the 27B the production checks
+passed, and so did the eight real clients: Claude Code, opencode, Hermes, pi, the OpenAI and Anthropic SDKs, fetch
+under Node and under Bun, and LiteLLM. The cockpit showed no banner on any of its views.
+
 ## v1.44.2 (2026-11-07): the Qwen4 27B card opens the rack
 
 **The Qwen4 27B card opens the rack.** The card that announces the lane to come sat after the 27B it will follow. It
