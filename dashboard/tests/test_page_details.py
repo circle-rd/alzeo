@@ -299,6 +299,13 @@ class ThePageFitsEveryScreen(unittest.TestCase):
         self.assertIn("grid-template-columns:repeat(auto-fit,minmax(min(100%,240px),1fr))", d)
         self.assertNotIn("1fr1fr", d)
 
+    def test_a_toolbar_field_is_never_wider_than_its_row(self):
+        # captures of 2026-11-08: the Logs source, as wide as "Qwen3.8 Flash-Next FP4-Local container", ran 11 px off
+        # a 375 px phone
+        (d,) = self.rules(".toolbar .input")
+        self.assertIn("max-width:100%", d)
+        self.assertIn("min-width:0", d)
+
     def test_a_views_head_is_its_name_with_its_sentence_beside_it(self):
         (h1,) = self.rules(".vhead h1")
         self.assertIn("font-size:var(--t-24)", h1)
