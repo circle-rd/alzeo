@@ -182,7 +182,7 @@ function soonBay(){
   if (b27 && rack.firstChild !== SOON_BAY) rack.insertBefore(SOON_BAY, rack.firstChild);
 }
 
-// ── the spine's serving capsule and the lede ──────────────────────────────────
+// ── the spine's serving capsule ───────────────────────────────────────────────
 function renderServing(){
   const s = servingEngine();
   if (!s){
@@ -192,7 +192,6 @@ function renderServing(){
     const u = bootUnit();
     setText('serving-sub', !F.units || !Object.keys(F.units).length ? '' : u ? `${LANE_NAME[u]} starts at boot; load a lane from Lanes`
       : bootKnown() ? 'no lane starts at boot; load one from Lanes' : 'load a lane from Lanes');
-    setText('now-lede', 'No lane holds the box right now. Pick one in the rack to load it.');
     sayOnce('lane', 'nothing serving');
     return;
   }
@@ -216,19 +215,6 @@ function renderServing(){
   // the engine first, what it does after: « SGLang 0.5.22 · idle, KV pool 3 %, up 2 h » (decision 1178)
   setText('serving-sub', [engineLabel(unit), sub].filter(Boolean).join(' · '));
   sayOnce('lane', `${laneLabel(unit)}: ${stateLabel(e)}`);
-  // the lede: one sentence about the box, in words
-  let lede;
-  if (e.zombie) lede = `${laneLabel(unit)} lost its scheduler: its server answers nothing.`;
-  else if (e.held) lede = `${laneLabel(unit)} is not up yet: it waits for the last engine's GPU memory to come back.`;
-  else if (st === 'ready' || st === 'degraded') lede = `${laneLabel(unit)} holds the box` + (e.elapsed ? ` and has served for ${fmtDur(e.elapsed)}` : '') + '. ' +
-    (unit === VIDEO_UNIT ? (VID_NOW.label ? `It is ${VID_NOW.label}.` : 'It is idle.') : unit === IMAGE_UNIT ? (IMG_NOW.label ? `It is ${IMG_NOW.label}.` : 'It is idle.')
-      : (runningReqs(l) ? `${runningReqs(l)} request${runningReqs(l) > 1 ? 's are' : ' is'} running` : 'No request is running')
-        + (F.prompt && runningReqs(l) === 1 ? `, ${promptWords(F.prompt)}` : '')
-        + (waitingReqs(l) ? `, ${waitingReqs(l)} waiting.` : '.'));
-  else if (TRANSITIONAL.has(st)) lede = `${laneLabel(unit)} is booting: ${STATE_LABEL[st]}.`;
-  else if (st === 'stopping') lede = `${laneLabel(unit)} is stopping.`;
-  else lede = `${laneLabel(unit)} is ${STATE_LABEL[st] || st}.`;
-  setText('now-lede', lede);
 }
 
 // ── activity: what the seated lane is doing ───────────────────────────────────
@@ -273,7 +259,10 @@ function renderActivity(){
   setText('act-title', 'Requests'); setText('act-v', String(n)); setText('act-k', (n ? 'running' : 'nothing running') + (n || w ? `, ${w} waiting` : ''));
   push('act', n, 180); drawSpark($('act-spark'), 'act', cssVar('--brand'), Math.max(4, F.maxRun || 4), {empty: 'quiet so far'});
   const held = physTokens(l);
-  facts(fx, [['KV pool held', F.pool ? `${fmtN(held)} of ${fmtN(F.pool)} tokens` : 'waiting for the engine'],
+  // a long prompt the cache could not serve, with how far it has got, so a wait is not taken for a hang (issue #61;
+  // said by the Now view's lede before, gone with it on 2026-11-08)
+  facts(fx, [['Computing its prompt', n === 1 && F.prompt ? promptProgress(F.prompt) : null, 'wrap'],
+             ['KV pool held', F.pool ? `${fmtN(held)} of ${fmtN(F.pool)} tokens` : 'waiting for the engine'],
              ['One prompt, at most', singleLimit() ? `about ${fmtK(singleLimit())} tokens` : null],
              ['Generation probe', F.canaryTxt || null], ['Up', e.elapsed ? fmtDur(e.elapsed) : null]]);
 }

@@ -1274,8 +1274,10 @@ const fmtAtLeast = s => {
   const m = Math.floor(s / 60);
   return m < 60 ? m + ' min' : Math.floor(m / 60) + ' h ' + String(m % 60).padStart(2, '0');
 };
-const promptWords = p => !p ? '' : `computing its prompt: ${Math.round(100 * p.share)} % of ${fmtN(p.tokens)} tokens after ${fmtDur(p.elapsed)}`
+// how far a prompt the cache could not serve has got (issue #61): the Activity panel of Now, and the feed's row
+const promptProgress = p => !p ? '' : `${Math.round(100 * p.share)} % of ${fmtN(p.tokens)} tokens after ${fmtDur(p.elapsed)}`
   + (p.left_min_s != null ? `, at least ${fmtAtLeast(p.left_min_s)} left` : p.share >= 0.99 ? ', almost done' : '');
+const promptWords = p => !p ? '' : `computing its prompt: ${promptProgress(p)}`;
 
 // ── wiring the shell ──────────────────────────────────────────────────────────
 function wireShell(){

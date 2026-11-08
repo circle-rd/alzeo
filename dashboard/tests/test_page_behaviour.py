@@ -896,15 +896,17 @@ class ALongPromptIsSaidWhileItIsComputed(unittest.TestCase):
                          secs: null, age: 760.2, kind: 'live', outcome: 'in flight', detail: null}]}});
     feed({metrics: {lane: 'qwen38-ornith-122b.service', requests: 0, watched_s: 160}});
     const row = $('feed').tBodies[0].rows[0];
-    report({lede: txt('now-lede'), cap: txt('tr-cap'), took: row.cells[4].textContent,
+    report({act: txt('act-facts'), cap: txt('tr-cap'), took: row.cells[4].textContent,
             outcome: row.cells[5].textContent, wm: txt('wm-cap')});
     """
     PROMPT = "{tokens: 494089, held: 312000, share: 0.631, elapsed: 760, left_min_s: 380}"
 
     def test_how_far_the_prompt_has_got_and_a_floor_of_the_time_left(self):
         r = run(self, self.BODY % self.PROMPT)
-        said = "computing its prompt: 63 % of 494,089 tokens after 12 min 40, at least 6 min left"
-        self.assertIn(f"1 request is running, {said}.", r["lede"])
+        progress = "63 % of 494,089 tokens after 12 min 40, at least 6 min left"
+        said = "computing its prompt: " + progress
+        # on Now, the Activity panel says it: the view's lede, which said it first, is gone (Hasan, 2026-11-08)
+        self.assertIn("Computing its prompt" + progress, r["act"])
         self.assertEqual(r["cap"], "1 running, computing a prompt")
         self.assertEqual(r["took"], "12 min 40", "the request in flight says how long it has been so")
         self.assertIn(said, r["outcome"])
@@ -912,8 +914,7 @@ class ALongPromptIsSaidWhileItIsComputed(unittest.TestCase):
 
     def test_without_a_prompt_being_computed_the_page_says_what_it_said(self):
         r = run(self, self.BODY % "null")
-        self.assertIn("1 request is running.", r["lede"])
-        self.assertNotIn("computing", r["lede"] + r["cap"] + r["outcome"])
+        self.assertNotIn("computing", (r["act"] + r["cap"] + r["outcome"]).lower())
         self.assertEqual(r["cap"], "1 running")
         self.assertEqual(r["took"], "12 min 40")
         self.assertEqual(r["wm"], "quiet")
@@ -924,11 +925,12 @@ class ALongPromptIsSaidWhileItIsComputed(unittest.TestCase):
                            (90, "at least 1 min left")):
             with self.subTest(left=left):
                 r = run(self, self.BODY % f"{{tokens: 494089, held: 312000, share: 0.631, elapsed: 760, left_min_s: {left}}}")
-                self.assertIn(said, r["lede"])
+                self.assertIn(said, r["act"])
 
     def test_near_its_end_no_floor_is_said(self):
         r = run(self, self.BODY % "{tokens: 494089, held: 489148, share: 0.99, elapsed: 1121, left_min_s: null}")
-        self.assertIn("computing its prompt: 99 % of 494,089 tokens after 18 min 41, almost done.", r["lede"])
+        self.assertIn("Computing its prompt99 % of 494,089 tokens after 18 min 41, almost done", r["act"])
+        self.assertIn("computing its prompt: 99 % of 494,089 tokens after 18 min 41, almost done", r["outcome"])
 
 
 class ALongPromptSentAgainIsSaid(unittest.TestCase):
@@ -1034,7 +1036,7 @@ class RunningIsWhatTheEngineRuns(unittest.TestCase):
     BODY = r"""
     feed({config: CONFIG, units: UNITS, lifecycle: life({'qwen38-sglang.service': eng('ready')}),
           engine_fast: {load: [{num_reqs: %d, num_waiting_reqs: %d, num_tokens: 1000, num_used_tokens: 1000}]}});
-    report({run: txt('tr-run'), wait: txt('tr-wait'), cap: txt('tr-cap'), lede: txt('now-lede'),
+    report({run: txt('tr-run'), wait: txt('tr-wait'), cap: txt('tr-cap'),
             sub: txt('serving-sub'), act: txt('act-v'), actk: txt('act-k'), series: SERIES.req.slice(-1)[0]});
     """
 
@@ -1042,7 +1044,6 @@ class RunningIsWhatTheEngineRuns(unittest.TestCase):
         r = run(self, self.BODY % (5, 3))
         self.assertEqual((r["run"], r["wait"]), ("2", "3"), r)
         self.assertEqual(r["cap"], "2 running, 3 waiting", r)
-        self.assertIn("2 requests are running, 3 waiting", r["lede"])
         self.assertTrue(r["sub"].startswith("2 running, 3 waiting"), r)
         self.assertEqual((r["act"], r["actk"]), ("2", "running, 3 waiting"), r)
         self.assertEqual(r["series"], 2, r)
@@ -1052,18 +1053,39 @@ class RunningIsWhatTheEngineRuns(unittest.TestCase):
         r = run(self, self.BODY % (3, 3))
         self.assertEqual((r["run"], r["wait"]), ("0", "3"), r)
         self.assertEqual(r["cap"], "3 waiting", r)
-        self.assertIn("No request is running, 3 waiting", r["lede"])
         self.assertEqual((r["act"], r["actk"]), ("0", "nothing running, 3 waiting"), r)
 
     def test_one_running_reads_singular_and_idle_reads_idle(self):
         r = run(self, self.BODY % (1, 0))
         self.assertEqual((r["run"], r["cap"]), ("1", "1 running"), r)
-        self.assertIn("1 request is running.", r["lede"])
+        self.assertEqual((r["act"], r["actk"]), ("1", "running, 0 waiting"), r)
         r = run(self, self.BODY % (0, 0))
         self.assertEqual((r["run"], r["wait"], r["cap"]), ("0", "0", "idle"), r)
-        self.assertIn("No request is running.", r["lede"])
         self.assertEqual((r["act"], r["actk"]), ("0", "nothing running"), r)
 
+
+
+class TheNowViewStartsWithThePool(unittest.TestCase):
+    """Hasan, 2026-11-08 (capture, MacBook): "Now" in 40 px over a sentence that said the capsule again (« 27B stock
+    holds the box and has served for 22 h 22. No request is running. ») took 100 px above the memory pool for
+    nothing: the rail already says Now, the capsule says what serves, its state, its load and how long it has been up."""
+
+    def test_its_title_is_for_screen_readers_and_no_sentence_repeats_the_capsule(self):
+        r = run(self, r"""
+        feed({config: CONFIG, units: UNITS, lifecycle: life({'qwen38-sglang.service': eng('ready')}),
+              engine_fast: {load: [{num_reqs: 0, num_waiting_reqs: 0, num_tokens: 1000, num_used_tokens: 0}]}});
+        const v = $('view-now'), h = $('h-now');
+        report({sr: h.classList.contains('sr'), labelled: v.getAttribute('aria-labelledby'), head: !!v.querySelector('.vhead'),
+                lede: !!$('now-lede'), kids: v.children.map(c => c.id || c.localName), sub: txt('serving-sub')});
+        """)
+        self.assertTrue(r["sr"], r)
+        self.assertEqual(r["labelled"], "h-now")
+        self.assertFalse(r["head"], r)
+        self.assertFalse(r["lede"], r)
+        self.assertEqual(r["kids"][:2], ["h-now", "pool"], "the pool comes first on screen")
+        # what the sentence said, the capsule says: idle, up 10 min
+        self.assertIn("idle", r["sub"])
+        self.assertIn("up 10 min", r["sub"])
 
 
 class EachVersionIsNamedOnce(unittest.TestCase):
