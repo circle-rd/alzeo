@@ -246,6 +246,39 @@ class AStopSaysItStops(unittest.TestCase):
         self.assertNotIn("start", (r["between"] + r["toast"]).lower())
 
 
+class ThePageFitsEveryScreen(unittest.TestCase):
+    """Hasan, 2026-11-08: "que le cockpit s'affiche bien partout, mobile, énorme écran, tablette, pc". A user's capture at
+    2563 px (issue #64) showed the page held at 1560 px on the left of the screen and nothing on the rest, and every
+    view's head took about 100 px, a 40 px title over its sentence (captures at ten sizes, from 3440 px to 375 px)."""
+
+    def rules(self, selector, media=None):
+        return [d.replace(" ", "") for s, m, d in css_rules()
+                if selector in [x.strip() for x in s.split(",")] and m == ([media] if media else [])]
+
+    def test_the_page_grows_with_a_wide_screen_then_stays_centred(self):
+        (d,) = self.rules(".stage")
+        self.assertIn("max-width:3200px", d)
+        self.assertIn("margin-inline:auto", d)
+
+    def test_its_lists_take_more_columns_on_a_wide_screen(self):
+        cols = lambda n: f"grid-template-columns:repeat({n},minmax(0,1fr))"
+        self.assertIn(cols(4), self.rules(".rack", "@media (min-width:1900px)")[0])
+        self.assertIn(cols(2), self.rules("#lanes-list", "@media (min-width:2300px)")[0])
+        self.assertIn(cols(5), self.rules(".rack", "@media (min-width:2600px)")[0])
+        self.assertIn(cols(4), self.rules(".wide4", "@media (min-width:3000px)")[0])
+        self.assertIn('<div class="grid g2 wide4">', (pagejs.STATIC / "index.html").read_text(), "the Machine view's four panels")
+
+    def test_a_views_head_is_its_name_with_its_sentence_beside_it(self):
+        (h1,) = self.rules(".vhead h1")
+        self.assertIn("font-size:var(--t-24)", h1)
+        (row,) = self.rules(".vhead > div:first-child")
+        self.assertIn("display:flex", row)
+        self.assertIn("flex-wrap:wrap", row)
+        (lede,) = self.rules(".vhead p")
+        self.assertIn("font-size:var(--t-14)", lede)
+        self.assertNotIn("margin-top", lede)
+
+
 class ANewLaneIsNotNamedAfterTheOldCheckpoint(unittest.TestCase):
     """U19: the served target comes from the text engine's /server_info, read every 30 s,
     and outlived a change of lane: a flash lane that had just replaced the 27B read

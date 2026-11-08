@@ -2764,7 +2764,8 @@ class EachLaneSaysItsEngine(unittest.TestCase):
         self.assertEqual(r["name"], "Qwen3.8 27B NVFP4 · RadixArk, ready")
         self.assertEqual(r["ver"], " NVFP4 · RadixArk")
         self.assertEqual(r["bayVer"], "NVFP4 · RadixArk")
-        phone = [d for s, media, d in css_rules() if s == ".serving .what .ver" and any("max-width:720px" in m for m in media)]
+        # and a tablet upright (820 px read "Qwen3.8 27B NVFP…", captures of 2026-11-08): the drawer's width, 980 px
+        phone = [d for s, media, d in css_rules() if s == ".serving .what .ver" and any("max-width:980px" in m for m in media)]
         self.assertTrue(phone and "display:none" in phone[0].replace(" ", ""), phone)
         whole = [d for s, media, d in css_rules() if s == ".bay h3 .ver" and not media]
         self.assertTrue(whole and "white-space:nowrap" in whole[0].replace(" ", ""), whole)

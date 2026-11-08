@@ -216,7 +216,9 @@ img,svg,video,canvas{display:block; max-width:100%}
   body.railmin .rail .collapse span{position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap}
   body.railmin .shell{grid-template-columns:var(--rail-min) minmax(0,1fr)}
 }
-.stage{min-width:0; max-width:1560px; width:100%;
+/* up to 3200 px, then centred: held at 1560 px, a 2560 px screen showed the page on its left half and nothing on the
+   rest (a user's capture, issue #64; Hasan, 2026-11-08: "que le cockpit s'affiche bien partout") */
+.stage{min-width:0; max-width:3200px; width:100%; margin-inline:auto;
   padding:var(--s-7) max(clamp(16px, 3vw, 40px), var(--sa-r)) calc(var(--s-9) + var(--sa-b)) max(clamp(16px, 3vw, 40px), var(--sa-l))}
 
 /* ── view head ── */
@@ -227,9 +229,12 @@ img,svg,video,canvas{display:block; max-width:100%}
    And backwards, not both: an animation still filling on opacity keeps the view a
    stacking context after it ends, which held the fullscreen frame under the head */
 @keyframes rise{from{opacity:0}}
-.vhead{display:flex; align-items:flex-end; justify-content:space-between; gap:var(--s-5); flex-wrap:wrap; margin-bottom:var(--s-6)}
-.vhead h1{font-size:40px; font-weight:700; letter-spacing:-.03em; line-height:1.1}
-.vhead p{color:var(--fg-2); margin-top:var(--s-2); max-width:68ch}
+/* one line: the view's name, and beside it, small, the sentence that says what it is for. A 40 px title over its
+   sentence took 100 px above every view, the rail saying its name already (Hasan, 2026-11-08) */
+.vhead{display:flex; align-items:center; justify-content:space-between; gap:var(--s-2) var(--s-5); flex-wrap:wrap; margin-bottom:var(--s-5)}
+.vhead > div:first-child{display:flex; align-items:baseline; flex-wrap:wrap; gap:2px var(--s-4); flex:1 1 520px; min-width:0}
+.vhead h1{font-size:var(--t-24); font-weight:700; letter-spacing:-.02em; line-height:1.2}
+.vhead p{color:var(--fg-2); font-size:var(--t-14); flex:1 1 360px; min-width:0; max-width:120ch}
 .vhead .side{display:flex; align-items:center; gap:var(--s-3); flex-wrap:wrap}
 
 /* ── banners: what you did not go looking for ── */
@@ -571,9 +576,10 @@ button.bay.soon:hover{border-color:rgba(120,150,255,.45)}
   width:fit-content; max-width:100%}
 .pick .opt{min-height:40px; padding:0 16px; border-radius:20px; border:0; background:transparent; color:var(--fg-2);
   font:600 var(--t-14) var(--f-ui); white-space:nowrap; cursor:pointer; transition:background .15s, color .15s; flex:1 1 auto}
-/* a row of versions that wraps (four of them on a phone) no longer leaves its last choice alone on a
-   second line: the choices of a row share its width, and four stand two by two (2026-10-17) */
-@container (max-width: 460px){ .pick:has(> .opt:nth-child(4)){display:grid; grid-template-columns:1fr 1fr; width:100%} }
+/* a row of versions that wraps no longer leaves its last choice alone on a second line: the choices of a row share
+   its width, and four stand two by two (2026-10-17 on a phone; the 27B's four, wrapped three and one at the 640 px of
+   the box on every larger screen, the same since 2026-11-08) */
+@container (max-width: 640px){ .pick:has(> .opt:nth-child(4)){display:grid; grid-template-columns:1fr 1fr; width:100%} }
 .pick .opt:hover{color:var(--fg-1); background:rgba(255,255,255,.08)}
 .pick .opt[aria-checked="true"]{color:var(--brand-ink); background:#fff}
 /* the version that serves now carries a small green dot */
@@ -801,6 +807,19 @@ body.agentmax .view{animation:none}
 .toolbar .input{min-height:38px; width:auto}
 
 /* ── responsive ── */
+/* a wide screen: the lists take more columns rather than leaving the screen empty beside them */
+@media (min-width:1900px){
+  .rack{grid-template-columns:repeat(4, minmax(0,1fr))}
+}
+@media (min-width:2300px){
+  #lanes-list{display:grid; grid-template-columns:repeat(2, minmax(0,1fr))}   /* each card still gets 1000 px or more */
+}
+@media (min-width:2600px){
+  .rack{grid-template-columns:repeat(5, minmax(0,1fr))}
+}
+@media (min-width:3000px){
+  .wide4{grid-template-columns:repeat(4, minmax(0,1fr))}   /* narrower, the memory's floor belt line was cut */
+}
 @media (max-width:1280px){
   .vitals{grid-template-columns:repeat(3, minmax(0,1fr))}
   .vital:nth-child(4){border-left:0}
@@ -830,6 +849,9 @@ body.agentmax .view{animation:none}
   body.railopen::after{content:''; position:fixed; inset:var(--head) 0 0 0; z-index:64; background:rgba(6,3,22,.55)}
   .rail .collapse{display:none}
   .serving{max-width:none}
+  /* the family and its state: the whole name pushed "ready" out, on phones and on a tablet upright too (820 px read
+     "Qwen3.8 27B NVFP…", captures of 2026-11-08) */
+  .serving .what .ver{display:none}
   .minipool{display:none}
   .g2{grid-template-columns:minmax(0,1fr)}
   .span2{grid-column:auto}
@@ -842,11 +864,10 @@ body.agentmax .view{animation:none}
   .serving{padding:5px 6px 5px 12px}
   .serving .go{display:none}
   .serving .mark{display:none}
-  .serving .what .ver{display:none}   /* the family and its state: the whole name pushed "ready" out */
   /* .spine-right never shrinks: at 260 px the way back to a load ran off the screen of 375 and 393 px
      phones (measured 2026-10-13 from 320 to 430 px); a quarter of the screen fits them all */
   .jobpip.away{max-width:25vw}
-  .vhead h1{font-size:var(--t-24)}
+  .vhead h1{font-size:var(--t-20)}
   .pool{padding:var(--s-5) var(--s-4) var(--s-4)}
   .pool-big .v{font-size:var(--t-48)}
   .pool-free .v{font-size:var(--t-30)}
