@@ -196,6 +196,56 @@ class AFinishedJobsLogIsReadToItsEnd(unittest.TestCase):
         self.assertTrue(r["shown"])
 
 
+class AStopSaysItStops(unittest.TestCase):
+    """Issue #64 (2026-11-08, a user's capture on a wide screen): a Stop said "starting…" in the dock at the bottom
+    right while systemctl stopped the lane, its toast "started", and its log "(no output yet)" after it had ended with
+    exit code 0. systemctl prints nothing, and the page said nothing else."""
+
+    ARGV = ["sudo", "-n", "/usr/bin/systemctl", "stop", "qwen38-sglang.service"]
+
+    def test_the_dock_says_stopping_and_its_log_the_command(self):
+        r = run(self, r"""
+        const job = (status, extra) => Object.assign({id: 'j9', action: 'unit', params: {verb: 'stop', unit: 'qwen38-sglang.service'},
+            status, argv: %s, lines: [], started: Date.now() / 1000 - 7, elapsed: 7}, extra || {});
+        __fetch = async url => url === '/api/jobs/j9' ? __response(200, job('done', {rc: 0, ended: Date.now() / 1000}))
+          : new Promise(() => {});
+        feed({job: {current: job('running'), recent: []}});
+        const running = {last: txt('dock-last'), log: txt('dock-pre')};
+        feed({job: {current: null, recent: [job('done', {rc: 0, ended: Date.now() / 1000})]}});
+        await __settle();
+        const ended = {last: txt('dock-last'), log: txt('dock-pre')};
+        feed({job: {current: null, recent: [job('done', {rc: 0, ended: Date.now() / 1000})]}});
+        report({running, ended, again: txt('dock-pre')});
+        """ % json.dumps(self.ARGV))
+        cmd = "$ " + " ".join(self.ARGV)
+        self.assertEqual(r["running"], {"last": "stopping, nothing printed yet", "log": cmd + "\n(nothing printed yet)"})
+        self.assertEqual(r["ended"], {"last": "finished, exit code 0", "log": cmd + "\n(it printed nothing)"})
+        self.assertEqual(r["again"], r["ended"]["log"], "the next job event keeps what the fetch said")
+
+    def test_a_job_that_prints_keeps_its_lines_under_its_command(self):
+        r = run(self, r"""
+        feed({job: {current: {id: 'j8', action: 'switch', params: {target: 'flash'}, status: 'running', elapsed: 3,
+              argv: ['bash', '/r/switch-model.sh', 'flash'], lines: ['fetching', 'done'], started: Date.now() / 1000 - 3}, recent: []}});
+        report({last: txt('dock-last'), log: txt('dock-pre')});
+        """)
+        self.assertEqual(r, {"last": "done", "log": "$ bash /r/switch-model.sh flash\nfetching\ndone"})
+
+    def test_the_sheet_and_the_toast_of_a_stop_never_say_started(self):
+        r = run(self, r"""
+        let answer;
+        __fetch = (url, init) => url === '/api/csrf' ? __response(200, {token: 't'})
+          : url === '/api/action' ? new Promise(res => { answer = res; }) : new Promise(() => {});
+        askAction('unit', {verb: 'stop', unit: 'qwen38-sglang.service'});
+        $('sh-go').click(); await __settle();
+        const between = txt('sh-status');
+        answer(__response(202, {job: 'j9', argv: %s, warnings: [], dry_run: false})); await __settle();
+        report({between, toast: toastText()});
+        """ % json.dumps(self.ARGV))
+        self.assertEqual(r["between"], "sending…")
+        self.assertIn(": running. The dock follows it.", r["toast"])
+        self.assertNotIn("start", (r["between"] + r["toast"]).lower())
+
+
 class ANewLaneIsNotNamedAfterTheOldCheckpoint(unittest.TestCase):
     """U19: the served target comes from the text engine's /server_info, read every 30 s,
     and outlived a change of lane: a flash lane that had just replaced the 27B read

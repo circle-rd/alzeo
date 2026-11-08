@@ -702,7 +702,7 @@ async function runAction(name, params){
 async function sheetGo(){
   if (!SHEET || SHEET.running) return;
   if (SHEET.mode === 'journey') return runJourney();
-  SHEET.running = true; const go = $('sh-go'); go.disabled = true; $('sh-cancel').disabled = true; setText('sh-status', 'starting…');
+  SHEET.running = true; const go = $('sh-go'); go.disabled = true; $('sh-cancel').disabled = true; setText('sh-status', 'sending…');
   const {name, params} = SHEET;
   try{
     const r = await runAction(name, params);
@@ -710,7 +710,7 @@ async function sheetGo(){
       if (name === 'unit' && params.unit === IMAGE_UNIT && params.verb !== 'start') IMG_INTERRUPTED_AT.t = Date.now();
       if (name === 'unit' && params.unit === VIDEO_UNIT && params.verb !== 'start') VID_INTERRUPTED_AT.t = Date.now();
       SHEET.running = false; closeSheet(!0);
-      toast(`${cap1(actionPhrase(name, params))}: started${r.out.dry_run ? ' (dry run)' : ''}. The dock follows it.`, 'ok');
+      toast(`${cap1(actionPhrase(name, params))}: running${r.out.dry_run ? ' (dry run)' : ''}. The dock follows it.`, 'ok');
       dockPinned = false; return;
     }
     if (r.status === 409 && r.out.reasons){ $('sh-status').className = 'status err'; setText('sh-status', 'Blocked: ' + r.out.reasons.join('; ')); }
@@ -957,23 +957,32 @@ function waitFor(pred, timeoutMs){
 // ── the dock: the job running now, from every view and every browser ─────────
 let dockPinned = false, dockHidden = null, lastFinished;
 const JOBLINES = {id: null, lines: [], final: null};
+// A job that prints nothing, like systemctl, said "starting…" under "Stop 27B" while it stopped the lane, and its log
+// "(no output yet)" after it had ended (issue #64): it says what it does in its own verb, and its log the command first
+const UNIT_DOING = {start: 'starting', stop: 'stopping', restart: 'restarting'};
+const jobDoing = j => `${(j.action === 'unit' && UNIT_DOING[(j.params || {}).verb]) || 'running'}, nothing printed yet`;
+function jobLog(j, lines, ended){
+  const head = j && j.argv ? ['$ ' + j.argv.join(' ')] : [];
+  return head.concat(lines.length ? lines : [ended ? '(it printed nothing)' : '(nothing printed yet)']).join('\n');
+}
 function describeJob(j){ return cap1(actionPhrase(j.action, j.params)) + (j.origin === 'autoheal' ? ', by the autoheal belt' : '') + (j.dry_run ? ' (dry run)' : ''); }
 function renderJob(d){
   F.job = d;
   const dock = $('dock'), cur = d.current, recent = (d.recent || [])[0];
   const now = Date.now() / 1000;
-  let showIt = false;
+  let showIt = false, shown = null;
   if (cur){
+    shown = cur;
     showIt = dockHidden !== cur.id;
     dock.className = 'dock'; $('dock-lamp').className = 'lamp warn live';
     setText('dock-what', describeJob(cur)); setText('dock-time', fmtDur(cur.elapsed));
     show('dock-bar', true);
     if (JOBLINES.id !== cur.id){ JOBLINES.id = cur.id; JOBLINES.lines = []; }
     if (cur.lines && cur.lines.length) JOBLINES.lines = cur.lines;
-    setText('dock-last', JOBLINES.lines.length ? JOBLINES.lines[JOBLINES.lines.length - 1] : 'starting…');
+    setText('dock-last', JOBLINES.lines.length ? JOBLINES.lines[JOBLINES.lines.length - 1] : jobDoing(cur));
   } else {
     if (recent && (now - (recent.ended || recent.started) < 60 || dockPinned) && dockHidden !== recent.id){
-      showIt = true;
+      showIt = true; shown = recent;
       const ok = recent.status === 'done';
       dock.className = 'dock ' + (ok ? 'done' : 'failed'); $('dock-lamp').className = 'lamp ' + (ok ? 'ok' : 'err');
       setText('dock-what', describeJob(recent)); setText('dock-time', fmtDur(recent.elapsed)); show('dock-bar', false);
@@ -991,7 +1000,7 @@ function renderJob(d){
   }
   dock.hidden = !showIt;
   renderPip();
-  setText('dock-pre', JOBLINES.lines.join('\n') || '(no output yet)');
+  setText('dock-pre', jobLog(shown, JOBLINES.lines, !cur));
   const pre = $('dock-pre'); if (!pre.hidden) pre.scrollTop = pre.scrollHeight;
   const say = cur ? `${describeJob(cur)}: running` : recent ? `${describeJob(recent)}: ${recent.status}` : '';
   say && sayOnce('job', say);
@@ -999,7 +1008,7 @@ function renderJob(d){
 }
 async function fetchJobLines(id){
   try{ const r = await fetch('/api/jobs/' + id); if (r.status === 401) return login(); if (!r.ok) return;
-    const j = await r.json(); if (JOBLINES.id === id){ JOBLINES.lines = j.lines || []; setText('dock-pre', JOBLINES.lines.join('\n') || '(no output)'); } }
+    const j = await r.json(); if (JOBLINES.id === id){ JOBLINES.lines = j.lines || []; setText('dock-pre', jobLog(j, JOBLINES.lines, true)); } }
   catch { /* the dock keeps what it has */ }
 }
 // what a screen reader hears when a lane or a job changes state, once per change
