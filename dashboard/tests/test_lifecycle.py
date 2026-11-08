@@ -452,7 +452,7 @@ class NemotronBootLog(unittest.TestCase):
 
 
 class FlashLocalBootLog(unittest.TestCase):
-    """Two real boots of the Flash FP4-Local lane, its container log on the reference box (vLLM with
+    """Two real boots of the Qwen3.8 Flash-Next FP4-Local lane, its container log on the reference box (vLLM with
     b12x, 2026-10-19): a later one, b12x's kernel choices read back, and the first, b12x tuning its
     kernels for this GPU for 12 minutes. The model's 21 shards as b12x routes them, then the MTP
     head's 3, "Model loading took" for the two, b12x's kernels, the KV cache, the CUDA graphs and the

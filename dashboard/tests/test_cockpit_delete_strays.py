@@ -46,7 +46,7 @@ class Delete(unittest.TestCase):
         cls.unit = cls.tmp / "qwen38-kolibri.service"
         # every unit the module reads, whatever its lanes: the box's own, once installed, named its real
         # cache and the scan read it (found on the reference box, 2026-10-16). A list of names here
-        # missed the Flash FP4-Local lane's (v1.37.0): on a box with that lane its unit named the box's
+        # missed the Qwen3.8 Flash-Next FP4-Local lane's (v1.37.0): on a box with that lane its unit named the box's
         # real cache, and the delete took a real checkpoint of 77.6 GB the moment a pin moved past it
         # (found on the reference box, 2026-10-22).
         for name, value in list(vars(cls.cp).items()):

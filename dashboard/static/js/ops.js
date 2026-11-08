@@ -31,7 +31,7 @@ on('decode', d => {
     return;
   }
   if (!d.lane && isB12x((servingEngine() || [])[0])){
-    // the same vLLM counters as Kolibri's, and a drafter (the Flash FP4-Local lane's MTP head
+    // the same vLLM counters as Kolibri's, and a drafter (the Qwen3.8 Flash-Next FP4-Local lane's MTP head
     // counts as one): its mean acceptance over the last seconds, as vLLM counts it
     // (nemotron_load), idle when no draft came in them
     const l = F.load || {};
@@ -157,7 +157,7 @@ on('reqguard', d => {
   setText('zg-override', d.override === true ? 'yes' : d.override === false ? 'no' : d.lane ? 'unknown (docker did not answer)'
     : (servingEngine() || [])[0] === KOLIBRI_UNIT ? 'not on the Kolibri lane (an SGLang setting)'
     : isNemotron((servingEngine() || [])[0]) ? 'not on the Nemotron lanes (an SGLang setting)'
-    : (servingEngine() || [])[0] === FLASH_LOCAL_UNIT ? 'not on the Flash FP4-Local lane (an SGLang setting)'
+    : (servingEngine() || [])[0] === FLASH_LOCAL_UNIT ? 'not on the Qwen3.8 Flash-Next FP4-Local lane (an SGLang setting)'
     : (servingEngine() || [])[0] === ORNITH_UNIT ? 'not on the Ornith lane (an SGLang setting)' : 'no engine');
   const acted = [];
   if (g.aborted) acted.push(`${g.aborted} aborted`);
@@ -206,7 +206,7 @@ on('machine', d => {
 // On the Kolibri lane the pool guard cannot act: vLLM has no route that flushes its cache, and it
 // read "armed" there (review, 2026-10-14).
 const kolibriHolds = () => (servingEngine() || [])[0] === KOLIBRI_UNIT;
-// the Nemotron lanes, the Flash FP4-Local lane and Ornith run on vLLM too
+// the Nemotron lanes, the Qwen3.8 Flash-Next FP4-Local lane and Ornith run on vLLM too
 const nemotronHolds = () => isB12x((servingEngine() || [])[0]);
 // The floor stops generations through the proxy since v1.40.3, on every lane: vLLM has no route that
 // aborts a generation, and the proxy closes its connection, which vLLM stops (it said "cannot act" there).

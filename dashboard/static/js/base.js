@@ -79,7 +79,7 @@ const STATE_LABEL = {
 // the word for a lane, with what the start guard or a lost scheduler adds to its state: a lane
 // held by the guard read "starting", one it refused "failed" (engine-preflight.sh, issue #26),
 // a flash lane on a GPU outside its ATS mode is no matter of memory (issue #54), and neither is the
-// Flash FP4-Local lane missing a file it reads (its unit's guard)
+// Qwen3.8 Flash-Next FP4-Local lane missing a file it reads (its unit's guard)
 const stateLabel = e => !e ? '' : e.held ? 'waiting for GPU memory' : e.refused ? 'not starting: GPU memory held'
   : e.cannot ? 'cannot start on this GPU' : e.lacks ? 'cannot start: a file is missing' : e.zombie ? 'lost its scheduler' : e.state === 'failed' && e.crashed_serving ? 'restarting after a crash'
   : (STATE_LABEL[e.state] || e.state);
@@ -102,10 +102,10 @@ const U27 = 'qwen38-sglang.service', UFLASH = 'qwen38-flash.service', IMAGE_UNIT
 const LANE_UNITS = [U27, UFLASH, FLASH_LOCAL_UNIT, ORNITH_UNIT, KOLIBRI_UNIT, NEMOTRON_UNIT, NEMOTRON_SUPER_UNIT, IMAGE_UNIT, VIDEO_UNIT];
 // the two Nemotron lanes, Bolt and Super VL: one vLLM image, the same routes and the same limits
 const isNemotron = u => u === NEMOTRON_UNIT || u === NEMOTRON_SUPER_UNIT;
-// the vLLM lanes on b12x, the two Nemotron lanes, the Flash FP4-Local lane and the Ornith lane: the
+// the vLLM lanes on b12x, the two Nemotron lanes, the Qwen3.8 Flash-Next FP4-Local lane and the Ornith lane: the
 // same routes, the same counters, the same belts that cannot act; each says its own name
 const isB12x = u => isNemotron(u) || u === FLASH_LOCAL_UNIT || u === ORNITH_UNIT;
-const b12xName = u => u === FLASH_LOCAL_UNIT ? 'the Flash FP4-Local lane' : u === ORNITH_UNIT ? 'the Ornith lane' : 'the Nemotron lane';
+const b12xName = u => u === FLASH_LOCAL_UNIT ? 'the Qwen3.8 Flash-Next FP4-Local lane' : u === ORNITH_UNIT ? 'the Ornith lane' : 'the Nemotron lane';
 // The lanes' names in sentences, each its family's official name (decision 1180 of Hasan, 2026-11-07: no name of
 // our own, neither for a lane nor for its default version)
 const LANE_NAME = {[U27]: 'Qwen3.8 27B', [UFLASH]: 'Qwen3.8 Flash-Next', [FLASH_LOCAL_UNIT]: 'Qwen3.8 Flash-Next FP4-Local',
@@ -154,8 +154,8 @@ const TARGET_NAME = {stock: 'Qwen3.8 27B NVFP4 · RadixArk', uncensored: 'Qwen3.
                      'ornith-122b': 'Ornith 1.5 122B NVFP4 · Ornith AI'};
 // A version's name on its button in Lanes, and the line that tells it apart once chosen. A
 // target is declared in the tables of this block: a page test fails when one lacks a name or a line.
-const TARGET_SHORT_NAME = {stock: 'NVFP4 · RadixArk', uncensored: 'NVFP4 abliterated · edp1096', fp8: 'FP8 · Qwen',
-  'uncensored-fp8': 'FP8 abliterated · edp1096', flash: 'NVFP4 · RadixArk', 'flash-uncensored': 'NVFP4 abliterated · dealignai',
+const TARGET_SHORT_NAME = {stock: 'NVFP4 · RadixArk', uncensored: 'Abliterated NVFP4 · edp1096', fp8: 'FP8 · Qwen',
+  'uncensored-fp8': 'Abliterated FP8 · edp1096', flash: 'NVFP4 · RadixArk', 'flash-uncensored': 'Abliterated NVFP4 · dealignai',
   'flash-nvda': 'NVFP4 · NVIDIA', image: 'Base', 'image-turbo': 'Turbo', video: 'H3', kolibri: 'FP8 · Aleph Alpha',
   'kolibri-nvfp4': 'NVFP4 · Quantinine', nemotron: 'Bolt', 'nemotron-super': 'Super VL', 'flash-local': 'FP4-Local',
   'ornith-122b': '122B'};
@@ -185,7 +185,7 @@ const TARGET_NOTE = {
   nemotron: 'NVIDIA’s Nemotron 3.5 Bolt, its experts in 2 bits, served as its model card says: vLLM nightly with b12x, its LiLiCorr drafter, 262,144 tokens of context, temperature 1.0, top_p 0.95, reasoning on (off, efficient or full per request). It reads images and video. Measured on this box: 140 tokens/s alone on code, 50 on prose, 201 in all at 16 requests, 24 requests at the full window. The first switch downloads about 26 GB.',
   'nemotron-super': 'NVIDIA’s Nemotron 3.5 Super VL in NVFP4, served as its model card says for a DGX Spark: its LiLiCorr drafter, a window of 1,048,576 tokens, the Mamba state in float16 with stochastic rounding, temperature 1.0, top_p 0.95, reasoning on (off, efficient or full per request), in the Nemotron Bolt lane’s vLLM image. It reads images and video. Measured on this box: 70 tokens/s alone on code, 31 on prose, its whole window 1.1 to 1.3 times over in its cache. The first switch downloads about 77 GB.',
   'flash-local': 'NVIDIA’s own FP4 build of the flash model, served as its model card says for a DGX Spark: vLLM with b12x, its experts and its n-gram table in NVFP4 after a quantization-aware distillation from the full precision (GPQA Diamond 91.5 % against 92.2 % on NVIDIA’s card), an MTP head drafting 4 tokens, 262,144 tokens of context and a KV cache of about 920,000 tokens, reasoning on at xhigh unless a request asks less. Its table is read at every token: with the HF cache on another disk, its first Load copies the table’s files (32 GB) beside your home directory. The first boot tunes b12x’s kernels for this GPU, about 17 min; the next ones take about 6. The first switch downloads about 102 GB.',
-  'ornith-122b': 'Ornith AI’s Ornith 1.5 122B (MIT) in its authors’ NVFP4 build, served by vLLM with b12x in the Flash FP4-Local lane’s image: its experts and output head in NVFP4, its projections in FP8, an MTP head drafting 2 tokens, 1,048,576 tokens of context (its own 262,144 stretched four times with YaRN), temperature 0.6, top_p 0.95, top_k 20, reasoning on (off with effort none or minimal). It reads images and video. The first switch downloads about 78 GB.'};
+  'ornith-122b': 'Ornith AI’s Ornith 1.5 122B (MIT) in its authors’ NVFP4 build, served by vLLM with b12x in the Qwen3.8 Flash-Next FP4-Local lane’s image: its experts and output head in NVFP4, its projections in FP8, an MTP head drafting 2 tokens, 1,048,576 tokens of context (its own 262,144 stretched four times with YaRN), temperature 0.6, top_p 0.95, top_k 20, reasoning on (off with effort none or minimal). It reads images and video. The first switch downloads about 78 GB.'};
 // What installs a lane this box does not have. Since v1.20 a plain ./install.sh installs
 // every lane, so one missing here was left out (a --no-<lane> on the last run) or did not fit:
 // --with-<lane> installs it beside the lane that serves, which keeps serving. A text lane comes with
@@ -278,7 +278,9 @@ function engineLabel(unit){
   const e = (((F.config || {}).engines || {})[unit]);
   if (!e) return '';
   const live = F.liveEngine && F.liveEngine.unit === unit ? String(F.liveEngine.version || '').replace(/^vLLM /, '') : '';
-  return live && e.reports && live !== e.reports ? `${e.engine} ${live}` : e.label;
+  if (live) return e.reports && live !== e.reports ? `${e.engine} ${live}` : e.label;
+  // a lane its installer set on an image of the operator's: not the pin's version (pinned, read in its unit)
+  return e.pinned === false ? `${e.engine}, another image` : e.label;
 }
 // When systemctl did not say ('?'), the lifecycle's list decides: it leaves out a diffusion lane
 // with no unit file. Read as installed, '?' showed the image and video lanes of a box whose
@@ -507,11 +509,11 @@ const NEMOTRON_CANNOT = {
   flush_cache: 'The Nemotron lane has no cache flush route: vLLM evicts its prefix cache by itself.',
   abort_all: 'The Nemotron lane has no route that aborts its generations: stopping the lane stops them.',
   fit_opencode: 'Nemotron\'s opencode limits are its own, set when it is loaded: there is nothing to fit to its pool.'};
-// and the Flash FP4-Local lane, in its own name, as the server says it (cockpit.py FLASH_LOCAL_CANNOT)
+// and the Qwen3.8 Flash-Next FP4-Local lane, in its own name, as the server says it (cockpit.py FLASH_LOCAL_CANNOT)
 const FLASH_LOCAL_CANNOT = {
-  flush_cache: 'The Flash FP4-Local lane has no cache flush route: vLLM evicts its prefix cache by itself.',
-  abort_all: 'The Flash FP4-Local lane has no route that aborts its generations: stopping the lane stops them.',
-  fit_opencode: 'The Flash FP4-Local lane\'s opencode limits are its own, set when it is loaded: its window decides them, not its pool.'};
+  flush_cache: 'The Qwen3.8 Flash-Next FP4-Local lane has no cache flush route: vLLM evicts its prefix cache by itself.',
+  abort_all: 'The Qwen3.8 Flash-Next FP4-Local lane has no route that aborts its generations: stopping the lane stops them.',
+  fit_opencode: 'The Qwen3.8 Flash-Next FP4-Local lane\'s opencode limits are its own, set when it is loaded: its window decides them, not its pool.'};
 // and the Ornith lane, in its own name (cockpit.py ORNITH_CANNOT)
 const ORNITH_CANNOT = {
   flush_cache: 'The Ornith lane has no cache flush route: vLLM evicts its prefix cache by itself.',
@@ -729,7 +731,7 @@ const LANE_RUNTIME = {flash: 'its SGLang image (about 16 GB to download), its ch
   nemotron: 'its vLLM image, about 11 GB to download (25 GB on disk), pulled and built here',
   'nemotron-super': 'the Nemotron lanes’ vLLM image (the Bolt lane’s), about 11 GB to download (25 GB on disk), pulled and built here once for the two',
   'flash-local': 'its vLLM image with b12x, about 10 GB to download (18 GB on disk), pulled as its model card names it',
-  'ornith-122b': 'the Flash FP4-Local lane’s vLLM image with b12x, about 10 GB to download (18 GB on disk), pulled once for the two'};
+  'ornith-122b': 'the Qwen3.8 Flash-Next FP4-Local lane’s vLLM image with b12x, about 10 GB to download (18 GB on disk), pulled once for the two'};
 const SIDE_LANE = {[IMAGE_UNIT]: 'image', [VIDEO_UNIT]: 'video', [KOLIBRI_UNIT]: 'kolibri', [NEMOTRON_UNIT]: 'nemotron',
                    [NEMOTRON_SUPER_UNIT]: 'nemotron-super', [FLASH_LOCAL_UNIT]: 'flash-local', [ORNITH_UNIT]: 'ornith-122b',
                    [UFLASH]: 'flash', [U27]: '27b'};

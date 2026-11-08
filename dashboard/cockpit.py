@@ -716,13 +716,13 @@ NEMOTRON_UNIT = "qwen38-nemotron.service"
 NEMOTRON_UNIT_PATH = Path("/etc/systemd/system/qwen38-nemotron.service")
 NEMOTRON_SUPER_UNIT = "qwen38-nemotron-super.service"
 NEMOTRON_SUPER_UNIT_PATH = Path("/etc/systemd/system/qwen38-nemotron-super.service")
-# The Flash FP4-Local lane (v1.37) runs vLLM with b12x too, NVIDIA's FP4 build of the flash model
+# The Qwen3.8 Flash-Next FP4-Local lane (v1.37) runs vLLM with b12x too, NVIDIA's FP4 build of the flash model
 # on the community image its model card names: the same routes, the same /metrics, the same engine
 # panel, an MTP head counted as a drafter is. It is the family's third lane, in the same table: its
 # boot alone reads otherwise (lifecycle.parse_flash_local_boot_log), and its name in a sentence.
 FLASH_LOCAL_UNIT = "qwen38-flash-local.service"
 FLASH_LOCAL_UNIT_PATH = Path("/etc/systemd/system/qwen38-flash-local.service")
-# The Ornith 1.5 122B lane (v1.38) runs on the Flash FP4-Local lane's image, read by the same b12x
+# The Ornith 1.5 122B lane (v1.38) runs on the Qwen3.8 Flash-Next FP4-Local lane's image, read by the same b12x
 # loader, with an MTP head: the family's fourth lane, its boot read as FP4-Local's is (the same
 # loader's lines, measured on the reference box, 2026-10-21), its name in a sentence its own.
 ORNITH_UNIT = "qwen38-ornith-122b.service"
@@ -737,7 +737,7 @@ NEMOTRON_LANES = {NEMOTRON_UNIT: ("qwen38-nemotron", "nemotron", "nemotron-3.5-b
                   ORNITH_UNIT: ("qwen38-ornith-122b", "ornith-122b", "ornith-1.5-122b", "nvfp4")}
 # the lane in a sentence, and what its engine drafts with
 B12X_LANE_NAME = {NEMOTRON_UNIT: "the Nemotron lane", NEMOTRON_SUPER_UNIT: "the Nemotron lane",
-                  FLASH_LOCAL_UNIT: "the Flash FP4-Local lane", ORNITH_UNIT: "the Ornith lane"}
+                  FLASH_LOCAL_UNIT: "the Qwen3.8 Flash-Next FP4-Local lane", ORNITH_UNIT: "the Ornith lane"}
 B12X_SPEC = {NEMOTRON_UNIT: "LiLiCorr (DFlash)", NEMOTRON_SUPER_UNIT: "LiLiCorr (DFlash)", FLASH_LOCAL_UNIT: "MTP",
              ORNITH_UNIT: "MTP"}
 NEMOTRON_READY_ENTER: dict = {}
@@ -769,11 +769,11 @@ NEMOTRON_CANNOT = {
     "abort_all": "The Nemotron lane has no route that aborts its generations: stopping the lane stops them.",
     "fit_opencode": "Nemotron's opencode limits are its own, set when it is loaded: there is nothing to fit to its pool.",
 }
-# the same three on the Flash FP4-Local lane, in its own name
+# the same three on the Qwen3.8 Flash-Next FP4-Local lane, in its own name
 FLASH_LOCAL_CANNOT = {
-    "flush_cache": "The Flash FP4-Local lane has no cache flush route: vLLM evicts its prefix cache by itself.",
-    "abort_all": "The Flash FP4-Local lane has no route that aborts its generations: stopping the lane stops them.",
-    "fit_opencode": "The Flash FP4-Local lane's opencode limits are its own, set when it is loaded: its window decides them, not its pool.",
+    "flush_cache": "The Qwen3.8 Flash-Next FP4-Local lane has no cache flush route: vLLM evicts its prefix cache by itself.",
+    "abort_all": "The Qwen3.8 Flash-Next FP4-Local lane has no route that aborts its generations: stopping the lane stops them.",
+    "fit_opencode": "The Qwen3.8 Flash-Next FP4-Local lane's opencode limits are its own, set when it is loaded: its window decides them, not its pool.",
 }
 # and on the Ornith lane, in its own name
 ORNITH_CANNOT = {
@@ -2982,7 +2982,7 @@ def lane_startable(lane: str):
     # read-only too (:ro), as the engines have it since 2026-10-18
     tmpl = re.search(r"--chat-template\s+[\"']?/out/([^\s\"']+)", text)
     out = re.search(r"-v\s+[\"']?([^ :\"']+)[\"']?:/out(?=[:\"'\s]|$)", text, re.M)
-    # or the template mounted on its own, as the Flash FP4-Local lane mounts it (--mount): read by the
+    # or the template mounted on its own, as the Qwen3.8 Flash-Next FP4-Local lane mounts it (--mount): read by the
     # directory's mount only, its check was passed by (found in review, 2026-10-20)
     alone = tmpl and re.search(r"--mount\s+type=bind,source=([^,\s]+),target=/out/" + re.escape(tmpl.group(1))
                                + r"(?=[,\s])", text)
@@ -3067,6 +3067,27 @@ TIERS = [
 ]
 
 
+def engine_table() -> dict:
+    """engines.py's table for the page, each unit saying whether the unit file its installer wrote starts the image
+    its installer pins (pinned: True or False, None when the cockpit cannot tell: no unit file, a diffusion lane's
+    wheel, engine-inputs.py unreadable). A lane installed on an image of the operator's is not given the pin's version
+    (decision 1178: the installed image's; code review of v1.45.0)."""
+    table = en.page_table()
+    try:
+        ei = _engine_inputs()
+    except Exception:  # noqa: BLE001
+        return table
+    hf = str(Path.home() / ".cache/huggingface")
+    for unit, row in table.items():
+        path = UNIT_DIR / unit
+        try:
+            images = ei.inputs(str(path), str(CONFIG_DIR), hf, [])[1] if path.is_file() else []
+        except Exception:  # noqa: BLE001
+            images = []
+        row["pinned"] = en.runs_pin(unit, images)
+    return table
+
+
 # expected refresh period per collector, so the UI can tell a stale panel from a slow one
 PERIODS = {name: period for period, cols in TIERS for name in cols}
 STATE["config"] = {"data": {"usable_frac": USABLE_FRAC, "version": VERSION, "dry_run": DRY_RUN,
@@ -3074,7 +3095,7 @@ STATE["config"] = {"data": {"usable_frac": USABLE_FRAC, "version": VERSION, "dry
                             "agent_port": AGENT_PORT,
                             # each lane's engine and its version, named the same way everywhere on the
                             # page (decision 1178): the table of engines.py, checked against the pins
-                            "engines": en.page_table(),
+                            "engines": engine_table(),
                             # the page says what happens to a wedged engine, and on a default
                             # install that is nothing: it promised the belt's restart regardless
                             "autoheal": AUTOHEAL, "autoheal_grace_s": AUTOHEAL_GRACE,
@@ -3570,7 +3591,7 @@ def systemone_available(max_age: float = 60.0) -> dict:
     if text is None and states.get(FLASH_LOCAL_UNIT) in lc.BUSY_STATES:
         # the proxy refuses it on every vLLM lane (v6.43), this Qwen one included
         return {"available": False, "lane": "", "status": None,
-                "reason": f"the Flash FP4-Local lane is serving: System One is answered by {who}, "
+                "reason": f"the Qwen3.8 Flash-Next FP4-Local lane is serving: System One is answered by {who}, "
                           f"on SGLang, so load {one}"}
     if text is None and states.get(ORNITH_UNIT) in lc.BUSY_STATES:
         # the same refusal (v6.43), before the family's rule below names it a Nemotron lane

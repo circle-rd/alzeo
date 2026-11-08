@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""The cockpit follows the Flash FP4-Local lane on its own facts, as the third lane on vLLM with b12x.
+"""The cockpit follows the Qwen3.8 Flash-Next FP4-Local lane on its own facts, as the third lane on vLLM with b12x.
 
 Its engine is the community b12x vLLM image NVIDIA's model card names: the Nemotron lanes' routes,
 /metrics and engine panel, an MTP head in place of a drafter, and a boot of its own, read by b12x's
@@ -46,7 +46,7 @@ def tearDownModule():
 
 
 class Engine(http.server.BaseHTTPRequestHandler):
-    """vLLM as the cockpit meets it on the Flash FP4-Local lane."""
+    """vLLM as the cockpit meets it on the Qwen3.8 Flash-Next FP4-Local lane."""
 
     def log_message(self, *a):
         pass
@@ -206,20 +206,20 @@ class WhatItDoesNotHave(Base):
         self.serving("ready")
         out = self.ck.collect_canary()
         self.assertTrue(out["skipped"], out)
-        self.assertIn("the Flash FP4-Local lane is checked by vLLM's own /health", out["why"])
+        self.assertIn("the Qwen3.8 Flash-Next FP4-Local lane is checked by vLLM's own /health", out["why"])
 
     def test_flush_abort_and_fit_are_refused_in_its_name(self):
         self.serving("ready")
         for name in ("flush_cache", "abort_all", "fit_opencode"):
             with self.subTest(name=name):
                 why = self.ck.b12x_cannot(name)
-                self.assertTrue(why and why.startswith("The Flash FP4-Local lane"), why)
+                self.assertTrue(why and why.startswith("The Qwen3.8 Flash-Next FP4-Local lane"), why)
         with self.assertRaises(RuntimeError) as e:
             self.ck.engine_abort_all()
-        self.assertIn("the Flash FP4-Local lane's vLLM has no route that aborts", str(e.exception))
+        self.assertIn("the Qwen3.8 Flash-Next FP4-Local lane's vLLM has no route that aborts", str(e.exception))
         ok, lines, _ = self.ck.job_flush_cache(None)
         self.assertFalse(ok)
-        self.assertIn("the Flash FP4-Local lane's vLLM has no cache flush route", lines[0])
+        self.assertIn("the Qwen3.8 Flash-Next FP4-Local lane's vLLM has no cache flush route", lines[0])
         # and on a Nemotron lane, the words stay the Nemotron lane's
         self.serving("ready", unit="qwen38-nemotron.service")
         self.assertTrue(self.ck.b12x_cannot("flush_cache").startswith("The Nemotron lane"))
@@ -228,7 +228,7 @@ class WhatItDoesNotHave(Base):
         self.serving("ready")
         out = self.ck.systemone_available(max_age=0)
         self.assertFalse(out["available"])
-        self.assertIn("the Flash FP4-Local lane is serving", out["reason"])
+        self.assertIn("the Qwen3.8 Flash-Next FP4-Local lane is serving", out["reason"])
 
 
 class ItsUnit(Base):

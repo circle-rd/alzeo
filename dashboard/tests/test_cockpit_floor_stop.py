@@ -211,7 +211,7 @@ class WhenTheProxysAbortAllDidNotGo(Base):
         self.serving("qwen38-flash-local.service")
         floor, out, audits = self.floor_fires()
         self.assertEqual(len(floor), 1, floor)
-        self.assertIn("abort failed: no generation ran through the proxy, and the Flash FP4-Local lane's vLLM "
+        self.assertIn("abort failed: no generation ran through the proxy, and the Qwen3.8 Flash-Next FP4-Local lane's vLLM "
                       "has no route that aborts one sent to it straight", floor[0])
         self.assertEqual(out["mem_floor"]["aborts"], 0)
         self.assertFalse([a for a in audits if a.get("kind") == "mem_floor"][0]["ok"])
@@ -229,7 +229,7 @@ class AStopThatLeavesAnswersToFinish(Base):
         floor, out, audits = self.floor_fires()
         self.assertEqual(len(floor), 1, floor)
         self.assertIn("abort failed: no generation ran through the proxy (1 finished answer(s) left to go out whole), "
-                      "and the Flash FP4-Local lane's vLLM has no route", floor[0])
+                      "and the Qwen3.8 Flash-Next FP4-Local lane's vLLM has no route", floor[0])
         self.assertEqual(out["mem_floor"]["aborts"], 0)
         self.assertFalse([a for a in audits if a.get("kind") == "mem_floor"][0]["ok"])
 

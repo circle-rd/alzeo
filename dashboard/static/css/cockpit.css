@@ -141,7 +141,8 @@ img,svg,video,canvas{display:block; max-width:100%}
 .serving .mark img{width:18px; height:18px}
 .serving .what{display:flex; flex-direction:column; min-width:0; line-height:1.2}
 .serving .what b{font-weight:640; font-size:var(--t-14); white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
-.serving .what > span{font-size:var(--t-12); color:var(--fg-2); white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+.serving .what > span{font-size:var(--t-12); color:var(--fg-2); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+  font-variant-numeric:tabular-nums}   /* its counts change each second: the capsule, sized to its text, kept still */
 .serving .go{margin-left:auto; flex:none; font-size:var(--t-13); font-weight:640; padding:6px 14px; border-radius:var(--r-chip);
   background:#fff; color:var(--brand-ink); white-space:nowrap}
 .spine-right{margin-left:auto; display:flex; align-items:center; gap:var(--s-4); flex:none}

@@ -2136,7 +2136,7 @@ class EveryVersionOfALaneIsInSight(unittest.TestCase):
                 roles: c.opts.map(b => b.getAttribute('role')), label: c.pickBox.querySelector('.pick-label').textContent,
                 selects: c.root.querySelectorAll('select').length});
         """)
-        self.assertEqual(r["names"], ["NVFP4 · RadixArk", "NVFP4 abliterated · edp1096", "FP8 · Qwen", "FP8 abliterated · edp1096"])
+        self.assertEqual(r["names"], ["NVFP4 · RadixArk", "Abliterated NVFP4 · edp1096", "FP8 · Qwen", "Abliterated FP8 · edp1096"])
         self.assertEqual(r["label"], "Version (4)")
         self.assertEqual((r["group"], set(r["roles"])), ("radiogroup", {"radio"}))
         self.assertEqual(r["selects"], 0, "the buttons are the control: no select behind them")
@@ -2754,6 +2754,13 @@ class EachLaneSaysItsEngine(unittest.TestCase):
         # and at 375 px "Qwen3.8 27B, ready" lacked some 10 px: the name a size down there
         small = [d for s, media, d in rules if s == ".serving .what b" and any("max-width:380px" in m for m in media)]
         self.assertTrue(small and "--t-13" in small[0], small)
+
+    def test_a_lane_on_an_image_of_the_operators_is_not_given_the_pins_version(self):
+        # its unit starts another image (engine_table's pinned: false): the pin's "vLLM 0.29.0 + ..." would be false
+        r = run(self, self.BODY.replace("pin: 'vllm/vllm-openai@sha256:18'}", "pin: 'vllm/vllm-openai@sha256:18', pinned: false}"))
+        self.assertTrue(r["bayKol"].startswith("engine vLLM, another image"), r["bayKol"])
+        self.assertIn("EnginevLLM, another image", r["cardKol"])
+        self.assertIn("EngineSGLang 0.5.22", r["card27"])
 
     def test_without_the_table_nothing_is_said(self):
         # a cockpit of an older release beside this page (the table came with v1.45.0): no line reads "undefined"

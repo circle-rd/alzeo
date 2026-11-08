@@ -2,7 +2,7 @@
 """The cockpit follows the Ornith 1.5 122B lane (v1.38) on its own facts, as the fourth lane on vLLM
 with b12x.
 
-Its engine is the Flash FP4-Local lane's image, read by the same b12x loader, with an MTP head: the
+Its engine is the Qwen3.8 Flash-Next FP4-Local lane's image, read by the same b12x loader, with an MTP head: the
 family's routes, its boot read as FP4-Local's is, and its name in each sentence. The boot fixture is
 its engine's own log, captured on the reference box on 2026-10-21 (vLLM b12x, MTP 2, eight requests at
 a time), up to its startup line. The module is imported with its environment pointed at a throwaway box.
@@ -160,9 +160,9 @@ class WhatItDoesNotHave(Base):
         ok, lines, _ = self.ck.job_flush_cache(None)
         self.assertFalse(ok)
         self.assertIn("the Ornith lane's vLLM has no cache flush route", lines[0])
-        # the Flash FP4-Local lane keeps its own words
+        # the Qwen3.8 Flash-Next FP4-Local lane keeps its own words
         self.serving("ready", unit="qwen38-flash-local.service")
-        self.assertTrue(self.ck.b12x_cannot("flush_cache").startswith("The Flash FP4-Local lane"))
+        self.assertTrue(self.ck.b12x_cannot("flush_cache").startswith("The Qwen3.8 Flash-Next FP4-Local lane"))
 
     def test_system_one_points_at_the_sglang_lanes_in_its_name(self):
         self.serving("ready")

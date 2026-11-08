@@ -117,7 +117,10 @@ class Fingerprint(unittest.TestCase):
     def test_the_page_gets_each_lanes_engine_in_its_config(self):
         # decision 1178: the page names each lane's engine from the config, engines.py's table
         engines = self.ck.STATE["config"]["data"]["engines"]
-        self.assertEqual(engines, self.ck.en.page_table())
+        # the table, and for each unit whether its unit file starts the pin (None here: no unit file in a test)
+        self.assertEqual({u: {k: v for k, v in row.items() if k != "pinned"} for u, row in engines.items()},
+                         self.ck.en.page_table())
+        self.assertTrue(all("pinned" in row for row in engines.values()), engines)
         self.assertEqual(engines["qwen38-sglang.service"]["label"], "SGLang 0.5.22")
 
     def test_quiet_when_nothing_moved(self):

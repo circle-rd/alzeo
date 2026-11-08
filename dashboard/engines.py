@@ -13,6 +13,8 @@ reports: the version string the engine itself says when it serves the pinned ima
 serving lane's engine by what it reports: a version other than this one is an image of the operator's. None for the
 diffusion lanes, whose version the cockpit does not read."""
 
+import re
+
 ENGINES = {
     # install.sh IMAGE ; the image's sglang distribution says 0.5.22
     "qwen38-sglang.service": {
@@ -62,3 +64,18 @@ def page_table() -> dict:
     when it serves the pin."""
     return {u: {"engine": e["engine"], "version": e["version"], "label": label(u), "pin": e["pin"],
                 "reports": e["reports"]} for u, e in ENGINES.items()}
+
+
+def runs_pin(unit: str, images) -> "bool | None":
+    """Whether a unit that starts these images runs its pinned engine: the pin's digest, or a local build tag that ends
+    with 13 or more of its first hex digits (qwen38-kolibri:vllm0.29.0-aai1.0.0-18372a72249386434, built on the pin).
+    None when that cannot be told: no image read (no unit file), or a pin that is a wheel (the diffusion lanes)."""
+    pin = ENGINES[unit]["pin"]
+    if "@sha256:" not in pin or not images:
+        return None
+    digest = pin.split("@sha256:", 1)[1]
+    for image in images:
+        m = re.search(r"-([0-9a-f]{13,64})$", image)
+        if digest in image or (m and digest.startswith(m.group(1))):
+            return True
+    return False

@@ -53,6 +53,22 @@ class WhatEachEngineReports(unittest.TestCase):
         self.assertEqual(EN.page_table()["qwen38-flash.service"]["reports"], "0.0.0.dev1+g53295c697")
 
 
+class WhetherAUnitRunsThePin(unittest.TestCase):
+    def test_the_pin_by_its_digest_or_a_build_on_it_and_nothing_else(self):
+        # decision 1178: a lane is given its pin's version only when its unit starts that image (code review of v1.45.0)
+        pin = EN.ENGINES["qwen38-sglang.service"]["pin"]
+        self.assertTrue(EN.runs_pin("qwen38-sglang.service", [pin]))
+        self.assertFalse(EN.runs_pin("qwen38-sglang.service", ["lmsysorg/sglang@sha256:" + "a" * 64]))
+        self.assertFalse(EN.runs_pin("qwen38-sglang.service", ["lmsysorg/sglang:v0.5.23"]))
+        # the images this repo builds on a pin carry its digest's first hex digits in their tag
+        self.assertTrue(EN.runs_pin("qwen38-kolibri.service", ["qwen38-kolibri:vllm0.29.0-aai1.0.0-18372a72249386434"]))
+        self.assertTrue(EN.runs_pin("qwen38-nemotron.service", ["qwen38-nemotron:vllm77154ca6-b12x1.5.1-1ee85ca80e0fc"]))
+        self.assertFalse(EN.runs_pin("qwen38-nemotron.service", ["qwen38-nemotron:vllm77154ca6-b12x1.5.1-0123456789abc"]))
+        # what it cannot tell: no unit file read, a wheel
+        self.assertIsNone(EN.runs_pin("qwen38-sglang.service", []))
+        self.assertIsNone(EN.runs_pin("qwen38-image.service", ["anything"]))
+
+
 class EachVersionIsTheOneInstalled(unittest.TestCase):
     def pin(self, unit):
         return EN.ENGINES[unit]["pin"]

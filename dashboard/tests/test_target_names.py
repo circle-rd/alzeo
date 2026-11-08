@@ -70,6 +70,11 @@ class EachVersionHasItsOfficialName(unittest.TestCase):
             with self.subTest(target=target):
                 pub = self.name[target].rsplit(" · ", 1)[1]
                 self.assertTrue(self.short[target].endswith(" · " + pub), self.short[target])
+                # its words in the order of the version's name: "NVFP4 abliterated" read the name's
+                # "abliterated NVFP4" backwards (code review of v1.45.0)
+                said, name = words(self.short[target].rsplit(" · ", 1)[0]), words(self.name[target].rsplit(" · ", 1)[0])
+                at = [name.index(w) for w in said]
+                self.assertEqual(at, sorted(at), (self.short[target], self.name[target]))
 
     def test_no_name_says_stock_uncensored_or_flash_176b(self):
         shown = list(self.name.values()) + list(self.short.values()) + list(table("TARGET_LINE").values())
@@ -87,7 +92,14 @@ class EachVersionHasItsOfficialName(unittest.TestCase):
         for f in sorted(list((static / "js").glob("*.js")) + [static / "index.html"]):
             with self.subTest(file=f.name):
                 text = f.read_text()
-                self.assertNotRegex(text, r"(?i)flash 176b|27b stock|[a-z0-9] uncensored\b|>stock<")
+                self.assertNotRegex(text, r"(?i)flash 176b|27b stock|[a-z0-9] uncensored\b|>stock<|flash fp4-local")
+
+    def test_no_text_the_cockpit_sends_names_a_lane_the_old_way(self):
+        # its own sentences, in its strings: "the Flash FP4-Local lane has no cache flush route" (code review of
+        # v1.45.0); comments may still say how a lane was named once
+        text = (REPO / "dashboard/cockpit.py").read_text()
+        said = re.findall(r"""["'][^"'\n]*(?i:flash fp4-local|flash 176b|27b stock)[^"'\n]*["']""", text)
+        self.assertEqual(said, [])
 
 if __name__ == "__main__":
     unittest.main()

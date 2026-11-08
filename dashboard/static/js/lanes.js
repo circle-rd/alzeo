@@ -213,7 +213,9 @@ on('engine_info', d => {
   setText('eng-attn', i.prefill_attention_backend ? `${i.prefill_attention_backend} / ${i.decode_attention_backend}` : (i.attention_backend ?? 'n/a'));
   setText('eng-radix', i.mamba_radix_cache_strategy ?? 'n/a');
   // the version the serving engine reports, which engineLabel says for its lane (decision 1178)
-  F.liveEngine = d.served_target ? {unit: TARGET_UNIT(d.served_target), version: i.version ?? null} : null;
+  // its unit: the target it names, or the lane that serves when it names none (a checkpoint no pin names)
+  const liveUnit = d.served_target ? TARGET_UNIT(d.served_target) : (servingEngine() || [])[0];
+  F.liveEngine = liveUnit && i.version ? {unit: liveUnit, version: i.version} : null;
   // which engine, named as everywhere else on the page: SGLang gives a bare number, the Kolibri lane "vLLM 0.29.0"
   // (the row read "SGLang vLLM 0.29.0" there: review, 2026-10-14), the flash lane's nightly "0.0.0.dev1+g53295c697"
   const named = F.liveEngine ? engineLabel(F.liveEngine.unit) : '';
@@ -230,7 +232,7 @@ on('canary', d => {
   setText('px-probe', F.canaryTxt || '…');
   setText('px-last', d.skipped && (servingEngine() || [])[0] === KOLIBRI_UNIT ? 'none on the Kolibri lane'
     : d.skipped && isNemotron((servingEngine() || [])[0]) ? 'none on the Nemotron lanes'
-    : d.skipped && (servingEngine() || [])[0] === FLASH_LOCAL_UNIT ? 'none on the Flash FP4-Local lane'
+    : d.skipped && (servingEngine() || [])[0] === FLASH_LOCAL_UNIT ? 'none on the Qwen3.8 Flash-Next FP4-Local lane'
     : d.skipped && (servingEngine() || [])[0] === ORNITH_UNIT ? 'none on the Ornith lane'
     : d.last_ok ? clockTime(d.last_ok) : 'never in this cockpit’s life');
 });
