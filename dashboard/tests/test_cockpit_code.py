@@ -14,6 +14,7 @@ start a thread, which is itself worth pinning.
 import atexit
 import importlib.util
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -103,6 +104,15 @@ class Fingerprint(unittest.TestCase):
         # every watched name exists in the shipped tree, or the check is noise
         for name in self.ck.CODE_FILES:
             self.assertTrue((DASH / name).exists(), name)
+
+    def test_it_watches_each_module_of_its_own_it_imports(self):
+        # engine_metrics.py was imported and not watched: a change to it alone left the old code running, and
+        # nothing said so (found adding engines.py, 2026-11-08)
+        text = (DASH / "cockpit.py").read_text()
+        own = {m for m in re.findall(r"(?m)^import (\w+)(?: as \w+)?$", text) if (DASH / f"{m}.py").exists()}
+        self.assertTrue({"lifecycle", "registry", "recipes", "engines"} <= own, own)
+        for m in sorted(own):
+            self.assertIn(f"{m}.py", self.ck.CODE_FILES, m)
 
     def test_quiet_when_nothing_moved(self):
         self.assertEqual(self.ck.code_is_stale(), [])

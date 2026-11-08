@@ -37,6 +37,7 @@ from collections import deque
 
 import agent_relay as ar
 import engine_metrics as em
+import engines as en
 import lifecycle as lc
 import registry as rg
 import recipes as rp
@@ -242,9 +243,11 @@ def job_phrase(action: str, params: dict) -> str:
 # now restarts this unit, but a plain `git pull` does not, so the process watches
 # its own sources and says so instead of lying quietly.
 # The page is several scripts since the rebuild (2026-09-29): every one of them counts,
-# found on disk rather than listed, so a script added later is watched too.
+# found on disk rather than listed, so a script added later is watched too. Each module of its own
+# this file imports is in it: engine_metrics.py was not, and a change to it alone left the old code
+# running unsaid (found adding engines.py, 2026-11-08).
 CODE_FILES = ("cockpit.py", "recipes.py", "lifecycle.py", "registry.py",
-              "agent_relay.py", "static/index.html") + tuple(
+              "agent_relay.py", "engine_metrics.py", "engines.py", "static/index.html") + tuple(
     "static/js/" + p.name for p in sorted((HERE / "static" / "js").glob("*.js")))
 
 
@@ -3069,6 +3072,9 @@ PERIODS = {name: period for period, cols in TIERS for name in cols}
 STATE["config"] = {"data": {"usable_frac": USABLE_FRAC, "version": VERSION, "dry_run": DRY_RUN,
                             "repo_dir": str(REPO_DIR), "periods": PERIODS,
                             "agent_port": AGENT_PORT,
+                            # each lane's engine and its version, named the same way everywhere on the
+                            # page (decision 1178): the table of engines.py, checked against the pins
+                            "engines": en.page_table(),
                             # the page says what happens to a wedged engine, and on a default
                             # install that is nothing: it promised the belt's restart regardless
                             "autoheal": AUTOHEAL, "autoheal_grace_s": AUTOHEAL_GRACE,
