@@ -1,6 +1,6 @@
 # Changelog
 
-## v1.45.0 (2026-11-08): the cockpit names each lane's engine and each version by its official name
+## v1.45.0 (2026-11-08): the cockpit names each lane's engine and each version by its official name, and fits every screen
 
 **Each lane says its engine and its version.** The cockpit names the engine each lane runs, with its version, wherever
 the lane appears: first on the second line of the header's capsule ("SGLang 0.5.22 · idle, KV pool 3 %, up 2 h"), at
@@ -13,8 +13,10 @@ nightly 53295c6 (Qwen3.8 Flash-Next), vLLM b12x build 8244d1c (Qwen3.8 Flash-Nex
 vLLM 0.29.0 + Aleph Alpha plugin 1.0.0 (Kolibri-1), vLLM nightly 77154ca6 + b12x 1.5.1 (Nemotron 3.5 Bolt and Super
 VL), SGLang Diffusion 0.5.21 (image and video). `dashboard/tests/test_engines.py` reads each pin back from its
 installer and fails when one moves without the table. A lane whose unit starts another image than its installer
-pins, an image of yours, is not given the pin's version: it says "vLLM, another image". The cockpit reads each
-unit again every 30 s, so a lane installed on its own after the cockpit started is said as it is.
+pins, an image of yours, is not given the pin's version: it says "vLLM, another image". A unit that starts the moving
+tag of its pin, the one install.sh offers when the digest cannot be pulled (`IMAGE=lmsysorg/sglang:v0.5.22`), runs the
+pin. The cockpit reads each unit again every 30 s, so a lane installed on its own after the cockpit started is said as
+it is.
 
 **Each version has its official name.** The cockpit said "27B stock" and "flash 176B", names of our own. Each version
 is now named as its makers publish it, with its precision and who publishes the build, read off the repository its
@@ -26,12 +28,27 @@ same way. The builds with refusals removed are "abliterated", the word of their 
 `dashboard/tests/test_target_names.py` reads each name back from the pinned repository and finds no old name in any
 text of the page: it fails on the page before.
 
-**The header's capsule fits its text.** On a MacBook it grew to its 560 px whatever it said, and left a gap before
-Change lane. It is now as wide as its text, up to the same 560 px. On a phone it still fills its row, and says the
-lane's family and its state ("Qwen3.8 27B, ready"): the whole name pushed the state out of it. A bay's title breaks
-before the version's precision and publisher, never right after its " · ". Each view was captured before and after
-at the size of two MacBooks (1512 x 982 and 1440 x 900) and three phones (375, 393 and 430 px wide), and looked at:
-no line runs off the screen, and the page reports no error.
+**The cockpit fits every screen, from a phone to a 34-inch one.** On a screen wider than 1560 px the page stopped
+there and left the rest of the screen empty (a user's capture at 2563 px, issue #64). It now grows up to 3200 px, then
+stays centred, and its lists take more columns: four bays a row in Now from 1900 px and five from 2600 px, the Lanes
+cards two by two from 2300 px, the four Machine panels on one row from 3000 px. Now starts with the memory pool:
+"Now" in 40 px over a sentence that said the capsule again took about 100 px above it. Its title stays for screen
+readers, and how far a long prompt has got (issue #61), which only that sentence said, is in the Activity panel. Every
+other view says its name in 24 px with its sentence beside it. The header's capsule is as wide as its text: on a
+MacBook it grew to its 560 px whatever it said, and left a gap before Change lane. On a phone or a tablet held upright
+it still fills its row, and says the lane's family and its state ("Qwen3.8 27B, ready"): the whole name pushed the
+state out of it. A bay's title breaks before the version's precision and publisher, never right after its " · ", and
+the four versions of Qwen3.8 27B stand two by two instead of three and one. Each view was captured
+before and after at ten sizes, from a 3440 px screen to a 375 px phone (2560 and 1920 px screens, two MacBooks at
+1512 x 982 and 1440 x 900, an iPad on its side and upright, phones of 430 and 393 px), and looked at: no line runs
+off the screen, and the page reports no error.
+
+**A Stop says it stops.** The window at the bottom right that follows an action said "starting…" under "Stop" while
+systemctl stopped the lane, its toast said "started", and its log "(no output yet)" after the stop had ended with exit
+code 0 (issue #64): systemctl prints nothing, and the page said nothing else. The window now says what the action does
+("stopping, nothing printed yet"), its log starts with the command it runs and says "(it printed nothing)" once it
+ended, the confirmation says "sending…" until the cockpit answers, and the toast "running".
+`dashboard/tests/test_page_details.py` fails on the page before.
 
 **An update keeps your files where the release puts its own.** get.sh resets the clone to the release. A file of
 yours that git does not track (untracked or ignored) where the release puts something of its own was said "kept in
@@ -39,9 +56,12 @@ place", then written over or removed by the reset: a file at a path the release 
 agent wrote), a folder of yours where the release puts a file, a file of yours where it needs a folder. Each is now
 copied aside first, into a folder of its own under `~/.local/share/alzeo/` that the update names, and a copy that
 fails stops the update before its reset. Off main, FORCE_UPDATE=1 looks before it switches to main, whose checkout
-writes over ignored files too. The list of untracked files kept in place no longer names what the update replaced,
+writes over ignored files too, and the switch is forced once those files are copied aside: an untracked file of yours
+at a path main tracks made it fail, then its fallback said a branch named main already exists (exit code 128). A link
+of yours where the release needs a folder is kept as a link, and what lies past it, which is not the clone's, is
+neither copied nor counted. The list of untracked files kept in place no longer names what the update replaced,
 whatever its name, and both lists say how many more there are past their first five. `tests/test_get_sh.py` (cases
-3b to 3f) and `tests/test_get_sh_force_update.py` fail on the get.sh before.
+3b to 3g) and `tests/test_get_sh_force_update.py` fail on the get.sh before.
 
 **The cockpit watches all of its own code.** It says when its code on disk changed under it, and engine_metrics.py,
 one of its modules, was not watched. A test reads the cockpit's imports and fails when one of its own modules is not.
