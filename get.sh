@@ -171,25 +171,40 @@ main() {
       exit 1
     fi
   fi
-  # A file of the clone that git does not track (untracked or ignored) at a path origin/main tracks is written
-  # over by the reset below: a note, an AGENTS.md an agent wrote, a file a later release adds. It is copied
-  # aside first, under a dated folder of the user's own, and said; a copy that fails stops the update before
-  # anything is written over (third review of v1.40.8, 2026-11-01; fixed in v1.45.0).
-  KEPT="$HOME/.local/share/alzeo/kept-before-update-$(date +%Y%m%d-%H%M%S)"
-  # Lists line by line (BSD comm, as macOS has, has no -z); a name git still quotes (a newline, a quote) is not
-  # found on disk, its copy fails, and the update stops with nothing written over.
-  NKEPT=0; KEPTLIST=""
-  COLLIDE=$(LC_ALL=C comm -12 <(git -C "$DIR" -c core.quotePath=false ls-files --others | LC_ALL=C sort) \
-                     <(git -C "$DIR" -c core.quotePath=false ls-tree -r --name-only origin/main | LC_ALL=C sort))
-  while IFS= read -r f; do
-    [ -n "$f" ] || continue
-    mkdir -p "$KEPT/$(dirname "$f")" && cp -pP "$DIR/$f" "$KEPT/$f" || {
-      echo "ERROR: could not copy $DIR/$f aside before the update (it would be written over): nothing was changed." >&2
-      exit 1; }
-    NKEPT=$((NKEPT + 1)); KEPTLIST+="$f"$'\n'
-  done <<EOF
-$COLLIDE
-EOF
+  # A file of the clone that git does not track (untracked or ignored) is written over or removed by the reset below
+  # where the release puts something of its own: a note, an AGENTS.md an agent wrote, a file a later release adds.
+  # It is copied aside first, under a folder of the user's own, and said; a copy that fails stops the update before
+  # its reset (third review of v1.40.8, 2026-11-01; fixed in v1.45.0). Only the paths the release adds can collide,
+  # each one three ways: a file of the user's at that path, a folder of the user's there (the release adds a file
+  # named drafts, the user has drafts/idea.txt), and a file of the user's where the release needs a folder (the
+  # release adds extra/notes.md, the user has a file named extra). Comparing whole lists missed the last two, and
+  # listed every ignored file of the clone, a .venv-mirror/ of thousands (code review of v1.45.0). Names go NUL-
+  # separated (-z, find -print0), so a name with a newline or a quote is found as it is.
+  NKEPT=0; KEPTLIST=""; KEPT=""
+  keep_aside() {
+    git --literal-pathspecs -C "$DIR" ls-files --error-unmatch -- "$1" >/dev/null 2>&1 && return 0   # the release's
+    case $'\n'"$KEPTLIST" in *$'\n'"$1"$'\n'*) return 0 ;; esac                                     # copied already
+    # a folder of its own each time: two updates within one second shared one, the second's copies over the first's
+    [ -n "$KEPT" ] || KEPT=$(mkdir -p "$HOME/.local/share/alzeo" &&
+                             mktemp -d "$HOME/.local/share/alzeo/kept-before-update-$(date +%Y%m%d-%H%M%S)-XXXXXX") || {
+      echo "ERROR: could not make a folder under $HOME/.local/share/alzeo to copy your files aside: the update stops" \
+           "before its reset, and no file of yours was written over." >&2; exit 1; }
+    mkdir -p "$KEPT/$(dirname "$1")" && cp -pP "$DIR/$1" "$KEPT/$1" || {
+      echo "ERROR: could not copy $DIR/$1 aside before the update would write over it: the update stops before its" \
+           "reset, and no file of yours was written over." >&2; exit 1; }
+    NKEPT=$((NKEPT + 1)); KEPTLIST+="$1"$'\n'
+  }
+  while IFS= read -r -d '' p; do
+    if [ -L "$DIR/$p" ] || [ -f "$DIR/$p" ]; then keep_aside "$p"
+    elif [ -d "$DIR/$p" ]; then
+      while IFS= read -r -d '' f; do keep_aside "$f"; done < <(cd "$DIR" && find "$p" \( -type f -o -type l \) -print0)
+    fi
+    d=$(dirname "$p")
+    while [ "$d" != "." ] && [ "$d" != "/" ]; do
+      if [ -L "$DIR/$d" ] || [ -f "$DIR/$d" ]; then keep_aside "$d"; fi
+      d=$(dirname "$d")
+    done
+  done < <(git -C "$DIR" diff -z --name-only --no-renames --diff-filter=A HEAD origin/main)
   if [ "$NKEPT" -gt 0 ]; then
     echo "── $NKEPT file(s) of yours at paths this release tracks, replaced by the release's, copied aside first to:"
     echo "     $KEPT"
@@ -198,7 +213,9 @@ EOF
   # Untracked files are kept, but say so (those copied aside above are not kept in place: the release's own
   # replace them). A folder that is untracked whole is named once
   # (--directory): a .venv-mirror/ in the clone, as MIRROR.md makes one, listed its thousands of files.
-  UNTRACKED=$(git -C "$DIR" ls-files --others --exclude-standard --directory)
+  # the same spelling as the names copied aside (core.quotePath=false): a name out of ASCII was quoted here and
+  # not there, and said kept in place though the release had written over it (code review of v1.45.0)
+  UNTRACKED=$(git -C "$DIR" -c core.quotePath=false ls-files --others --exclude-standard --directory)
   if [ -n "$KEPTLIST" ]; then
     UNTRACKED=$(printf '%s\n' "$UNTRACKED" | grep -v -x -F -f <(printf '%s' "$KEPTLIST") || true)
   fi

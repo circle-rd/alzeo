@@ -120,6 +120,51 @@ def main() -> None:
             "Untracked files kept in place" not in r.stdout, r.stdout
         shutil.rmtree(os.path.join(base, ".local/share/alzeo"))
 
+        def kept_files():
+            root = os.path.join(base, ".local/share/alzeo")
+            return {os.path.relpath(os.path.join(dp, f), os.path.join(root, os.listdir(root)[0])):
+                    open(os.path.join(dp, f)).read() for dp, _, fs in os.walk(root) for f in fs} if os.path.isdir(root) else {}
+
+        def publish(path, text, msg):
+            os.makedirs(os.path.dirname(os.path.join(pub, path)) or pub, exist_ok=True)
+            with open(os.path.join(pub, path), "w") as f:
+                f.write(text)
+            git("add", path, cwd=pub); git("commit", "-qm", msg, cwd=pub); git("push", "-q", "origin", "main", cwd=pub)
+
+        # 3c. A file of the user's where the release puts a folder (the release adds extra/notes.md, the user has a
+        #     file named extra): only exact paths were compared, nothing was copied, and the reset removed it
+        #     (code review of v1.45.0).
+        with open(os.path.join(work, "extra"), "w") as f:
+            f.write("my file named extra\n")
+        publish("extra/notes.md", "the release's notes\n", "the release adds extra/")
+        r = run_get(work)
+        assert r.returncode == 0, f"the update failed: {r.stderr}"
+        assert open(os.path.join(work, "extra", "notes.md")).read() == "the release's notes\n"
+        assert kept_files() == {"extra": "my file named extra\n"}, kept_files()
+        shutil.rmtree(os.path.join(base, ".local/share/alzeo"))
+
+        # 3d. A folder of the user's where the release puts a file (the release adds a file named drafts, the user has
+        #     drafts/idea.txt): its files are copied aside before the reset removes the folder.
+        os.makedirs(os.path.join(work, "drafts"))
+        with open(os.path.join(work, "drafts", "idea.txt"), "w") as f:
+            f.write("my idea\n")
+        publish("drafts", "the release's drafts file\n", "the release adds a file named drafts")
+        r = run_get(work)
+        assert r.returncode == 0, f"the update failed: {r.stderr}"
+        assert open(os.path.join(work, "drafts")).read() == "the release's drafts file\n"
+        assert kept_files() == {"drafts/idea.txt": "my idea\n"}, kept_files()
+        shutil.rmtree(os.path.join(base, ".local/share/alzeo"))
+
+        # 3e. A name out of ASCII: copied aside, and not said "kept in place" too (the two lists quoted it two ways)
+        with open(os.path.join(work, "notes-\u00e9.md"), "w") as f:
+            f.write("mine, accented\n")
+        publish("notes-\u00e9.md", "the release's\n", "the release adds an accented name")
+        r = run_get(work)
+        assert r.returncode == 0, f"the update failed: {r.stderr}"
+        assert kept_files() == {"notes-\u00e9.md": "mine, accented\n"}, kept_files()
+        assert "Untracked files kept in place" not in r.stdout or "notes-" not in r.stdout.split("Untracked files kept in place")[-1], r.stdout
+        shutil.rmtree(os.path.join(base, ".local/share/alzeo"))
+
         # 4. A modified tracked file DOES block, and says so.
         with open(os.path.join(work, "install.sh"), "a") as f:
             f.write("# local edit\n")
