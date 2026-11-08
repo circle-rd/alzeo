@@ -137,7 +137,7 @@
     <!-- ══ LANES ════════════════════════════════════════════════════════════ -->
     <section class="view" id="view-lanes" aria-labelledby="h-lanes">
       <div class="vhead">
-        <div><h1 id="h-lanes">Lanes</h1><p>The lanes share one pool, so one serves at a time. Loading a lane hands it the whole box: the one serving stops first, and nothing restarts by itself.</p></div>
+        <div class="vhead-title"><h1 id="h-lanes">Lanes</h1><p>The lanes share one pool, so one serves at a time. Loading a lane hands it the whole box: the one serving stops first, and nothing restarts by itself.</p></div>
       </div>
       <div class="stack" id="lanes-list"></div>
       <div class="grid g2" style="margin-top:var(--s-5)">
@@ -176,7 +176,7 @@
     <!-- ══ TRAFFIC ══════════════════════════════════════════════════════════ -->
     <section class="view" id="view-traffic" aria-labelledby="h-traffic">
       <div class="vhead">
-        <div><h1 id="h-traffic">Traffic</h1><p>What goes through the proxy on :30001, and what the text engine is doing with it.</p></div>
+        <div class="vhead-title"><h1 id="h-traffic">Traffic</h1><p>What goes through the proxy on :30001, and what the text engine is doing with it.</p></div>
         <div class="side"><span class="cap" id="tr-cap">…</span></div>
       </div>
       <section class="panel" data-src="engine_fast,decode">
@@ -226,7 +226,7 @@
     <!-- ══ MACHINE ══════════════════════════════════════════════════════════ -->
     <section class="view" id="view-machine" aria-labelledby="h-machine">
       <div class="vhead">
-        <div><h1 id="h-machine">Machine</h1><p>The GB10 underneath: memory, CPU, GPU, disks, and what the driver refused.</p></div>
+        <div class="vhead-title"><h1 id="h-machine">Machine</h1><p>The GB10 underneath: memory, CPU, GPU, disks, and what the driver refused.</p></div>
       </div>
       <div class="grid g2 wide4">
         <section class="panel" data-src="machine,engine_fast">
@@ -298,7 +298,7 @@
     <!-- ══ DECIDE (System One) ══════════════════════════════════════════════ -->
     <section class="view" id="view-decide" aria-labelledby="h-decide">
       <div class="vhead">
-        <div><h1 id="h-decide">Decide</h1><p>Typed judgments from the text lane: yes or no, one of several options, or a score, each with its whole distribution.</p></div>
+        <div class="vhead-title"><h1 id="h-decide">Decide</h1><p>Typed judgments from the text lane: yes or no, one of several options, or a score, each with its whole distribution.</p></div>
         <div class="side"><span class="cap" id="s1-cap">…</span></div>
       </div>
       <p class="banner info" id="s1-note" hidden></p>
@@ -336,7 +336,7 @@
     <!-- ══ IMAGE ════════════════════════════════════════════════════════════ -->
     <section class="view" id="view-image" aria-labelledby="h-image">
       <div class="vhead">
-        <div><h1 id="h-image">Image</h1><p>Qwen-Image 2.1 on this box: create, edit with up to ten references, and cut out with a real alpha channel.</p></div>
+        <div class="vhead-title"><h1 id="h-image">Image</h1><p>Qwen-Image 2.1 on this box: create, edit with up to ten references, and cut out with a real alpha channel.</p></div>
         <div class="side"><span class="cap" id="img-cap">…</span></div>
       </div>
       <div id="img-lane"></div>
@@ -417,7 +417,7 @@
     <!-- ══ VIDEO ════════════════════════════════════════════════════════════ -->
     <section class="view" id="view-video" aria-labelledby="h-video">
       <div class="vhead">
-        <div><h1 id="h-video">Video</h1><p>MiniMax-H3 on this box: video and sound made together in one pass, from a prompt or from keyframes. No pixel leaves the machine.</p></div>
+        <div class="vhead-title"><h1 id="h-video">Video</h1><p>MiniMax-H3 on this box: video and sound made together in one pass, from a prompt or from keyframes. No pixel leaves the machine.</p></div>
         <div class="side"><span class="cap" id="vid-cap">…</span></div>
       </div>
       <div id="vid-lane"></div>
@@ -507,7 +507,7 @@
     <!-- ══ LIBRARY ══════════════════════════════════════════════════════════ -->
     <section class="view" id="view-library" aria-labelledby="h-library">
       <div class="vhead">
-        <div><h1 id="h-library">Library</h1><p>What the lanes can load, what sits on the disk, and whether the pins still match upstream.</p></div>
+        <div class="vhead-title"><h1 id="h-library">Library</h1><p>What the lanes can load, what sits on the disk, and whether the pins still match upstream.</p></div>
       </div>
       <div class="stack">
         <section class="panel">
@@ -547,7 +547,7 @@
     <!-- ══ LOGS ═════════════════════════════════════════════════════════════ -->
     <section class="view" id="view-logs" aria-labelledby="h-logs">
       <div class="vhead">
-        <div><h1 id="h-logs">Logs</h1><p>The engines' own words, the jobs this cockpit ran, and the events it saw.</p></div>
+        <div class="vhead-title"><h1 id="h-logs">Logs</h1><p>The engines' own words, the jobs this cockpit ran, and the events it saw.</p></div>
       </div>
       <section class="panel">
         <div class="toolbar">
@@ -580,7 +580,7 @@
     <!-- ══ SETTINGS ═════════════════════════════════════════════════════════ -->
     <section class="view" id="view-settings" aria-labelledby="h-settings">
       <div class="vhead">
-        <div><h1 id="h-settings">Settings</h1><p>The repo this box runs, the agent CLI's limits, and the cockpit itself.</p></div>
+        <div class="vhead-title"><h1 id="h-settings">Settings</h1><p>The repo this box runs, the agent CLI's limits, and the cockpit itself.</p></div>
       </div>
       <div class="grid g2">
         <section class="panel" data-src="opencode">

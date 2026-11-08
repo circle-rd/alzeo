@@ -956,14 +956,18 @@ function waitFor(pred, timeoutMs){
 
 // ── the dock: the job running now, from every view and every browser ─────────
 let dockPinned = false, dockHidden = null, lastFinished;
-const JOBLINES = {id: null, lines: [], final: null};
+const JOBLINES = {id: null, lines: [], final: null, read: null};
 // A job that prints nothing, like systemctl, said "starting…" under "Stop 27B" while it stopped the lane, and its log
 // "(no output yet)" after it had ended (issue #64): it says what it does in its own verb, and its log the command first
 const UNIT_DOING = {start: 'starting', stop: 'stopping', restart: 'restarting'};
 const jobDoing = j => `${(j.action === 'unit' && UNIT_DOING[(j.params || {}).verb]) || 'running'}, nothing printed yet`;
+// "(it printed nothing)" only once its last lines were read: a page opened after the job had ended said it of a job
+// that printed hundreds of lines until the fetch answered, and for good when it failed (review of v1.45.0). And no
+// "$" line in a dry run, where nothing runs: the server's own line says what would have (review of v1.45.0)
 function jobLog(j, lines, ended){
-  const head = j && j.argv ? ['$ ' + j.argv.join(' ')] : [];
-  return head.concat(lines.length ? lines : [ended ? '(it printed nothing)' : '(nothing printed yet)']).join('\n');
+  const head = j && j.argv && !j.dry_run ? ['$ ' + j.argv.join(' ')] : [];
+  const none = !ended ? '(nothing printed yet)' : j && JOBLINES.read === j.id ? '(it printed nothing)' : '(reading its log…)';
+  return head.concat(lines.length ? lines : [none]).join('\n');
 }
 function describeJob(j){ return cap1(actionPhrase(j.action, j.params)) + (j.origin === 'autoheal' ? ', by the autoheal belt' : '') + (j.dry_run ? ' (dry run)' : ''); }
 function renderJob(d){
@@ -1008,7 +1012,7 @@ function renderJob(d){
 }
 async function fetchJobLines(id){
   try{ const r = await fetch('/api/jobs/' + id); if (r.status === 401) return login(); if (!r.ok) return;
-    const j = await r.json(); if (JOBLINES.id === id){ JOBLINES.lines = j.lines || []; setText('dock-pre', jobLog(j, JOBLINES.lines, true)); } }
+    const j = await r.json(); if (JOBLINES.id === id){ JOBLINES.lines = j.lines || []; JOBLINES.read = id; setText('dock-pre', jobLog(Object.assign({id}, j), JOBLINES.lines, true)); } }
   catch { /* the dock keeps what it has */ }
 }
 // what a screen reader hears when a lane or a job changes state, once per change

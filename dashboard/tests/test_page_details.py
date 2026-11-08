@@ -222,6 +222,30 @@ class AStopSaysItStops(unittest.TestCase):
         self.assertEqual(r["ended"], {"last": "finished, exit code 0", "log": cmd + "\n(it printed nothing)"})
         self.assertEqual(r["again"], r["ended"]["log"], "the next job event keeps what the fetch said")
 
+    def test_a_page_opened_after_the_end_says_nothing_it_has_not_read(self):
+        # review of v1.45.0: "(it printed nothing)" was said of a job whose lines had not been read yet, and for good
+        # when reading them failed
+        r = run(self, r"""
+        __fetch = url => url === '/api/jobs/j7' ? Promise.resolve(__response(500, {})) : new Promise(() => {});
+        const done = {id: 'j7', action: 'switch', params: {target: 'flash'}, status: 'done', rc: 0,
+                      argv: ['bash', '/r/switch-model.sh', 'flash'], started: Date.now() / 1000 - 30, ended: Date.now() / 1000 - 2, elapsed: 28};
+        feed({job: {current: null, recent: [done]}});
+        await __settle();
+        feed({job: {current: null, recent: [done]}});
+        report({log: txt('dock-pre')});
+        """)
+        self.assertEqual(r["log"], "$ bash /r/switch-model.sh flash\n(reading its log…)")
+
+    def test_a_dry_run_shows_no_command_as_run(self):
+        # review of v1.45.0: "$ sudo ... stop ..." over the server's "[dry run] would run: ..." said it had run
+        r = run(self, r"""
+        feed({job: {current: {id: 'j6', action: 'unit', params: {verb: 'stop', unit: 'qwen38-sglang.service'}, status: 'running',
+              dry_run: true, argv: %s, lines: ['[dry run] would run: sudo -n /usr/bin/systemctl stop qwen38-sglang.service'],
+              started: Date.now() / 1000 - 1, elapsed: 1}, recent: []}});
+        report({log: txt('dock-pre')});
+        """ % json.dumps(self.ARGV))
+        self.assertEqual(r["log"], "[dry run] would run: sudo -n /usr/bin/systemctl stop qwen38-sglang.service")
+
     def test_a_job_that_prints_keeps_its_lines_under_its_command(self):
         r = run(self, r"""
         feed({job: {current: {id: 'j8', action: 'switch', params: {target: 'flash'}, status: 'running', elapsed: 3,
@@ -271,9 +295,11 @@ class ThePageFitsEveryScreen(unittest.TestCase):
     def test_a_views_head_is_its_name_with_its_sentence_beside_it(self):
         (h1,) = self.rules(".vhead h1")
         self.assertIn("font-size:var(--t-24)", h1)
-        (row,) = self.rules(".vhead > div:first-child")
+        (row,) = self.rules(".vhead-title")
         self.assertIn("display:flex", row)
         self.assertIn("flex-wrap:wrap", row)
+        page = (pagejs.STATIC / "index.html").read_text()
+        self.assertEqual(page.count('<div class="vhead">'), page.count('<div class="vhead-title"><h1'), "each head names its title")
         (lede,) = self.rules(".vhead p")
         self.assertIn("font-size:var(--t-14)", lede)
         self.assertNotIn("margin-top", lede)

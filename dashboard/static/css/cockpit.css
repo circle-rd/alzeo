@@ -232,7 +232,7 @@ img,svg,video,canvas{display:block; max-width:100%}
 /* one line: the view's name, and beside it, small, the sentence that says what it is for. A 40 px title over its
    sentence took 100 px above every view, the rail saying its name already (Hasan, 2026-11-08) */
 .vhead{display:flex; align-items:center; justify-content:space-between; gap:var(--s-2) var(--s-5); flex-wrap:wrap; margin-bottom:var(--s-5)}
-.vhead > div:first-child{display:flex; align-items:baseline; flex-wrap:wrap; gap:2px var(--s-4); flex:1 1 520px; min-width:0}
+.vhead-title{display:flex; align-items:baseline; flex-wrap:wrap; gap:2px var(--s-4); flex:1 1 520px; min-width:0}
 .vhead h1{font-size:var(--t-24); font-weight:700; letter-spacing:-.02em; line-height:1.2}
 .vhead p{color:var(--fg-2); font-size:var(--t-14); flex:1 1 360px; min-width:0; max-width:120ch}
 .vhead .side{display:flex; align-items:center; gap:var(--s-3); flex-wrap:wrap}
@@ -570,7 +570,7 @@ button.bay.soon:hover{border-color:rgba(120,150,255,.45)}
 .lane-panel .mark img{width:24px; height:24px}
 
 /* a lane's versions, all in sight: one segmented pill, the chosen segment white, its line under it */
-.pickbox{display:flex; flex-direction:column; gap:8px; max-width:640px; container-type:inline-size}
+.pickbox{display:flex; flex-direction:column; gap:8px; max-width:640px}
 .pick-label{font-size:var(--t-12); font-weight:640; color:var(--fg-2); text-transform:uppercase; letter-spacing:.06em}
 .pick{display:flex; flex-wrap:wrap; gap:4px; padding:4px; border-radius:24px; background:rgba(8,4,28,.40); border:1px solid rgba(255,255,255,.14);
   width:fit-content; max-width:100%}
@@ -579,7 +579,7 @@ button.bay.soon:hover{border-color:rgba(120,150,255,.45)}
 /* a row of versions that wraps no longer leaves its last choice alone on a second line: the choices of a row share
    its width, and four stand two by two (2026-10-17 on a phone; the 27B's four, wrapped three and one at the 640 px of
    the box on every larger screen, the same since 2026-11-08) */
-@container (max-width: 640px){ .pick:has(> .opt:nth-child(4)){display:grid; grid-template-columns:1fr 1fr; width:100%} }
+.pick:has(> .opt:nth-child(4)){display:grid; grid-template-columns:1fr 1fr; width:100%}
 .pick .opt:hover{color:var(--fg-1); background:rgba(255,255,255,.08)}
 .pick .opt[aria-checked="true"]{color:var(--brand-ink); background:#fff}
 /* the version that serves now carries a small green dot */
@@ -812,7 +812,7 @@ body.agentmax .view{animation:none}
   .rack{grid-template-columns:repeat(4, minmax(0,1fr))}
 }
 @media (min-width:2300px){
-  #lanes-list{display:grid; grid-template-columns:repeat(2, minmax(0,1fr))}   /* each card still gets 1000 px or more */
+  #lanes-list{display:grid; grid-template-columns:repeat(2, minmax(0,1fr))}   /* each card about 970 px or more, the rail open */
 }
 @media (min-width:2600px){
   .rack{grid-template-columns:repeat(5, minmax(0,1fr))}
