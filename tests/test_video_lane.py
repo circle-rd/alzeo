@@ -689,7 +689,7 @@ class ThePageShowsVideoTruthfully(unittest.TestCase):
         targets = re.search(r"const LANE_TARGETS = \{(.*?)\};", js, re.S).group(1)
         self.assertIn("[VIDEO_UNIT]: ['video']", targets)
         names = re.search(r"const TARGET_NAME = \{(.*?)\};", js, re.S).group(1)
-        self.assertIn("video: 'MiniMax-H3'", names)
+        self.assertIn("video: 'MiniMax-H3 · MiniMax'", names)   # its official name and its publisher (1180)
 
     def test_the_video_tab_is_a_panel_not_a_promise(self):
         body = INDEX.read_text()

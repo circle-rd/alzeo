@@ -836,8 +836,9 @@ class TheImageLaneIsALaneLikeTheOthers(unittest.TestCase):
         self.assertIn("[IMAGE_UNIT]: ['image', 'image-turbo']", targets)
         # and named apart: it is not one more LLM checkpoint
         names = re.search(r"const TARGET_NAME = \{(.*?)\};", js, re.S).group(1)
-        self.assertIn("image: 'Qwen-Image 2.1'", names)
-        self.assertIn("'image-turbo': 'Qwen-Image 2.1 Turbo'", names)
+        # its official name and who publishes it, as every version since v1.45.0 (decision 1180)
+        self.assertIn("image: 'Qwen-Image 2.1 · Qwen'", names)
+        self.assertIn("'image-turbo': 'Qwen-Image 2.1 Turbo · Qwen'", names)
         # reached through the one journey, never its own start path, on the checkpoint
         # the unit names (the base or the Turbo)
         self.assertIn("askJourney(laneTarget(IMAGE_UNIT) || 'image')", js)
