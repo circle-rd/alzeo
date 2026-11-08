@@ -1,5 +1,30 @@
 # Changelog
 
+## v1.44.3 (2026-11-08): the local CI starts every job, and its pair tests take 16% less time
+
+**The local CI starts every job.** ci-local.sh runs the workflow's first six jobs side by side, each in a git worktree
+of its own, then checks. It added those six worktrees side by side too, and `git worktree add` reads what the other
+adds are writing: twice on 2026-11-07, one job's add failed on another's `worktrees/<job>/commondir`. That job never
+ran, and once the others were over (51 steps, all passed, on the second run) the run ended in a Python traceback with
+no count. The worktrees are now added one after the other before any job starts, an add taking some 0.06 s on the
+reference box, and the jobs still run side by side. An add that fails is its job's failure, said and counted, and the
+other jobs run. Three tests in `tests/test_ci_local.py` fail on the old script and pass on the new one: a git that
+marks each add found an add beside another, 5 runs out of 5, and a git that cannot add a job's worktree, one of the
+first six or checks, ended the run in a traceback with no count.
+
+**The pair tests take 16% less time.** A test that keeps a generation running for its whole length (`busy()` in
+`tests/test_proxy_pair.py`) waited, at its end, for that generation's own seconds: one test took 25 s whatever its
+steps took. The fake engine now ends the generations a test held as soon as the test is over, and the next test
+starts once they are in, as before. No assertion reads them past the test. A test over sooner could leave the next
+one a pause of the other box that its seconds used to let run out: an instrumented run found one, of 1.07 s, and
+`TwoBoxesServeOneModelInProcess` now forgets any pause as each of its tests starts. On the reference box,
+`tests/test_proxy_pair.py` took 1,087.6 s before and 914.1 s after, two runs each, the same 498 tests green both ways
+(listed one by one before and after). The full local CI took 31 minutes, against 33 before.
+
+**What an update does.** The cockpit restarts: it reads the release's number in CHANGELOG.md at its start. Nothing
+else this release ships is read by an engine, the proxy or the Agent tab's opencode-web: it changes the CI and the
+tests only.
+
 ## v1.44.2 (2026-11-07): the Qwen4 27B card opens the rack
 
 **The Qwen4 27B card opens the rack.** The card that announces the lane to come sat after the 27B it will follow. It
