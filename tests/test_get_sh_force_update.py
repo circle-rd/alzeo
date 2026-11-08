@@ -121,6 +121,24 @@ class OffMain(Fixture):
         self.assertTrue(holders.strip(), "the detached commit is on no branch")
 
 
+    def test_an_ignored_file_the_switch_to_main_writes_over_is_copied_aside_first(self):
+        # code review of v1.45.0: off main, FORCE_UPDATE switches to main before its reset, and git's checkout writes
+        # over an ignored file at a path main tracks, without a word: the copy-aside looked only after the switch
+        git("checkout", "-qb", "side", cwd=self.work)
+        (self.work / ".gitignore").write_text("notes.md\n")
+        git("add", ".gitignore", cwd=self.work); git("commit", "-qm", "side ignores notes.md", cwd=self.work)
+        git("checkout", "-q", "main", cwd=self.work)
+        (self.work / "notes.md").write_text("main's notes\n")
+        git("add", "notes.md", cwd=self.work); git("commit", "-qm", "local main tracks notes.md", cwd=self.work)
+        git("checkout", "-q", "side", cwd=self.work)
+        (self.work / "notes.md").write_text("my notes\n")              # ignored on side
+        r = self.run_get()
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertTrue(self.at_origin())
+        kept = sorted((self.base / "home" / ".local/share/alzeo").glob("kept-before-update-*/notes.md"))
+        self.assertEqual([k.read_text() for k in kept], ["my notes\n"], r.stdout)
+
+
 class TheAdviceKeepsUntrackedFiles(unittest.TestCase):
     def test_no_git_clean_in_the_advice(self):
         text = (REPO / "get.sh").read_text()

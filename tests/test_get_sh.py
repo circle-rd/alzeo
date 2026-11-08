@@ -153,6 +153,9 @@ def main() -> None:
         assert r.returncode == 0, f"the update failed: {r.stderr}"
         assert open(os.path.join(work, "drafts")).read() == "the release's drafts file\n"
         assert kept_files() == {"drafts/idea.txt": "my idea\n"}, kept_files()
+        # and the folder the reset removed is not said kept in place (code review of v1.45.0)
+        assert "drafts" not in r.stdout.split("Untracked files kept in place")[-1] or \
+            "Untracked files kept in place" not in r.stdout, r.stdout
         shutil.rmtree(os.path.join(base, ".local/share/alzeo"))
 
         # 3e. A name out of ASCII: copied aside, and not said "kept in place" too (the two lists quoted it two ways)
@@ -163,6 +166,17 @@ def main() -> None:
         assert r.returncode == 0, f"the update failed: {r.stderr}"
         assert kept_files() == {"notes-\u00e9.md": "mine, accented\n"}, kept_files()
         assert "Untracked files kept in place" not in r.stdout or "notes-" not in r.stdout.split("Untracked files kept in place")[-1], r.stdout
+        shutil.rmtree(os.path.join(base, ".local/share/alzeo"))
+
+        # 3f. A name git quotes even with core.quotePath=false (a double quote in it): copied aside, and not said kept
+        #     in place too (code review of v1.45.0)
+        with open(os.path.join(work, 'say "hi".md'), "w") as f:
+            f.write("mine, quoted\n")
+        publish('say "hi".md', "the release's\n", "the release adds a quoted name")
+        r = run_get(work)
+        assert r.returncode == 0, f"the update failed: {r.stderr}"
+        assert kept_files() == {'say "hi".md': "mine, quoted\n"}, kept_files()
+        assert "Untracked files kept in place" not in r.stdout or "say" not in r.stdout.split("Untracked files kept in place")[-1], r.stdout
         shutil.rmtree(os.path.join(base, ".local/share/alzeo"))
 
         # 4. A modified tracked file DOES block, and says so.
@@ -389,8 +403,10 @@ def main() -> None:
         r = run_get(many)
         assert r.returncode == 0 and "INSTALL_RAN" in r.stdout, f"3000 untracked files: rc {r.returncode}: {r.stdout[-200:]}"
         assert "Untracked files kept in place" in r.stdout and "── At:" in r.stdout, r.stdout[-300:]
-        shown = [ln[5:] for ln in r.stdout.splitlines() if ln.startswith("     ")]
+        shown = [ln[5:] for ln in r.stdout.splitlines() if ln.startswith("     ") and not ln.startswith("     ... and ")]
         assert shown == kept[:5], f"the five listed are not the first five: {shown}"
+        # and how many more there are, said (code review of v1.45.0: five names and nothing about the others)
+        assert f"     ... and {len(kept) - 5} more" in r.stdout, r.stdout[-300:]
         # a folder untracked whole is named once (--directory), not file by file
         folder = os.path.join(base, "folder")
         git("clone", "-q", bare, folder, cwd=base)
