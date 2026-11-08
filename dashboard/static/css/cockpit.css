@@ -128,7 +128,9 @@ img,svg,video,canvas{display:block; max-width:100%}
 .brand .word b{font-weight:680; font-size:var(--t-15); letter-spacing:.01em}
 .brand .word small{font-size:var(--t-12); color:var(--fg-3); margin-top:3px}
 .brand .dry{margin-left:var(--s-2)}
-.serving{display:flex; align-items:center; gap:var(--s-3); min-width:0; flex:1 1 auto; max-width:560px;
+/* sized to what it says: grown to its 560 px whatever its text, it left a gap before Change lane on a MacBook
+   (Hasan, 2026-11-07, decision 1181). At 720 px and less it still fills its row (the rule there). */
+.serving{display:flex; align-items:center; gap:var(--s-3); min-width:0; flex:0 1 auto; max-width:560px;
   padding:6px 8px 6px 14px; border-radius:var(--r-chip); border:1px solid var(--rule-2);
   background:rgba(255,255,255,.06); color:var(--fg-1); text-align:left;
   transition:border-color .2s}
