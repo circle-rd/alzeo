@@ -1947,6 +1947,17 @@ class WhereAClientSendsItsRequests(Base):
             "Environment=UPSTREAM=http://127.0.0.1:30000 PROXY_BIND=0.0.0.0 QWEN38_UPSTREAM_API_KEY=sekret-123 "
             "QWEN38_TLS_CERT=/etc/ssl/box.pem QWEN38_CLIENT_KEYS_FILE=/home/u/.config/qwen38/client-keys\n")
 
+    IP = ("2: enP7s7    inet 192.168.1.20/24 brd 192.168.1.255 scope global dynamic enP7s7\\       valid_lft forever\n"
+          "3: docker0    inet 172.17.0.1/16 brd 172.17.255.255 scope global docker0\\       valid_lft forever\n"
+          "4: br-b5ac2d8eaf0e    inet 172.19.0.1/16 scope global br-b5ac2d8eaf0e\\       valid_lft forever\n"
+          "5: tailscale0    inet 100.101.102.103/32 scope global tailscale0\\       valid_lft forever\n")
+
+    def test_the_boxs_addresses_the_tailnets_first_and_no_container_bridge(self):
+        # the page opened on the box (127.0.0.1) has no other address to offer another machine (captures, 2026-11-09)
+        self.box({"show qwen38-keepalive.service": self.SHOW, "addr show scope global": self.IP})
+        self.assertEqual(self.cp.collect_api()["addresses"], [{"iface": "tailscale0", "addr": "100.101.102.103"},
+                                                              {"iface": "enP7s7", "addr": "192.168.1.20"}])
+
     def test_its_port_its_interface_its_tls_and_its_client_keys(self):
         self.box({"show qwen38-keepalive.service": self.SHOW})
         d = self.cp.collect_api()

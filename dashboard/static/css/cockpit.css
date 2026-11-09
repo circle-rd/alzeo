@@ -290,6 +290,7 @@ img,svg,video,canvas{display:block; max-width:100%}
 .facts dt{color:var(--fg-2); padding-right:var(--s-5)}
 .facts dd{text-align:right; font-variant-numeric:tabular-nums; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
 .facts dd.wrap{white-space:normal}
+.facts dd.lines{white-space:pre-line}   /* one address a line (Connect a client) */
 .facts dd .code{font-size:var(--t-13)}
 
 /* ── readouts: the numbers a gauge carries ── */

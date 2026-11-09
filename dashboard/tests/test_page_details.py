@@ -1006,7 +1006,8 @@ class AClientIsToldWhereToSendItsRequests(unittest.TestCase):
     location.hostname = %s;
     feed({config: CONFIG, units: UNITS, lifecycle: life({'qwen38-sglang.service': eng('ready')}),
           engine_info: {served_target: 'stock', info: {served_model_name: 'qwen3.8-27b'}},
-          api: {known: true, port: 30001, bind: %s, tls: %s, client_keys: false, key_file: '/home/u/.config/qwen38/api-key'}});
+          api: {known: true, port: 30001, bind: %s, tls: %s, client_keys: false, key_file: '/home/u/.config/qwen38/api-key',
+                addresses: [{iface: 'tailscale0', addr: '100.101.102.103'}, {iface: 'enP7s7', addr: '192.168.1.20'}]}});
     report({facts: txt('api-facts'), aside: txt('api-aside'), buttons: [...$('api-copy').children].map(b => b.textContent)});
     """
 
@@ -1025,5 +1026,15 @@ class AClientIsToldWhereToSendItsRequests(unittest.TestCase):
         self.assertIn("OpenAI APIhttp://127.0.0.1:30001/v1", r["facts"])
         self.assertIn("Other machines", r["facts"])
         self.assertEqual(r["aside"], "from this box only")
+        self.assertIn("(PROXY_BIND=127.0.0.1)", r["facts"])
         r = run(self, self.BODY % ("'box.example.ts.net'", "'0.0.0.0'", "true"))
         self.assertIn("OpenAI APIhttps://box.example.ts.net:30001/v1", r["facts"])
+
+    def test_a_page_opened_on_the_box_gives_its_other_addresses(self):
+        # a proxy on every interface, the page on 127.0.0.1: it said the proxy listened on the box only, with
+        # PROXY_BIND=0.0.0.0 to open it (captures of 2026-11-09)
+        r = run(self, self.BODY % ("'127.0.0.1'", "'0.0.0.0'", "false"))
+        self.assertNotIn("Other machines", r["facts"])
+        self.assertNotEqual(r["aside"], "from this box only")
+        self.assertIn("From another machinehttp://100.101.102.103:30001/v1 (tailscale0)\nhttp://192.168.1.20:30001/v1 (enP7s7)",
+                      r["facts"])

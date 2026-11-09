@@ -3081,9 +3081,18 @@ def collect_api() -> dict:
     show = run(["systemctl", "show", "qwen38-keepalive.service", "-p", "ExecStart", "-p", "Environment"], timeout=5) or ""
     port = re.search(r"keepalive-proxy\.py (\d+)", show)
     env = dict(re.findall(r"(?<![A-Za-z0-9_])(PROXY_BIND|QWEN38_TLS_CERT|QWEN38_CLIENT_KEYS_FILE)=(\S*)", show))
+    # the box's addresses another machine can reach it by, the tailnet's first: the page opened on the box itself
+    # (127.0.0.1) has no other to offer (captures of 2026-11-09). Container bridges are no one's way in
+    addrs = []
+    for line in (run(["ip", "-4", "-o", "addr", "show", "scope", "global"], timeout=5) or "").splitlines():
+        f = line.split()
+        if len(f) >= 4 and f[2] == "inet" and not f[1].startswith(("docker", "br-", "veth", "virbr", "cni", "flannel")):
+            addrs.append({"iface": f[1], "addr": f[3].split("/")[0]})
+    addrs.sort(key=lambda a: not a["iface"].startswith("tailscale"))
     return {"node_id": "local", "known": bool(port), "port": int(port.group(1)) if port else 30001,
             "bind": env.get("PROXY_BIND") or "0.0.0.0", "tls": bool(env.get("QWEN38_TLS_CERT")),
-            "client_keys": bool(env.get("QWEN38_CLIENT_KEYS_FILE")), "key_file": str(CONFIG_DIR / "api-key")}
+            "client_keys": bool(env.get("QWEN38_CLIENT_KEYS_FILE")), "key_file": str(CONFIG_DIR / "api-key"),
+            "addresses": addrs}
 
 
 def collect_engine_table() -> dict:

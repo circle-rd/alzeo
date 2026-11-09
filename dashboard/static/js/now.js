@@ -224,22 +224,29 @@ const API = {d: null, model: ''};
 on('api', d => { API.d = d; renderApi(); });
 on('engine_info', d => { API.model = (d.info || {}).served_model_name || ''; renderApi(); });
 on('lifecycle', () => renderApi());
+const LOOPBACK = ['127.0.0.1', 'localhost', '::1'];
+const apiUrl = (d, host) => `${d.tls ? 'https' : 'http'}://${host.includes(':') ? '[' + host + ']' : host}:${d.port}`;
 function apiBase(d){
+  // a proxy on every interface answers on the address this page was reached by; one bound to an address, on that one
   const any = !d.bind || d.bind === '0.0.0.0' || d.bind === '::';
   const host = any ? location.hostname : d.bind;
-  return {host, base: `${d.tls ? 'https' : 'http'}://${host.includes(':') ? '[' + host + ']' : host}:${d.port}`};
+  return {host, base: apiUrl(d, host)};
 }
 function renderApi(){
   const d = API.d, box = $('api-facts'), row = $('api-copy');
   if (!d || !box) return;
   const {host, base} = apiBase(d);
-  const onlyHere = ['127.0.0.1', 'localhost', '::1'].includes(host);
+  // the proxy's own interface decides who can reach it, not the address this page was opened by: a page opened on
+  // the box (127.0.0.1) said a proxy on every interface listened on the box only (captures of 2026-11-09)
+  const boxOnly = LOOPBACK.includes(d.bind);
+  const others = !boxOnly && LOOPBACK.includes(host) ? (d.addresses || []).map(a => `${apiUrl(d, a.addr)}/v1 (${a.iface})`) : [];
   const model = textReady() && API.model ? API.model : '';
-  setText('api-aside', onlyHere ? 'from this box only' : 'OpenAI and Anthropic APIs');
+  setText('api-aside', boxOnly ? 'from this box only' : 'OpenAI and Anthropic APIs');
   facts(box, [['OpenAI API', `${base}/v1`, 'wrap'], ['Anthropic API', base, 'wrap'],
               ['Model', model || (servingEngine() ? 'no text lane serves now' : 'nothing serves now')],
               ['Key', `the cockpit's login, in ${d.key_file} on the box` + (d.client_keys ? ', or a client key of yours' : ''), 'wrap'],
-              onlyHere ? ['Other machines', 'the proxy listens on this box only (PROXY_BIND=' + d.bind + '): PROXY_BIND=0.0.0.0 ./install.sh opens it, the key still the gate', 'wrap'] : [null, null]]);
+              boxOnly ? ['Other machines', `the proxy listens on this box only (PROXY_BIND=${d.bind}): PROXY_BIND=0.0.0.0 ./install.sh opens it, the key still the gate`, 'wrap']
+                : others.length ? ['From another machine', others.join('\n'), 'wrap lines'] : [null, null]]);
   clear(row);
   const m = model || 'MODEL';
   // claude-local sets Claude Code up for the lane that serves (proxy, key, model, budgets: docs/clients.md); the test
