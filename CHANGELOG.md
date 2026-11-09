@@ -47,6 +47,24 @@ has not chosen the 1M window keeps its FP4-Local unit as it was. An install and 
 the FP4-Local lane as they do for the 27B and the flash lane: the native pair, 205,000 and 32,000, in place of numbers
 edited by hand, with a dated backup of the file.
 
+**Before the push.** On the reference box, with this release's code, the 1M window by the lane's own path: the
+installer rendered the unit, systemd started it, and the lane served after 465 s with a window of 1,048,576 tokens
+read on the engine and a KV pool of 1,080,529. The same prompt of 350,056 tokens was refused by v1.45.1's proxy (400,
+too long for the lane) and relayed by v6.54 (200), and a passphrase hidden at 600,061 tokens was retrieved through
+v6.54. A Load's opencode block, run on copies of the box's two configs, wrote 840,000 and 32,000 with the label
+"(local, 1M)" and a compaction keeping 205,000. Back to native, the unit rendered again was the one installed, byte
+for byte, and the 27B served again.
+
+**After the push.** GitHub's CI passed on 498e100, 89 steps, none skipped. The reference box updated in 1 min 38 s by
+the README's command (get.alzeo.ai): the 27B, the lane that served, kept running, the proxy (v6.54) and the cockpit
+restarted, and no lane's unit changed: the nine were written again as they were, FP4-Local's included. opencode's
+limits were fitted to the pool of the boot that serves (558,000 and 186,000), and the Agent tab's server was not
+restarted. On the 27B the production checks passed, and so did the eight real clients: Claude Code, opencode, Hermes,
+pi, the OpenAI and Anthropic SDKs, fetch under Node and under Bun, and LiteLLM. The client matrix on the two lanes
+this release changes passed 16 cases of 16: FP4-Local loaded from the cockpit's path in 612 s and the 27B again in
+213 s, eight clients on each. After it, opencode's FP4-Local entry was back at 205,000 and 32,000, "(local, 262K)". The
+cockpit showed no banner on any of its views, and no JavaScript error.
+
 ## v1.45.1 (2026-11-09): the cockpit says where a client sends its requests, and an update no longer cuts the Agent tab
 
 **The cockpit says where a client sends its requests.** Nothing on the page said what to give a client: the address,
