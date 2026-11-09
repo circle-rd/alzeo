@@ -346,5 +346,72 @@ class TheStagedUnit(unittest.TestCase):
         self.assertFalse(self.box.out.exists() and self.box.out.read_text().strip(), "a unit staged with no checkpoint")
 
 
+
+class TheMillionTokenWindow(unittest.TestCase):
+    """Discussion #63 (2026-11-09): FLASH_LOCAL_CONTEXT=1m serves 1,048,576 tokens by YaRN, as measured on the reference
+    box (8 passphrases of 8 retrieved up to 1,036,576 tokens). The overrides come from the pinned checkpoint's own RoPE,
+    and the choice is kept for the Loads after, which stage the unit with none of the user's environment."""
+
+    CONFIG = {"text_config": {"max_position_embeddings": 262144, "rope_parameters": {
+        "mrope_interleaved": True, "mrope_section": [11, 11, 10], "partial_rotary_factor": 0.25,
+        "rope_theta": 10000000, "rope_type": "default"}}}
+
+    def setUp(self):
+        self.box = Box()
+        self.snap = self.box.hf / "hub" / HUB / "snapshots" / PINS["FLASH_LOCAL_REV"]
+        (self.snap / "config.json").write_text(json.dumps(self.CONFIG))
+        self.cfg = self.box.home / ".config" / "qwen38"
+
+    def tearDown(self):
+        shutil.rmtree(self.box.t, ignore_errors=True)
+
+    def window(self):
+        return re.search(r"--max-model-len (\d+) ", self.box.out.read_text()).group(1)
+
+    def test_native_by_default_1m_when_asked_and_kept_for_the_loads_after(self):
+        rc, out = self.box.stage(FLASH_LOCAL_PLE_DIR="none")
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(self.window(), "262144")
+        self.assertNotIn("--hf-overrides", self.box.out.read_text())
+        rc, out = self.box.stage(FLASH_LOCAL_PLE_DIR="none", FLASH_LOCAL_CONTEXT="1m")
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(self.window(), "1048576")
+        cmd = exec_command(self.box.out.read_text())
+        self.assertIn(f'--hf-overrides "$(cat {self.cfg}/flash-local-yarn.json)"', cmd)
+        r = subprocess.run(["bash", "-n", "-c", cmd], capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        y = json.loads((self.cfg / "flash-local-yarn.json").read_text())["text_config"]
+        self.assertEqual(y["max_position_embeddings"], 1048576)
+        self.assertEqual(y["rope_parameters"], {"mrope_interleaved": True, "mrope_section": [11, 11, 10],
+                                                "partial_rotary_factor": 0.25, "rope_theta": 10000000,
+                                                "rope_type": "yarn", "factor": 4.0,
+                                                "original_max_position_embeddings": 262144})
+        rc, out = self.box.stage(FLASH_LOCAL_PLE_DIR="none")          # a Load: none of the user's environment
+        self.assertEqual((rc, self.window()), (0, "1048576"), out)
+        rc, out = self.box.stage(FLASH_LOCAL_PLE_DIR="none", FLASH_LOCAL_CONTEXT="native")
+        self.assertEqual((rc, self.window()), (0, "262144"), out)
+        self.assertFalse((self.cfg / "flash-local-context").exists())
+
+    def test_a_checkpoint_whose_rope_moved_or_an_unknown_value_is_refused(self):
+        moved = json.loads(json.dumps(self.CONFIG))
+        moved["text_config"]["rope_parameters"]["mrope_section"] = [16, 24, 24]
+        (self.snap / "config.json").write_text(json.dumps(moved))
+        rc, out = self.box.stage(FLASH_LOCAL_PLE_DIR="none", FLASH_LOCAL_CONTEXT="1m")
+        self.assertNotEqual(rc, 0, out)
+        self.assertIn("RoPE is not the one the 1M window was measured on", out)
+        rc, out = self.box.stage(FLASH_LOCAL_PLE_DIR="none", FLASH_LOCAL_CONTEXT="2m")
+        self.assertNotEqual(rc, 0, out)
+        self.assertIn("native (262,144 tokens, the default) or 1m", out)
+
+    def test_the_pinned_checkpoint_is_the_one_measured(self):
+        # the real pinned config, where the box has it: the RoPE the 1M window was measured on (2026-11-09)
+        real = pathlib.Path.home() / ".cache/huggingface/hub" / HUB / "snapshots" / PINS["FLASH_LOCAL_REV"] / "config.json"
+        if not real.exists():
+            self.skipTest("the pinned FP4-Local checkpoint is not on this machine")
+        t = json.loads(real.read_text())["text_config"]
+        self.assertEqual(t["max_position_embeddings"], 262144)
+        self.assertEqual({k: t["rope_parameters"][k] for k in self.CONFIG["text_config"]["rope_parameters"]},
+                         self.CONFIG["text_config"]["rope_parameters"])
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

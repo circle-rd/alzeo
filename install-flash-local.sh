@@ -188,6 +188,50 @@ elif [ -s "$PLE_CHOICE" ]; then
   FLASH_LOCAL_PLE_DIR="$(head -1 "$PLE_CHOICE")"
 fi
 TABLE_DIR_ARG=(--dir "${FLASH_LOCAL_PLE_DIR:-}")
+# FLASH_LOCAL_CONTEXT=1m: a window of 1,048,576 tokens by YaRN, a factor of 4 over the native 262,144 with the model's
+# multimodal RoPE kept, as measured on the reference box (2026-11-09, discussion #63): ready in 406 s, a KV pool of
+# 1,061,819 tokens at the lane's share, a passphrase retrieved 8 times of 8 up to 1,036,576 tokens (608 s to the first
+# token there), at least 15.1 GiB of memory left. Kept for the runs after in a file of its own, as the PLE folder is:
+# a Load from the cockpit stages the unit with none of the user's environment. native (or empty) brings 262,144 back.
+CONTEXT_CHOICE="$CONFIG_DIR/flash-local-context"
+if [ -n "${FLASH_LOCAL_CONTEXT+set}" ]; then
+  case "$FLASH_LOCAL_CONTEXT" in
+    1m) mkdir -p "$CONFIG_DIR" && echo 1m > "$CONTEXT_CHOICE" ;;
+    ""|native) rm -f "$CONTEXT_CHOICE"; FLASH_LOCAL_CONTEXT=native ;;
+    *) die "FLASH_LOCAL_CONTEXT=$FLASH_LOCAL_CONTEXT: native (262,144 tokens, the default) or 1m (1,048,576 by YaRN)" ;;
+  esac
+elif [ "$(head -1 "$CONTEXT_CHOICE" 2>/dev/null)" = 1m ]; then
+  FLASH_LOCAL_CONTEXT=1m
+else
+  FLASH_LOCAL_CONTEXT=native
+fi
+MAXLEN=262144; YARN_ARG=""
+if [ "$FLASH_LOCAL_CONTEXT" = 1m ]; then
+  MAXLEN=1048576
+  # read by the unit's start from its file: the JSON on the unit's own line would go through systemd's quoting
+  YARN_ARG="--hf-overrides \"\$\$(cat $CONFIG_DIR/flash-local-yarn.json)\""
+fi
+# The overrides the 1M window takes, from the pinned checkpoint's own RoPE: refused when it is not the one measured
+flash_local_yarn(){
+  local cfg="$HF_CACHE/hub/models--${MODEL//\//--}/snapshots/$MODEL_REV/config.json"
+  # a lane installed on demand renders its unit before its checkpoint is there: its Load (the stage, after the fetch)
+  # writes the file; a stage without the checkpoint's config is refused, as its unit would start without it
+  if [ ! -f "$cfg" ]; then
+    [ "$MODE" != stage ] || { echo "FLASH_LOCAL_CONTEXT=1m: no config.json in $(dirname "$cfg")" >&2; return 1; }
+    return 0
+  fi
+  python3 - "$cfg" "$CONFIG_DIR/flash-local-yarn.json" <<'PY'
+import json, sys
+c = json.load(open(sys.argv[1])); t = c.get("text_config", c); r = dict(t.get("rope_parameters") or {})
+want = {"rope_type": "default", "mrope_interleaved": True, "mrope_section": [11, 11, 10],
+        "partial_rotary_factor": 0.25, "rope_theta": 10000000}
+if t.get("max_position_embeddings") != 262144 or any(r.get(k) != v for k, v in want.items()):
+    sys.exit("FLASH_LOCAL_CONTEXT=1m: the pinned checkpoint's RoPE is not the one the 1M window was measured on")
+r.update(rope_type="yarn", factor=4.0, original_max_position_embeddings=262144)
+json.dump({"text_config": {"rope_parameters": r, "max_position_embeddings": 1048576}}, open(sys.argv[2], "w"),
+          separators=(",", ":"))
+PY
+}
 TABLE_MOUNTS=""
 lane_table(){  # $1 copy: make the copies whole first; mounts: only name the copies already there
   local rc=0
@@ -207,12 +251,14 @@ lane_table(){  # $1 copy: make the copies whole first; mounts: only name the cop
 # The unit, rendered for this box: written to $1. Its start checks what the engine reads before it runs: the
 # checkpoint's index at the pinned revision, and each copy of the table its mounts name.
 render_unit(){
+  [ "$FLASH_LOCAL_CONTEXT" != 1m ] || flash_local_yarn || die "the 1M window's overrides could not be written (the line above says why)"
   local index="$HF_CACHE/hub/models--${MODEL//\//--}/snapshots/$MODEL_REV/model.safetensors.index.json" sources
   sources="$( { grep -oE -- '-v [^ :]+:' <<< "$TABLE_MOUNTS" || true; } | sed -e 's/^-v //' -e 's/:$//' | tr '\n' ' ')"
   sed -e "s|__CHECKPOINT_INDEX__|$index|g" -e "s|__TABLE_SOURCES__|${sources% }|g" \
       -e "s|__USER__|$(id -un)|g" -e "s|__GROUP__|$(id -gn "$(id -un)")|g" -e "s|__HOME__|$HOME|g" \
       -e "s|__IMAGE__|$LOCAL_IMAGE|g" -e "s|__MODEL__|$MODEL|g" -e "s|__REV__|$MODEL_REV|g" \
       -e "s|__GMU__|$GMU|g" -e "s|__SEQS__|$SEQS|g" -e "s|__HF_CACHE__|$HF_CACHE|g" \
+      -e "s|__MAXLEN__|$MAXLEN|g" -e "s|__YARN__|$YARN_ARG|g" \
       -e "s|__ENGINE_BIND__|$ENGINE_BIND|g" -e "s|__PORT__|$PORT|g" \
       -e "s|__TABLE_MOUNTS__|$TABLE_MOUNTS|g" -e '/^ *\\$/d' \
       "$HERE/$UNIT.template" > "$1"
