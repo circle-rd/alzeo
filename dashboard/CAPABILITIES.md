@@ -9,7 +9,7 @@ Nothing shells out free-form; every action is a fixed argv template.
 | capability | shell today | UI |
 |---|---|---|
 | First install / upgrade (converging) | `get.sh` one-liner / `install.sh` | Settings view prints the exact terminal command: the installer needs an interactive sudo that a service cannot give, and a half-applied install is the one failure the cockpit must never cause |
-| Choose target model | `MODEL_CHOICE=stock/uncensored/fp8/uncensored-fp8/flash/flash-uncensored/flash-nvda` names the lane that serves; every lane is installed by default since v1.20, each but the one that serves on demand (its first Load builds it: `prepare-lane.sh <lane>`), `--no-<lane>` leaves one out | Each lane's checkpoint selector and Load in the Lanes view, and the rack in Now: the seven text targets, Qwen-Image 2.1 and MiniMax-H3, Load running the switch (`switch-model.sh <target>`), the stop and the start as one journey, a job per step |
+| Choose target model | `MODEL_CHOICE=stock/uncensored/fp8/uncensored-fp8/flash/flash-uncensored/flash-nvda` names the lane that serves; every lane is installed by default since v1.20, each but the one that serves on demand (its first Load builds it: `prepare-lane.sh <lane>`), `--no-<lane>` leaves one out | Each lane's checkpoint selector and Load in the Lanes view, and the rack in Now, a bay per lane: the seven text lanes, Qwen-Image 2.1 and MiniMax-H3, Load running the switch (`switch-model.sh <target>`), the stop and the start as one journey, a job per step |
 | 1M context mode (27B) | `CONTEXT_MODE=1m` (the default since v1.12.1) or `native` | None: an install choice. The lane card shows the window the engine serves |
 | Custom port / HF cache / PLE dir | `PORT= HF_CACHE= PLE_DIR=` | None: install-time choices, kept by every re-run |
 | No-service foreground run | `install.sh --no-service && run.sh` | Documented only (interactive terminal concept), not a UI job |
@@ -20,14 +20,14 @@ Nothing shells out free-form; every action is a fixed argv template.
 | Which lane serves | `systemctl start/stop qwen38-sglang / qwen38-flash / qwen38-image` | Load and Stop on each lane's card in the Lanes view, Load from the rack in Now; the server refuses a second engine while one runs, and every action is confirmed first |
 | Boot enablement | `systemctl enable/disable` | No toggle: a switch enables the target's unit and disables the others. Each card says whether its unit starts at boot |
 | Keepalive proxy | `systemctl ... qwen38-keepalive` | Its row in the Lanes view: state, whether it starts at boot, the running version and whether it is the repo's copy, Start/Stop |
-| Switch target model | `./switch-model.sh <target>` | Switch: the confirmation shows the exact command, the job's live output shows what it changes. It writes the target's unit or launcher and never starts, stops or restarts an engine: Start is its own click |
+| Switch target model | `./switch-model.sh <target>` | Switch, the first step of a Load: the confirmation shows the exact command, the job's live output shows what it changes. It writes the target's unit or launcher and never starts, stops or restarts an engine: the Load's next steps do |
 | Model revisions served | `--revision` in unit/launcher | Revision on the lane card; the Library view's Recipes compare it with the pin, and its Upstream watch compares each pin with Hugging Face's `main` |
 | Kill a stuck generation | proxy auto-abort / restart service | "Abort all", confirmed first, on the SGLang lanes (the cockpit refuses it while a vLLM lane serves: stopping the lane stops its generations): through the proxy's `POST /proxy/stop` since v1.40.3, which stops each generation and cuts its client, so an agent retries the request instead of keeping a cut answer for a whole one (to end an agent's turn, stop it in the agent); `POST /abort_request` with `abort_all` to the engine when the proxy does not take it |
 
 ## Observability
 | capability | shell today | UI |
 |---|---|---|
-| Server state | `systemctl status`, `journalctl`, `docker logs` | Logs view: the last 120 lines of an engine container's log or of a unit's journal, re-read every 3 s with follow ticked (no filter, no download) |
+| Server state | `systemctl status`, `journalctl`, `docker logs` | Logs view: the last 120 lines of an engine container's log or of a unit's journal, re-read every 3 s with follow ticked, with a line filter and Copy (no download) |
 | Engine internals | `/server_info`, `/v1/loads`, `/health` | Lanes view (model, revision, quantization, window, KV pool, speculative, attention, radix cache, engine version, image) and the Now view's Activity (running, waiting, tokens in KV, accept length) |
 | Decode telemetry | docker log scheduler lines | Traffic view: KV pool held, KV usage from the engine log, Mamba state slots, accept length |
 | Engine counters | `/metrics` (SGLang's Prometheus counters, `--enable-metrics` on its lanes, and vLLM's on the vLLM lanes) | Traffic view, last 5 minutes: requests finished, the share of prompt tokens found in the cache, prefill and decode speed per request, tokens accepted per drafter step (the window's, not the gauge's boot average), queue and first-token waits, tokens per second for all clients, idle share, accepted abandons, and the peaks of pool, running and waiting; on SGLang each request counted once, the cockpit's canary taken out. On the vLLM lanes the same rows but the idle share and the abandons, which vLLM does not count, tokens and latencies counted at every step, and no canary to take out |
@@ -43,7 +43,7 @@ Nothing shells out free-form; every action is a fixed argv template.
 | Reclaim superseded images | the `docker rmi` lines `install.sh` and `./uninstall.sh` print | None: never run from the page |
 | Uninstall | `./uninstall.sh [--yes]` | None: a terminal job |
 | API key | `~/.config/qwen38/api-key` | It is the login. No panel shows or regenerates it; the diagnostics bundle masks it |
-| opencode | `~/.config/qwen38/opencode.off` marker, `~/.config/opencode/opencode.json`, `~/.local/bin/oc` | State-aware panel in Setup: on/off (the installer's --no-opencode choice), default model, per-lane limits, launcher, whether the limits fit the served pool, and Fit the limits to this engine |
+| opencode | `~/.config/qwen38/opencode.off` marker, `~/.config/opencode/opencode.json`, `~/.local/bin/oc` | State-aware panel in Settings: on/off (the installer's --no-opencode choice), default model, the 27B's and the flash lane's limits, launcher, whether the limits fit the served pool, and Fit the limits to this engine |
 | Chat templates | patch-template.py outputs | None: `install.sh` and `switch-model.sh` write them |
 | Repo state | git status/log/tags | Settings view, Repo: version, branch, head, working tree, the running proxy's version, and whether a newer release is out (a banner too) |
 
@@ -57,8 +57,9 @@ Nothing shells out free-form; every action is a fixed argv template.
 | Autonomy (no approval clicks, and opencode's defaults already run shell commands unasked, [agents-and-network](../docs/agents-and-network.md)) | `oc` runs with `--yolo` | `AGENT_AUTO=1` at install (unit sets `OPENCODE_PERMISSION`, this repo's deny rules after its `*`); the view shows the mode the running server applies |
 
 ## Explicitly out of scope now (groundwork only)
-Multi-node, multi-GPU, clusters: the collector/action registries carry
-`node_id` and capability flags from day one, UI stays single-node.
+Clusters of more than two boxes, multi-GPU: the collector/action registries carry
+`node_id` and capability flags from day one. Two paired boxes are in since v1.42.0: the
+Now view shows the other box of a pair (docs/pair.md).
 
 ## Recipes (step 4, since 29/08 evening)
 | capability | shell today | UI |

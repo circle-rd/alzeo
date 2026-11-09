@@ -5,7 +5,31 @@ so that "on the roadmap" means a checkbox with a definition of done, not a
 mood. Statuses: shipped, in progress, planned, considered (considered items
 have a reason they are not yet planned, stated here or in an issue).
 
-## Shipped, current: v1.39
+## Shipped, current: v1.40 to v1.45
+
+- **The 64 GB DGX Spark** (v1.40.0): the lanes that fit it, Bolt served by default; a `--no-<lane>`
+  counts for its run only.
+- **Security** (v1.40.1, v1.40.6, v1.42.1): the image and video lanes' scheduler channel on loopback,
+  `GET /health` that generates nothing, a network peer's headers and body bounded; the engines'
+  coordination ports out of the network's reach (a file rendezvous for the SGLang text lanes, the
+  image and video lanes held to loopback by the kernel, none opened by the vLLM lanes); no client
+  can hide a field from the proxy's guards in UTF-16.
+- **Every lane says what its prefix cache served** (v1.40.3, #49), and Claude Code's ToolSearch works
+  on the Qwen lanes.
+- **opencode refuses a shell command that names an Alibaba Cloud host or a cloud metadata address**
+  (v1.40.4).
+- **On the Ornith lane a long prompt no longer holds up the other requests** (v1.40.7, #61).
+- **The project is Alzeo** (v1.41.0): github.com/hasso5703/alzeo, `get.alzeo.ai`, the Alzeo cockpit;
+  its site at alzeo.ai (v1.45.3).
+- **Two boxes, one model** (v1.42.0, v1.43.0): paired in one command behind one endpoint, the other
+  box in the cockpit, a conversation staying on the box that holds it.
+- **The 27B starts without torch.compile** (v1.44.0), and an answer's end is read as its engine
+  sends it; one page per model (v1.44.1).
+- **The cockpit names each lane's engine and version by its official name** (v1.45.0) and says where
+  a client sends its requests (v1.45.1).
+- **A window of 1,048,576 tokens on the Flash-Next FP4-Local lane**, as an option (v1.45.2).
+
+## Shipped, v1.39
 
 - **SGLang v0.5.22 for the 27B lane** (v1.39.0): faster at one and four streams
   in an A/B on the reference box, its draft accepted alike on every boot, with
@@ -220,16 +244,6 @@ the cockpit drift panel says so, per lane, until it is.
 - **Per-client limits on the identity layer**: the v6.16 key map names who;
   the honest next step is per-label ceilings and a journal-derived quota,
   designed as an issue with measured motivation, not bolted on.
-- **The engines' coordination ports off the network**: each engine's PyTorch store
-  listens on every interface whatever its API's bind (SECURITY.md, measured
-  2026-09-30). Done means the docker lanes on a bridge network with only their API
-  published on loopback, the native lanes in a namespace of their own or behind a
-  rule the installer owns, and a bench showing the serving path unchanged on every
-  lane before it becomes the default.
-- **A cockpit panel that reads the Prometheus endpoint** now that it exists
-  on every text lane: the panel's own canary stays the source of truth for
-  "is this lane alive", the metrics join as history, not as a second
-  opinion about life.
 - **The speech lane, next steps** (asked for in
   [discussion #38](https://github.com/hasso5703/alzeo/discussions/38)). It is
   built, opt-in: `./install-speech.sh` serves Qwen3-ASR and Kokoro-82M on the CPU, beside

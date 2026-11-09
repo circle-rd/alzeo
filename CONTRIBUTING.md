@@ -27,7 +27,7 @@ breaks a build if it is missing.
 
 ## Setting up
 
-The runtime is stdlib only and stays that way. Three measuring gates need
+The runtime is stdlib only and stays that way. Four measuring gates need
 pip packages, once:
 
 ```bash
@@ -57,11 +57,9 @@ pushing.
 
 - `bash -n` and `shellcheck -S warning` on every tracked shell script (found
   by extension and shebang, so a new one is picked up); `node --check` on the
-  opencode plugin; `ruff --select F,E9` on the Python files its step lists,
-  which takes everything under `tests/` and `dashboard/` by glob while a new
-  script at the root has to be added by hand (at v1.18.7 `engine-inputs.py` and
-  `oc-merge-limits.py` are only byte-compiled), and `py_compile` on the root
-  scripts and the vendored overlay.
+  opencode plugin; `ruff --select F,E9` on every tracked Python file (`git ls-files`, the
+  vendored `flash-sglang/` overlay aside), and `py_compile` on the root scripts
+  and the vendored overlay, from a list kept by hand.
 - Every `tests/test_*.py` must run standalone (`__main__` block) and CI
   counts what ran against what the files declare: a suite with tests that
   never ran once exited 0, so silence is not a pass.
@@ -72,7 +70,7 @@ pushing.
   the odd one out), the sudoers allowlist must match the privileged calls
   `switch-model.sh` actually makes and carry no wildcard, the pin blocks in
   `run.sh` and `switch-model.sh` must still select every name they use, the
-  opencode limits table must satisfy the ceiling arithmetic, every serving
+  opencode limits table must satisfy the ceiling arithmetic, every SGLang
   lane must carry `--sleep-on-idle`, and the proxy's outcome vocabulary is
   closed (adding an outcome fails CI until someone says what it means).
 - House typography: no em or en dashes anywhere tracked. Use a comma, or

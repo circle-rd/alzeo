@@ -38,9 +38,10 @@ happens to exist.
 
 No row is a conclusion until this table says one, with a date.
 
-`check-pins.sh` also watches three pins this script does not copy, since they live on
-GitHub and PyPI rather than on Hugging Face or a registry: the image lane's SGLang commit
-and its `sglang` wheel, and opencode's release asset with its digest.
+`check-pins.sh` also watches pins this script does not copy: those of the lanes this mirror
+does not cover yet (the vLLM lanes' checkpoints and images, the speech lane's files), and three
+that live on GitHub and PyPI rather than on Hugging Face or a registry: the image lane's SGLang
+commit and its `sglang` wheel, and opencode's release asset with its digest.
 
 ## Where the mirror lives
 

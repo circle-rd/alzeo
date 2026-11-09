@@ -1,6 +1,7 @@
 # Running a GGUF model on a DGX Spark
 
-This repo serves SGLang. It has no GGUF lane and this note is not one: it is what the
+This repo serves its text lanes on SGLang and vLLM. It has no GGUF text lane (the speech lane's
+recognizer is a GGUF on llama.cpp) and this note is not one: it is what the
 reference box measured when it did run llama.cpp on this hardware, so that anyone asking
 "can I serve a GGUF fine-tune on my Spark instead?" can answer it with numbers rather than
 with a weekend. Asked in [issue #12](https://github.com/hasso5703/alzeo/issues/12).
