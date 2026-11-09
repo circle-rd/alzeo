@@ -220,17 +220,19 @@ share, plus YaRN, a factor of 4 over the native 262,144 with the model's multimo
 ```bash
 cd ~/dgx-spark-qwen38 && FLASH_LOCAL_CONTEXT=1m ./install-flash-local.sh --units-only      # then Load the lane
 cd ~/dgx-spark-qwen38 && FLASH_LOCAL_CONTEXT=native ./install-flash-local.sh --units-only  # back to 262,144
-curl -fsSL https://get.alzeo.ai | FLASH_LOCAL_CONTEXT=1m bash                               # or with an update
 ```
 
 `--units-only` writes the choice and the lane's unit, and downloads and starts nothing: the next Load
-of the lane, from the cockpit or `./switch-model.sh flash-local`, starts it with the window chosen.
+of the lane, from the cockpit or `./switch-model.sh flash-local`, starts it with the window chosen and
+sets the clients' limits for it. An update keeps the window chosen: `./install.sh` does not read
+`FLASH_LOCAL_CONTEXT`, and says so.
 
 The choice is kept for the Loads after (a Load from the cockpit stages the unit with none of your
 environment). The unit reads its overrides from `~/.config/qwen38/flash-local-yarn.json` at its
 start, written from the pinned checkpoint's own RoPE, and the installer refuses the option when
-that RoPE is not the one measured, and keeps nothing of it then. Before the checkpoint is in the
-cache, the unit keeps the native window: the Load that fetches it sets the 1M one.
+that RoPE is not the one measured, and keeps nothing of it then. A choice kept from before that a
+checkpoint refuses so serves the native window, and the Load says why. Before the checkpoint is in
+the cache, the unit keeps the native window: the Load that fetches it sets the 1M one.
 
 At 1M, the proxy relays a prompt up to 92 % of the pool (about 976,000 tokens): the 250,000-token
 ceiling it keeps on this lane at its native window is for that window. The Load gives opencode, pi
