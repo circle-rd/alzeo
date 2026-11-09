@@ -35,6 +35,13 @@ commands take (`stock`, `uncensored`, `flash`, `flash-local`...) do not change.
 the proxy keep running, as nothing they read changed, and the Agent tab's opencode server restarts only if its limits
 come down.
 
+**After the push.** GitHub's CI passed on d534bb5, 89 steps, none skipped. The reference box updated in 1 min 34 s by
+the README's command (get.alzeo.ai): the engine and the proxy kept running, and the cockpit restarted. The Agent tab's
+opencode-web restarted too, the case this release keeps: the 27B had just booted again with a smaller pool (880,902
+tokens against 894,954), so opencode's limits came down (555,000/185,000 to 547,000/182,000). On the 27B the production
+checks passed, and so did the eight real clients: Claude Code, opencode, Hermes, pi, the OpenAI and Anthropic SDKs,
+fetch under Node and under Bun, and LiteLLM. The cockpit showed no banner on any of its views.
+
 ## v1.45.0 (2026-11-09): the cockpit names each lane's engine and each version by its official name, and fits every screen
 
 **Each lane says its engine and its version.** The cockpit names the engine each lane runs, with its version, wherever
