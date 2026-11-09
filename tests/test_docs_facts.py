@@ -176,11 +176,12 @@ class TheGsm8kCountIsTheOneRunEvalAsks(unittest.TestCase):
 
 
 NUMBERS = {w: n for n, w in enumerate(
-    "zero one two three four five six seven eight nine ten eleven twelve".split())}
+    ("zero one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen "
+     "seventeen eighteen nineteen twenty").split())}
 
 
 def count(word):
-    """A count as a page writes it: a number word, or digits."""
+    """A count as a page writes it: a number word, or digits; None for a word this check cannot read."""
     return int(word) if word.isdigit() else NUMBERS.get(word.lower())
 
 
@@ -191,11 +192,16 @@ def present_pages():
 
 
 def cockpit_engines():
-    """The cockpit's table of the engine each unit runs (dashboard/engines.py), as its own tests load it."""
+    """The cockpit's table of the engine each unit runs (dashboard/engines.py), loaded from its file."""
     spec = importlib.util.spec_from_file_location("engines_for_docs", REPO / "dashboard/engines.py")
     m = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(m)
     return m.ENGINES
+
+
+def words(phrase):
+    """A phrase of a hard-wrapped page: its words may be split by any run of spaces or a line end."""
+    return r"\s+".join(phrase.split(" "))
 
 
 class TheKeepAsItIsCommandNamesEveryLane(unittest.TestCase):
@@ -207,32 +213,36 @@ class TheKeepAsItIsCommandNamesEveryLane(unittest.TestCase):
         lanes = set(re.findall(r'lane_wanted ([a-z0-9-]+) "\$NO_', (REPO / "install.sh").read_text()))
         self.assertGreaterEqual(len(lanes), 5, lanes)
         text = (REPO / "docs/operations.md").read_text()
-        m = re.search(r"To keep a box as it is,.*?`(\./install\.sh[^`]*)`", text, re.S)
+        m = re.search(words("To keep a box as it is,") + r".*?`(\./install\.sh[^`]*)`", text, re.S)
         self.assertIsNotNone(m, "the keep-as-is command is no longer where this check reads it")
         self.assertEqual(lanes - {"27b"}, set(re.findall(r"--no-([a-z0-9-]+)", m.group(1))), m.group(1))
 
 
 class TheCountsOfTextUnitsAreTheProxys(unittest.TestCase):
-    # the sentences that state the whole set: a count there is the number of units, not a part of them
-    CLAIMS = (("README.md", r"The (\w+) text units publish the same port", "text"),
-              ("docs/engine-restarts.md", r"one of the (\w+) text lanes' units", "text"),
-              ("docs/engine-restarts.md", r"the (\w+) vLLM lanes, image and video", "vLLM"))
+    # The sentences that state a whole set, so their count is the number of units. A count of a
+    # part elsewhere ("the two vLLM lanes with a 1M window") is no claim about the set, and is not read.
+    CLAIMS = (("README.md", words("The (\\w+) text units publish the same port"), "text"),
+              ("docs/engine-restarts.md", words("one of the (\\w+) text lanes' units"), "text"),
+              ("docs/engine-restarts.md", words("the (\\w+) vLLM lanes, image and video"), "vLLM"))
 
     def test_each_count_of_text_units_and_vllm_lanes(self):
         """The proxy holds requests while any text lane's unit starts (PROXY_HOLD_UNITS). The README
         said five text units share the engine's port, from before the sixth and seventh lanes
-        (audit, 2026-11-09). Each sentence that counts the text units or the vLLM lanes gives the
-        number of units in that list, and of those the cockpit's engine table says run vLLM."""
+        (audit, 2026-11-09). Each sentence that counts the text units gives the number of units in
+        that list; the one that counts the vLLM lanes among the engine units, the number of units
+        the cockpit's engine table says run vLLM."""
         units = re.search(r'PROXY_HOLD_UNITS=([^"]+)"',
                           (REPO / "qwen38-keepalive.service.template").read_text()).group(1).split()
         engines = cockpit_engines()
         self.assertEqual([u for u in units if u not in engines], [], "a held unit the cockpit's engine table lacks")
-        expect = {"text": len(units), "vLLM": sum(engines[u]["engine"] == "vLLM" for u in units)}
+        expect = {"text": len(units), "vLLM": sum(e["engine"] == "vLLM" for e in engines.values())}
         self.assertGreaterEqual(expect["text"], 2, units)
         for name, pattern, kind in self.CLAIMS:
             m = re.search(pattern, (REPO / name).read_text())
             self.assertIsNotNone(m, f"{name}: the count this check reads ({pattern!r}) is no longer there")
-            self.assertEqual(count(m.group(1)), expect[kind], f"{name}: {m.group(0)!r}, the units say {expect}")
+            n = count(m.group(1))
+            self.assertIsNotNone(n, f"{name}: {m.group(0)!r}: this check cannot read the count {m.group(1)!r}")
+            self.assertEqual(n, expect[kind], f"{name}: {m.group(0)!r}, the units say {expect}")
 
 
 class TheCockpitBackendIsItsModules(unittest.TestCase):
@@ -247,12 +257,13 @@ class TheCockpitBackendIsItsModules(unittest.TestCase):
         counted = 0
         for page in present_pages():
             text = page.read_text()
-            if re.search(r"(?i)\b(?:single|one)[- ]file (?:stdlib |python )?backend\b", text):
+            if re.search(r"(?i)\b(?:single|one)[- ]file\b[^.\n]{0,40}\bbackend\b", text):
                 self.fail(f"{page.relative_to(REPO)} calls the backend a single file; cockpit.py imports {mods}")
-            for m in re.finditer(r"cockpit\.py and (\w+) modules beside it", text):
+            for m in re.finditer(words("cockpit.py and (\\w+) modules beside it"), text):
                 counted += 1
-                self.assertEqual(count(m.group(1)), len(mods),
-                                 f"{page.relative_to(REPO)}: {m.group(0)!r}, cockpit.py imports {mods}")
+                n = count(m.group(1))
+                self.assertIsNotNone(n, f"{page.relative_to(REPO)}: this check cannot read the count {m.group(1)!r}")
+                self.assertEqual(n, len(mods), f"{page.relative_to(REPO)}: {m.group(0)!r}, cockpit.py imports {mods}")
         self.assertGreaterEqual(counted, 1, "no page counts the backend's modules: this check reads nothing")
 
 
@@ -260,25 +271,32 @@ class ThePrivilegedPathNamesWhatSudoRuns(unittest.TestCase):
     def test_flush_and_abort_are_not_said_to_go_through_sudo(self):
         """The README and ARCHITECTURE.md said the cockpit's flush and abort go through its sudoers
         allowlist: they are calls to the engine and the proxy with the box's key, and the allowlist
-        has no rule for them (audit and review, 2026-11-09). In the README's sentence on the
-        cockpit's privileges, a clause that names flush or abort must say the key, not sudo; on
-        ARCHITECTURE.md's lines that name sudo, neither may appear."""
+        has no rule for them (audit and reviews, 2026-11-09). In the README's paragraph on the
+        cockpit's privileges, the list of what goes through sudo names neither, and any other clause
+        that names one says the key; ARCHITECTURE.md's lines that name sudo, and the line after
+        each, name neither."""
         rules = " ".join(ln for ln in (REPO / "dashboard/sudoers-cockpit.template").read_text().lower().splitlines()
                          if "nopasswd" in ln and not ln.lstrip().startswith("#"))
         self.assertIn("systemctl", rules, "the allowlist's rules are no longer where this check reads them")
-        m = re.search(r"Everything privileged the cockpit can do.*?\.(?:\s|$)", (REPO / "README.md").read_text(), re.S)
+        m = re.search(words("Everything privileged the cockpit can do") + r"\s*\(([^)]*)\)([^\n]*)",
+                      (REPO / "README.md").read_text())
         self.assertIsNotNone(m, "the README's sentence on the cockpit's privileges is no longer where this check reads it")
-        arch = [ln for ln in (REPO / "ARCHITECTURE.md").read_text().splitlines() if "sudo" in ln.lower()]
-        self.assertTrue(arch, "ARCHITECTURE.md names sudo nowhere: this check reads nothing")
+        lines = (REPO / "ARCHITECTURE.md").read_text().splitlines()
+        near = [lines[i] + " " + (lines[i + 1] if i + 1 < len(lines) else "")
+                for i, ln in enumerate(lines) if re.search(r"(?i)\bsudo", ln)]
+        self.assertTrue(near, "ARCHITECTURE.md names sudo nowhere: this check reads nothing")
         for word in ("flush", "abort"):
-            if word in rules:
+            if re.search(rf"\b{word}\b", rules):
                 continue
-            for clause in re.split(r"[,;()]", m.group(0)):
-                if word in clause.lower():
+            named = re.compile(rf"(?i)\b{word}\b")
+            self.assertIsNone(named.search(m.group(1)),
+                              f"README.md: the list of what goes through sudo ({m.group(1)!r}) names {word}")
+            for clause in re.split(r"[,;()]", m.group(2)):
+                if named.search(clause):
                     self.assertTrue("key" in clause.lower() and "sudo" not in clause.lower(),
                                     f"README.md: {clause.strip()!r} names {word} without the key it is called with")
-            for ln in arch:
-                self.assertNotIn(word, ln.lower(), f"ARCHITECTURE.md: {ln.strip()!r} puts {word} beside sudo")
+            for ln in near:
+                self.assertIsNone(named.search(ln), f"ARCHITECTURE.md: {ln.strip()!r} puts {word} beside sudo")
 
 
 if __name__ == "__main__":
