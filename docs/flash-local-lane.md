@@ -199,10 +199,38 @@ Machine view counts the refusals of the last hour.
   fit), and stopping the lane stops its generations.
 - System One (`/v1/systemone`) answers on the SGLang lanes only: this lane serves on vLLM, and the
   endpoint says to load one of them.
-- A 1M window: the model's own window is 262,144 tokens, which this lane serves whole, as the
-  card's command for a DGX Spark does. The card says it extends to 1,000,000 tokens and gives no
-  recipe for it: a window stretched by YaRN is a study of its own (the 27B lane's,
-  `docs/context-1m.md`), not done for this lane yet.
+- A 1M window by default: the model's own window is 262,144 tokens, which this lane serves whole,
+  as the card's command for a DGX Spark does. A window of 1,048,576 is an option, below.
+
+## A window of 1,048,576 tokens: FLASH_LOCAL_CONTEXT=1m
+
+The card says the model extends to 1,000,000 tokens and gives no recipe for it (discussion #63
+asked). Measured on the reference box on 2026-11-09, with this lane's own image, flags and memory
+share, plus YaRN, a factor of 4 over the native 262,144 with the model's multimodal RoPE kept
+(`mrope_section` and `mrope_interleaved` as the checkpoint has them), and `--max-model-len 1048576`:
+
+| | measured |
+|---|---|
+| ready in | 406 s |
+| KV pool | 1,061,819 tokens, room for one request of 1,048,576 |
+| a passphrase hidden in filler, two trials at each depth | 8 of 8 retrieved: at 131K, 262K, 524K and 1,036,576 tokens |
+| time to the first token | 58 s at 131K, 122 s at 262K, 268 s at 524K, 608 s at 1.04M (about 1,700 tokens a second) |
+| memory available, lowest during the longest prompt | 15.1 GiB |
+
+```bash
+cd ~/dgx-spark-qwen38 && FLASH_LOCAL_CONTEXT=1m ./install-flash-local.sh --units-only      # then Load the lane
+cd ~/dgx-spark-qwen38 && FLASH_LOCAL_CONTEXT=native ./install-flash-local.sh --units-only  # back to 262,144
+curl -fsSL https://get.alzeo.ai | FLASH_LOCAL_CONTEXT=1m bash                               # or with an update
+```
+
+`--units-only` writes the choice and the lane's unit, and downloads and starts nothing: the next Load
+of the lane, from the cockpit or `./switch-model.sh flash-local`, starts it with the window chosen.
+
+The choice is kept for the Loads after (a Load from the cockpit stages the unit with none of your
+environment). The unit reads its overrides from `~/.config/qwen38/flash-local-yarn.json` at its
+start, written from the pinned checkpoint's own RoPE, and the installer refuses the option when
+that RoPE is not the one measured. The cockpit's Lanes and Now views then say 1M tokens of context.
+It is not the default: YaRN applies its scaling to every prompt, short ones included.
 
 ## Installing, loading, removing
 
