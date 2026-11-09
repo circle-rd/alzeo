@@ -26,7 +26,7 @@ CI keeps true.
   HF cache (weights, pinned revisions)    ~/flashnext-ple (176B N-gram table)
                                           ~/flash-local-ple (FP4-Local table's copies, cache on another disk)
 
-  cockpit :30090 ── sudo exact argv ──> systemd (start/stop/switch/flush)
+  cockpit :30090 ── sudo exact argv ──> systemd (start/stop/switch)
       └── relay :30091 ──> opencode serve 127.0.0.1:4096 (Agent view)
 ```
 

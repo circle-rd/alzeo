@@ -152,8 +152,9 @@ opencode compacts on), whose message names the count, the limit and the pool;
 while a flash lane serves at its 262K window (Flash-Next, or FP4-Local without its 1M option), the limit is also held under its one-prompt
 ceiling (`FLASH_PROMPT_CEILING_TOKENS`, 250,000 by default), which keeps a long
 flash prefill off the memory edge. The engine itself refuses a request whose
-prompt plus `max_tokens` passes its window (262,144 tokens, 1,010,000 in 1M
-mode). A 413 means a body over `MAX_BODY_BYTES` (256 MiB), refused before a
+prompt plus `max_tokens` passes its window (262,144 tokens on most lanes;
+1,010,000 on the 27B in 1M mode; 1,048,576 on Super VL, Ornith, and FP4-Local
+with its 1M option). A 413 means a body over `MAX_BODY_BYTES` (256 MiB), refused before a
 byte of it is read.
 
 The network's share of the port is bounded (proxy v6.41). Another machine holds
@@ -276,7 +277,8 @@ below (`0` turns a ceiling off).
   keep such a request alive (measured on the reference box, 2026-10-02);
   `700000` lets a session grow past the window. On the flash lane: `228000`
   (opencode's 205,000 plus the 23,000 Claude Code keeps below its setting) with
-  `CLAUDE_CODE_EXTRA_BODY='{"max_tokens":32000}'`, the limits opencode uses there; a launcher can pick the pair by the lane that serves
+  `CLAUDE_CODE_EXTRA_BODY='{"max_tokens":32000}'`, so that Claude Code's prompts stop where opencode's do there;
+  a launcher can pick the pair by the lane that serves
   (`systemctl is-active --quiet qwen38-flash.service`).
 
   The idle-timeout variables are the difference between "hangs" and "slow";

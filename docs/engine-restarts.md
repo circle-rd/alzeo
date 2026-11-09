@@ -33,8 +33,9 @@ does.
 Every engine unit (the 27B, the flash lane, the five vLLM lanes, image and video) runs it before its engine. It waits up to 60 s
 and refuses the start while it finds:
 
-- **GPU memory still held by what is left of an engine**: an SGLang process (its title is
-  `sglang::<part>` or its command line names sglang), or a process the driver still lists and
+- **GPU memory still held by what is left of an engine**: an engine process (SGLang's title is
+  `sglang::<part>` or its command line names sglang; vLLM's engine core is `VLLM::EngineCore` and
+  its API server a command line running `vllm serve`), or a process the driver still lists and
   the system no longer has, holding more than 2 GiB;
 - **memory the driver keeps that no process accounts for**: on this unified-memory machine a
   GPU allocation is in none of the kernel's own categories, so MemTotal minus all of them is

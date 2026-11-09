@@ -316,8 +316,10 @@ v1.9 wins every row of the frozen battery against v1.2 except eval-style math (o
 | Independent users on this config | **92-94/100** tool-calling ([forum thread](https://forums.developer.nvidia.com/t/380257)) |
 | Losslessness | token-identity study vs the pure model in BENCHMARKS.md ("The losslessness study") |
 
-On the engine it runs today (SGLang 0.5.22 without torch.compile, as v1.44.0 serves it), the same lane scored **99.2%**
-on GSM8K's first 250 problems (2026-11-05, BENCHMARKS.md).
+On the engine it runs today (SGLang 0.5.22 without torch.compile, as v1.44.0 serves it), SGLang's own GSM8K
+(`sglang.test.run_eval`, 250 problems, the test set's 6th to 255th after the five it shows as examples, 8 at a time)
+gives **99.2%** (2026-11-05, BENCHMARKS.md). It asks other problems than the table's 200, so the two scores are not a
+before and after.
 
 And the flash lane (`flash`, the RadixArk export), measured on this box on 2026-09-18 at the
 `context` tier, every eval run against the serving surface this repo installs:
@@ -891,7 +893,7 @@ systemctl status qwen38-keepalive       # keepalive proxy state
 systemctl status qwen38-dashboard       # cockpit state, if you installed it
 python3 conc-check.py                   # does this lane still answer correctly at concurrency 8
 python3 systemone-check.py              # /v1/systemone: every shape, every refusal, mixed with ordinary chat
-sudo systemctl restart qwen38-sglang    # 27B: ~3.5-6.5 min boot; the radix (prefix) cache starts empty
+sudo systemctl restart qwen38-sglang    # 27B: ~3.5-6.5 min boot (7-8 for its FP8 and abliterated versions); the radix (prefix) cache starts empty
 sudo systemctl restart qwen38-flash     # flash: ~12-15 min boot (weight load, and the PLE table written from scratch)
 journalctl -u qwen38-sglang -f          # server logs (or the unit of the lane that serves)
 journalctl -u qwen38-keepalive -f       # one line per proxied request (bytes, first/last event, outcome)
