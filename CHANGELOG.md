@@ -1,5 +1,36 @@
 # Changelog
 
+## v1.45.1 (2026-11-09): the cockpit says where a client sends its requests, and an update no longer cuts the Agent tab
+
+**The cockpit says where a client sends its requests.** Nothing on the page said what to give a client: the address,
+the model, the key. A "Connect a client" panel in the Now view says it, ready to copy: the OpenAI address
+(`http://<the address you opened the cockpit by>:30001/v1`) and the Anthropic one, the model that serves, and where the
+key is (the cockpit's login, in `~/.config/qwen38/api-key` on the box), never the key itself. On a proxy that listens on
+the box alone (`PROXY_BIND=127.0.0.1`) it says so, and how to open it, and with a certificate it says https. Its buttons copy
+the address, `claude-local` (which sets Claude Code up for the lane that serves) and a test request that reads the key
+from its file, and it links every client's setup (docs/clients.md). The cockpit reads the proxy's port, interface,
+certificate and client keys from its unit every 30 s, and nothing else of that unit, whose environment holds keys.
+
+**An update no longer cuts the Agent tab.** The installer fits opencode's limits to the KV pool of the boot that serves,
+and restarted the Agent tab's opencode server whenever they changed, which ended the turn it was in: on the reference
+box every update did, the pool of the boot that serves being larger than the one of the boot that had set them
+(498,000/166,000 to 555,000/185,000 on the update to v1.44.3). Limits lower than the pool allows still fit as the server
+runs: the installer now restarts it only when a limit has to come down, and the server reads the higher ones at its
+next start. The cockpit's "Fit opencode's limits" button still restarts it. `tests/test_oc_fit_limits.py` fails on the
+code before.
+
+**The docs and the installers name each version and engine as the cockpit does.** The README, BENCHMARKS.md, the model
+pages and the lane pages name each version as its makers publish it (Qwen3.8 27B NVFP4 · RadixArk, Qwen3.8 Flash-Next
+abliterated NVFP4 · dealignai, Qwen3.8 Flash-Next FP4-Local · NVIDIA...) with the engine each lane runs and its version
+(SGLang 0.5.22, SGLang nightly 53295c6, vLLM b12x build 8244d1c, vLLM 0.29.0 + Aleph Alpha plugin 1.0.0, vLLM nightly
+77154ca6 + b12x 1.5.1, SGLang Diffusion 0.5.21). The installers, switch-model.sh and uninstall.sh say "the Qwen3.8
+Flash-Next FP4-Local lane", and install.sh's summary of the lanes "Flash-Next" where it said "Flash 176B". The ids
+commands take (`stock`, `uncensored`, `flash`, `flash-local`...) do not change.
+
+**What an update does.** The update runs the new get.sh. The cockpit restarts and serves the new page. The engine and
+the proxy keep running, as nothing they read changed, and the Agent tab's opencode server restarts only if its limits
+come down.
+
 ## v1.45.0 (2026-11-09): the cockpit names each lane's engine and each version by its official name, and fits every screen
 
 **Each lane says its engine and its version.** The cockpit names the engine each lane runs, with its version, wherever
