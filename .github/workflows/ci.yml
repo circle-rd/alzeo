@@ -546,6 +546,18 @@ jobs:
             [ "$(l "$t" concurrency)" = "205000 32000 local" ] || { echo "$t/concurrency drifted"; exit 1; }
             [ "$(l "$t" throughput)" = "110000 32000 local" ] || { echo "$t/throughput drifted"; exit 1; }
           done
+          # The Qwen3.8 Flash-Next FP4-Local lane, at its native window and at its 1M one (FLASH_LOCAL_CONTEXT=1m,
+          # v1.45.2), whose pair is sized on its pool: the cockpit's check (fit_verdict) with a pool 10 % smaller
+          # than the 1,061,819 measured (2026-11-09), and the window holding the prompt at opencode's compaction
+          # point, one agent step and the answer.
+          [ "$(l flash-local)" = "205000 32000 local, 262K" ] || { echo "flash-local's default drifted"; exit 1; }
+          [ "$(l flash-local native)" = "205000 32000 local, 262K" ] || { echo "flash-local native drifted"; exit 1; }
+          [ "$(l flash-local 1m)" = "840000 32000 local, 1M" ] || { echo "flash-local 1m drifted"; exit 1; }
+          read -r C O _ <<<"$(l flash-local 1m)"
+          LOW=$(( 1061819 * 92 / 100 * 90 / 100 ))
+          [ $(( C + O )) -le "$LOW" ] || { echo "flash-local 1m: $C + $O passes $LOW, its pool less 10 %"; exit 1; }
+          [ $(( C - 20000 + 43863 + O )) -le 1048576 ] || { echo "flash-local 1m: past its 1,048,576 window"; exit 1; }
+          ! l flash-local nonsense 2>/dev/null || { echo "an unknown flash-local mode must be refused"; exit 1; }
           # Nonsense is refused rather than defaulted, or a typo silently serves
           # the wrong budget.
           ! l banana native 2>/dev/null || { echo "an unknown target must be refused"; exit 1; }
@@ -562,6 +574,15 @@ jobs:
           [ "$(l flash --from "$tmp/l24.sh")" = "110000 32000 local" ] || { echo "derived tier (24) wrong"; exit 1; }
           [ "$(l stock --from "$tmp/u1m.service")" = "700000 200000 local, 1M" ] || { echo "derived 1m wrong"; exit 1; }
           [ "$(l stock --from "$tmp/unat.service")" = "173000 64000 local" ] || { echo "derived native wrong"; exit 1; }
+          printf '  --max-model-len 1048576 \\\n  --host 127.0.0.1 \\\n' > "$tmp/fl1m.service"
+          printf '  --max-model-len 262144 \\\n  --host 127.0.0.1 \\\n' > "$tmp/flnat.service"
+          [ "$(l flash-local --from "$tmp/fl1m.service")" = "840000 32000 local, 1M" ] || { echo "derived flash-local 1m wrong"; exit 1; }
+          [ "$(l flash-local --from "$tmp/flnat.service")" = "205000 32000 local, 262K" ] || { echo "derived flash-local native wrong"; exit 1; }
+          # and both writers read the FP4-Local pair from its unit, which says its window
+          grep -qF 'oc-limits.sh" flash-local --from "$FLASH_LOCAL_UNIT_PATH"' install.sh \
+            || { echo "install.sh does not read the FP4-Local pair from its unit"; exit 1; }
+          grep -qF 'oc-limits.sh" flash-local --from "$FLASH_LOCAL_UNIT"' switch-model.sh \
+            || { echo "switch-model.sh does not read the FP4-Local pair from its unit"; exit 1; }
           [ "$(l flash --from /nonexistent)" = "205000 32000 local" ] || { echo "a missing invocation must fall back to the default tier"; exit 1; }
           out="$(l flash --from /nonexistent 2>"$scratch/oclim.err")"; rc=$?
           [ "$rc" = "0" ] || { echo "a missing invocation must not fail the switch"; exit 1; }

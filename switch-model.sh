@@ -571,8 +571,10 @@ if [ "$CHOICE" = "flash-local" ]; then
     echo "opencode integration is off on this box (./install.sh --no-opencode): default model left alone"
   else
     FLL_OC_SUM="$({ cat "$CONFIG_DIR/opencode.json" "$HOME/.config/opencode/opencode.json" 2>/dev/null || true; } | sha256sum)"
-    FLL_PAIR="$("$REPO_DIR/oc-limits.sh" flash-local)" || FLL_PAIR=""
-    FLL_NAME="$(python3 "$REPO_DIR/oc-point-default.py" --label flash-local 262144 || true)"
+    # the pair and the window of the unit just staged: 1,048,576 tokens with FLASH_LOCAL_CONTEXT=1m (v1.45.2)
+    FLL_WINDOW="$({ grep -oE -- '--max-model-len [0-9]+' "$FLASH_LOCAL_UNIT" 2>/dev/null || true; } | awk 'NR == 1 {print $2}')"
+    FLL_PAIR="$("$REPO_DIR/oc-limits.sh" flash-local --from "$FLASH_LOCAL_UNIT")" || FLL_PAIR=""
+    FLL_NAME="$(python3 "$REPO_DIR/oc-point-default.py" --label flash-local "${FLL_WINDOW:-262144}" || true)"
     FLL_PORT="$({ grep -m1 -oE 'PROXY_PORT=[0-9]+|keepalive-proxy.py [0-9]+' /etc/systemd/system/qwen38-keepalive.service 2>/dev/null || true; } | grep -oE '[0-9]+$' || true)"
     FLL_SRC="$(mktemp)"
     if [ -n "$FLL_PAIR" ] && python3 "$REPO_DIR/oc-flash-local.py" "http://127.0.0.1:${FLL_PORT:-30001}/v1" "$CONFIG_DIR/api-key" \
@@ -583,7 +585,7 @@ if [ "$CHOICE" = "flash-local" ]; then
       for OC_JSON in "$CONFIG_DIR/opencode.json" "$HOME/.config/opencode/opencode.json"; do
         [ -f "$OC_JSON" ] || continue
         python3 "$REPO_DIR/oc-merge-limits.py" "$OC_JSON" --add-providers "$FLL_SRC" >/dev/null || true
-        python3 "$REPO_DIR/oc-point-default.py" "$OC_JSON" flash-local flash-local 262144 \
+        python3 "$REPO_DIR/oc-point-default.py" "$OC_JSON" flash-local flash-local "${FLL_WINDOW:-262144}" \
           || echo "NOTE: could not update $OC_JSON (hand-edited?); set its \"model\" field yourself"
         [ -n "$FLL_KEEP" ] && { python3 "$REPO_DIR/oc-merge-limits.py" "$OC_JSON" --compaction "$FLL_KEEP" \
           || echo "NOTE: could not update the compaction block in $OC_JSON; check it by hand ($FLL_KEEP)"; }

@@ -262,12 +262,29 @@ case "$CHOICE" in
     CTX=990000; OUT=32000; LABEL="local, 1M"
     ;;
   flash-local)
-    # The Qwen3.8 Flash-Next FP4-Local lane serves the flash lane's 262,144-token window, and vLLM refuses any
-    # request whose prompt + max_tokens passes it. Its KV cache holds 921,090 tokens at the card's
-    # memory share (measured 2026-10-19), the window 3.5 times over, so the window decides, by the
-    # flash lane's rule and numbers (the same model, the same window, the proxy's same ceiling):
-    #     205,000 - 20,000 + 43,863 + 32,000 = 260,863  <=  262,144
-    CTX=205000; OUT=32000; LABEL="local, 262K"
+    # Its context mode (native | 1m, FLASH_LOCAL_CONTEXT of install-flash-local.sh), or, with --from, its unit's
+    # --max-model-len: the switch reads the unit it has just staged.
+    MODE="$SELECTOR"
+    if [ -z "$MODE" ]; then
+      MAX_LEN="$(flag '--max-model-len')"
+      if [ "${MAX_LEN:-0}" -gt 262144 ] 2>/dev/null; then MODE=1m; else MODE=native; fi
+    fi
+    case "$MODE" in
+      # The Qwen3.8 Flash-Next FP4-Local lane serves the flash lane's 262,144-token window, and vLLM refuses any
+      # request whose prompt + max_tokens passes it. Its KV cache holds 921,090 tokens at the card's
+      # memory share (measured 2026-10-19), the window 3.5 times over, so the window decides, by the
+      # flash lane's rule and numbers (the same model, the same window, the proxy's same ceiling):
+      #     205,000 - 20,000 + 43,863 + 32,000 = 260,863  <=  262,144
+      native) CTX=205000; OUT=32000; LABEL="local, 262K" ;;
+      # At its 1M window (1,048,576 tokens by YaRN, v1.45.2) the pool decides: 1,061,819 tokens at the lane's share
+      # (measured 2026-11-09), the window 1.01 times over, and the proxy relays a prompt up to 92 % of it, no flash
+      # ceiling there. The pair keeps the lane's answer budget and fits the cockpit's check (fit_verdict) with a pool
+      # 10 % smaller than the one measured, the margin oc-fit-limits.py keeps for a boot that gets less:
+      #     840,000 + 32,000 = 872,000  <=  1,061,819 x 0.92 x 0.90 = 879,186
+      #     840,000 - 20,000 + 43,863 + 32,000 = 895,863  <=  1,048,576
+      1m) CTX=840000; OUT=32000; LABEL="local, 1M" ;;
+      *) printf 'oc-limits: unknown context mode "%s"\n' "$MODE" >&2; exit 2 ;;
+    esac
     ;;
   ornith-122b)
     # The Ornith 1.5 122B lane serves a window of 1,048,576 tokens (the model's own 262,144 four

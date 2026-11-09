@@ -2370,12 +2370,14 @@ if [ "$OC_NEMOTRON_SUPER" -eq 1 ]; then
 fi
 # The Qwen3.8 Flash-Next FP4-Local lane, its own provider (its own served model) with its unit.
 [ -f "$FLASH_LOCAL_UNIT_PATH" ] && OC_FLASH_LOCAL=1
-OC_FLASH_LOCAL_CTX=""; OC_FLASH_LOCAL_OUT=""; OC_FLASH_LOCAL_NAME=""
+OC_FLASH_LOCAL_CTX=""; OC_FLASH_LOCAL_OUT=""; OC_FLASH_LOCAL_NAME=""; OC_FLASH_LOCAL_WINDOW=""
 if [ "$OC_FLASH_LOCAL" -eq 1 ]; then
-  OC_FLASH_LOCAL_PAIR="$("$REPO_DIR/oc-limits.sh" flash-local)" \
+  # its unit's window: 1,048,576 tokens with FLASH_LOCAL_CONTEXT=1m (v1.45.2), the pair to match
+  OC_FLASH_LOCAL_WINDOW="$({ grep -oE -- '--max-model-len [0-9]+' "$FLASH_LOCAL_UNIT_PATH" 2>/dev/null || true; } | awk 'NR == 1 {print $2}')"
+  OC_FLASH_LOCAL_PAIR="$("$REPO_DIR/oc-limits.sh" flash-local --from "$FLASH_LOCAL_UNIT_PATH")" \
     || die "oc-limits.sh refused flash-local (repo bug: please open an issue)"
   OC_FLASH_LOCAL_CTX="${OC_FLASH_LOCAL_PAIR%% *}"; OC_FLASH_LOCAL_OUT="$(echo "$OC_FLASH_LOCAL_PAIR" | cut -d' ' -f2)"
-  OC_FLASH_LOCAL_NAME="$(python3 "$REPO_DIR/oc-point-default.py" --label flash-local 262144 || true)"
+  OC_FLASH_LOCAL_NAME="$(python3 "$REPO_DIR/oc-point-default.py" --label flash-local "${OC_FLASH_LOCAL_WINDOW:-262144}" || true)"
 fi
 # The Ornith 1.5 122B lane, its own provider (its own served model) with its unit.
 [ -f "$ORNITH_122B_UNIT_PATH" ] && OC_ORNITH_122B=1
@@ -2771,7 +2773,7 @@ if [ "$NEMOTRON_SUPER_BOOT" -eq 1 ] && [ "$OC_NEMOTRON_SUPER" -eq 1 ]; then
 fi
 if [ "$FLASH_LOCAL_BOOT" -eq 1 ] && [ "$OC_FLASH_LOCAL" -eq 1 ]; then
   # the Qwen3.8 Flash-Next FP4-Local lane is this box's lane: opencode's default stays on it
-  OC_POINT_LANE=flash-local; OC_POINT_CHOICE=flash-local; OC_POINT_WINDOW=262144
+  OC_POINT_LANE=flash-local; OC_POINT_CHOICE=flash-local; OC_POINT_WINDOW="${OC_FLASH_LOCAL_WINDOW:-262144}"
 fi
 if [ "$ORNITH_122B_BOOT" -eq 1 ] && [ "$OC_ORNITH_122B" -eq 1 ]; then
   # the Ornith 1.5 122B lane is this box's lane: opencode's default stays on it
