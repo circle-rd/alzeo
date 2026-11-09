@@ -1068,5 +1068,24 @@ class AClientIsToldWhereToSendItsRequests(unittest.TestCase):
                       r["facts"])
 
 
+
+class ALaneSaysTheWindowItsUnitRuns(unittest.TestCase):
+    """Discussion #63 (2026-11-09): FLASH_LOCAL_CONTEXT=1m serves 1,048,576 tokens, and the lane's words, written for its
+    native window, said "262K tokens of context" of it. The engine table reads each unit's window."""
+
+    def test_the_fp4_local_lane_says_1m_when_its_unit_runs_it(self):
+        r = run(self, r"""
+        const row = (window) => ({engine: 'vLLM', version: 'b12x build 8244d1c', label: 'vLLM b12x build 8244d1c', pin: 'p',
+                                  reports: 'x', pinned: true, window});
+        const U = JSON.parse(JSON.stringify(UNITS)); U.units['qwen38-flash-local.service'] = {active: 'inactive', enabled: 'disabled'};
+        feed({config: CONFIG, units: U, lifecycle: life({'qwen38-sglang.service': eng('ready')}),
+              engine_table: {table: {'qwen38-flash-local.service': row(262144)}}});
+        const native = BAYS.get('qwen38-flash-local.service').kind.textContent;
+        feed({engine_table: {table: {'qwen38-flash-local.service': row(1048576)}}, lifecycle: life({'qwen38-sglang.service': eng('ready')})});
+        report({native, wide: BAYS.get('qwen38-flash-local.service').kind.textContent});
+        """)
+        self.assertEqual(r["native"], "Text and images, 262K tokens of context")
+        self.assertEqual(r["wide"], "Text and images, 1M tokens of context")
+
 if __name__ == "__main__":
     unittest.main()

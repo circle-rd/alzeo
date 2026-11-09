@@ -92,7 +92,7 @@ const BAYS = new Map();
 function bay(unit){
   let b = BAYS.get(unit); if (b) return b;
   const root = el('button', 'bay'); root.type = 'button'; root.setAttribute('role', 'listitem');
-  const top = el('div', 'top'); const state = el('span', 'cap'); const kind = el('p', 'kind', LANE_META[unit].kind);
+  const top = el('div', 'top'); const state = el('span', 'cap'); const kind = el('p', 'kind', laneKind(unit));
   top.append(makerMark(unit), state);
   const h = el('h3', null, LANE_META[unit].title);
   const desc = el('p', 'desc', LANE_META[unit].desc);
@@ -101,7 +101,7 @@ function bay(unit){
   const foot = el('div', 'foot'); const act = el('span', 'act'); const note = el('span', 'faint'); note.style.fontSize = '12px';
   foot.append(note, act);
   root.append(top, h, kind, desc, boot, line, foot);
-  b = {root, state, h, desc, boot, line, act, note, sig: ''};
+  b = {root, state, h, kind, desc, boot, line, act, note, sig: ''};
   root.addEventListener('click', () => {
     const e = engines()[unit];
     if (!installed(unit)) return toast(`${LANE_NAME[unit]} is not installed on this box. ${installHint(unit)}`, 'warn', 8000);
@@ -127,6 +127,7 @@ function renderRack(){
     // the title and a short version after it read "Nemotron 3.5 Bolt Bolt", and named the 27B's default by its id
     const full = (t && TARGET_NAME[t]) || LANE_META[unit].title, [fam, rest] = nameParts(full, unit);
     if (b.h.textContent !== full){ clear(b.h); b.h.append(fam); if (rest) b.h.append(' ', el('span', 'ver', rest)); }
+    setText(b.kind, laneKind(unit));
     // the boot bar, when it boots
     if (e && TRANSITIONAL.has(st)){
       b.boot.hidden = false; clear(b.boot);

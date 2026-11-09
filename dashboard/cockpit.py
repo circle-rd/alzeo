@@ -3062,9 +3062,16 @@ def engine_table() -> dict:
     hf = str(Path.home() / ".cache/huggingface")
     for unit, row in table.items():
         path = UNIT_DIR / unit
+        row["window"] = None
         if "@sha256:" not in row["pin"] or not path.is_file():    # a wheel, or no unit: nothing to read
             row["pinned"] = None
             continue
+        # the window the unit starts its engine with (FLASH_LOCAL_CONTEXT=1m, discussion #63), where the unit says it
+        try:
+            m = re.search(r"--(?:max-model-len|context-length) (\d+)", path.read_text(errors="replace"))
+            row["window"] = int(m.group(1)) if m else None
+        except OSError:
+            pass
         try:
             row["pinned"] = en.runs_pin(unit, ei.inputs(str(path), str(CONFIG_DIR), hf, [])[1])
         except Exception:  # noqa: BLE001

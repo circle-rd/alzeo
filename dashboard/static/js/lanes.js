@@ -92,7 +92,7 @@ function renderLanes(){
     const st = e ? e.state : null, seated = !!(s && s[0] === unit);
     setText(c.h, LANE_META[unit].title + (seated ? ', serving' : ''));
     cap(c.state, !has ? 'not installed' : stateLabel(e) || 'unknown', has ? stateKind(st) : '', has ? stateLive(st) : false);
-    setText(c.desc, LANE_META[unit].desc + ' ' + LANE_META[unit].kind + '.');
+    setText(c.desc, LANE_META[unit].desc + ' ' + laneKind(unit) + '.');
     const served = laneTarget(unit);
     if (c.touched && served && served === c.target && (engines()[unit] || {}).state === 'ready') c.touched = false;
     if (!c.touched && served && c.target !== served) c.target = served;

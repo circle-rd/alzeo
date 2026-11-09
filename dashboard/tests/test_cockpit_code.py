@@ -120,10 +120,25 @@ class Fingerprint(unittest.TestCase):
         self.assertNotIn("engines", self.ck.STATE["config"]["data"])
         self.assertIn("engine_table", self.ck.PERIODS)
         table = self.ck.collect_engine_table()["table"]
-        self.assertEqual({u: {k: v for k, v in row.items() if k != "pinned"} for u, row in table.items()},
+        self.assertEqual({u: {k: v for k, v in row.items() if k not in ("pinned", "window")} for u, row in table.items()},
                          self.ck.en.page_table())
-        self.assertTrue(all("pinned" in row for row in table.values()), table)
+        self.assertTrue(all("pinned" in row and "window" in row for row in table.values()), table)
         self.assertEqual(table["qwen38-sglang.service"]["label"], "SGLang 0.5.22")
+
+    def test_each_units_window_as_its_unit_starts_it(self):
+        # FLASH_LOCAL_CONTEXT=1m (discussion #63): the page says the window the unit runs, read from the unit file
+        import tempfile
+        d = Path(tempfile.mkdtemp(prefix="units-"))
+        (d / "qwen38-flash-local.service").write_text(
+            "ExecStart=/bin/bash -c 'exec docker run eugr/spark-vllm-b12x@sha256:" + "0" * 64 + " vllm serve x \\\n"
+            "    --max-model-len 1048576 --max-num-seqs 8 \\\n    --host 127.0.0.1 --port 30000'\n")
+        old_dir, self.ck.UNIT_DIR = self.ck.UNIT_DIR, d
+        try:
+            table = self.ck.engine_table()
+        finally:
+            self.ck.UNIT_DIR = old_dir
+        self.assertEqual(table["qwen38-flash-local.service"]["window"], 1048576)
+        self.assertIsNone(table["qwen38-sglang.service"]["window"], "no unit file there: nothing said")
 
     def test_quiet_when_nothing_moved(self):
         self.assertEqual(self.ck.code_is_stale(), [])
