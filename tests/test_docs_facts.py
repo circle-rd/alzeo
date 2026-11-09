@@ -173,5 +173,92 @@ class TheGsm8kCountIsTheOneRunEvalAsks(unittest.TestCase):
         for name in ("README.md", "BENCHMARKS.md"):
             self.assertNotRegex((REPO / name).read_text(), r"(?i)gsm8k[^|\n]*all 1,319", name)
 
+
+NUMBERS = {w: n for n, w in enumerate(
+    "zero one two three four five six seven eight nine ten eleven twelve".split())}
+
+
+def present_pages():
+    """The tracked pages a reader takes as the present: CHANGELOG.md is history, and keeps what
+    each release said."""
+    return [p for p in tracked("*.md") if p.name != "CHANGELOG.md"]
+
+
+class TheKeepAsItIsCommandNamesEveryLane(unittest.TestCase):
+    def test_operations_gives_a_no_flag_for_every_lane_the_installer_adds(self):
+        """docs/operations.md tells how to keep a box as it is: a --no-<lane> for every lane on
+        every run, since a --no-<lane> counts for the run that passes it only. Its command was
+        `--no-flash --no-image --no-video`, written before the five vLLM lanes, and it still
+        brought their units (audit, 2026-11-09)."""
+        lanes = set(re.findall(r'lane_wanted ([a-z0-9-]+) "\$NO_', (REPO / "install.sh").read_text()))
+        self.assertGreaterEqual(len(lanes), 5, lanes)
+        text = (REPO / "docs/operations.md").read_text()
+        m = re.search(r"To keep a box as it is,.*?`(\./install\.sh[^`]*)`", text, re.S)
+        self.assertIsNotNone(m, "the keep-as-is command is no longer where this check reads it")
+        self.assertEqual(lanes - {"27b"}, set(re.findall(r"--no-([a-z0-9-]+)", m.group(1))), m.group(1))
+
+
+class TheCountsOfTextUnitsAreTheProxys(unittest.TestCase):
+    def test_every_count_of_text_units_and_vllm_lanes(self):
+        """The proxy holds requests while any text lane's unit starts (PROXY_HOLD_UNITS). The README
+        said five text units share the engine's port, from before the sixth and seventh lanes
+        (audit, 2026-11-09). A count a page gives is checked against that list, and a count of vLLM
+        lanes against the units whose template runs vLLM."""
+        units = re.search(r'PROXY_HOLD_UNITS=([^"]+)"',
+                          (REPO / "qwen38-keepalive.service.template").read_text()).group(1).split()
+        self.assertGreaterEqual(len(units), 2, units)
+        vllm = [u for u in units if "vllm" in (REPO / f"{u}.template").read_text().lower()]
+        expect = {"text": len(units), "vllm": len(vllm)}
+        seen = 0
+        for page in present_pages():
+            for m in re.finditer(r"\b(" + "|".join(NUMBERS) + r") (text|vLLM) (?:units|lanes)\b",
+                                 page.read_text(), re.I):
+                seen += 1
+                self.assertEqual(NUMBERS[m.group(1).lower()], expect[m.group(2).lower()],
+                                 f"{page.relative_to(REPO)}: {m.group(0)!r}, the units say {expect}")
+        self.assertGreaterEqual(seen, 1, "no page counts the text units: this check reads nothing")
+
+
+class TheCockpitBackendIsItsModules(unittest.TestCase):
+    def test_no_page_calls_the_backend_a_single_file(self):
+        """The README and docs/cockpit.md called the cockpit's backend a single file, and cockpit.py
+        imports six modules that sit beside it (audit, 2026-11-09). A page that counts them gives
+        their number."""
+        mods = [m for m in re.findall(r"^import ([a-z_]+) as [a-z]+$",
+                                      (REPO / "dashboard/cockpit.py").read_text(), re.M)
+                if (REPO / "dashboard" / f"{m}.py").exists()]
+        self.assertTrue(mods, "cockpit.py imports no module of its own: this check reads nothing")
+        counted = 0
+        for page in present_pages():
+            text = page.read_text()
+            if re.search(r"(?i)single-file stdlib backend", text):
+                self.fail(f"{page.relative_to(REPO)} calls the backend a single file; cockpit.py imports {mods}")
+            for m in re.finditer(r"cockpit\.py and (\w+) modules beside it", text):
+                counted += 1
+                self.assertEqual(NUMBERS.get(m.group(1)), len(mods),
+                                 f"{page.relative_to(REPO)}: {m.group(0)!r}, cockpit.py imports {mods}")
+        self.assertGreaterEqual(counted, 1, "no page counts the backend's modules: this check reads nothing")
+
+
+class ThePrivilegedPathNamesWhatSudoRuns(unittest.TestCase):
+    def test_flush_and_abort_are_not_said_to_go_through_sudo(self):
+        """The README and ARCHITECTURE.md said the cockpit's flush and abort go through its sudoers
+        allowlist: they are calls to the engine and the proxy with the box's key, and the allowlist
+        has no line for them (audit and review, 2026-11-09)."""
+        sudoers = (REPO / "dashboard/sudoers-cockpit.template").read_text().lower()
+        m = re.search(r"Everything privileged the cockpit can do \(([^)]*)\)", (REPO / "README.md").read_text())
+        self.assertIsNotNone(m, "the README's sentence on the cockpit's privileges is no longer where this check reads it")
+        said = [("README.md", m.group(1))]
+        arch = [ln for ln in (REPO / "ARCHITECTURE.md").read_text().splitlines() if "sudo exact argv" in ln]
+        self.assertTrue(arch, "ARCHITECTURE.md's sudo line is no longer where this check reads it")
+        said += [("ARCHITECTURE.md", ln) for ln in arch]
+        for word in ("flush", "abort"):
+            if word in sudoers:
+                continue
+            for where, text in said:
+                self.assertNotIn(word, text.lower(),
+                                 f"{where}: {text.strip()!r} names {word}, which sudoers-cockpit.template does not run")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
