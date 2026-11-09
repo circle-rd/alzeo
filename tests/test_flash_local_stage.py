@@ -464,8 +464,31 @@ class TheMillionTokenWindow(unittest.TestCase):
         text = (REPO / "install-flash-local.sh").read_text()
         body = text[text.index("install_service(){"):]
         body = body[:body.index("\n}\n")]
-        self.assertIn('[ "$RENDERED_MAXLEN" = 262144 ] || starts+=("$YARN_JSON")', body)
+        self.assertIn("! grep -q -- '--hf-overrides' \"$RENDER\" || starts+=(\"$YARN_JSON\")", body)
         self.assertIn('vlane_put_unit "$RENDER" "${starts[@]}"', body)
+
+    def test_a_choice_kept_from_before_that_the_checkpoint_refuses_serves_native_and_the_load_works(self):
+        # kept from before, the choice met a checkpoint whose RoPE is not the one measured (a pin moved): every Load died
+        # until the user found the command to go back (second review of v1.45.2). The Load works, at the native window,
+        # and says why; the choice stays the user's.
+        rc, out = self.box.stage(FLASH_LOCAL_PLE_DIR="none", FLASH_LOCAL_CONTEXT="1m")
+        self.assertEqual((rc, self.window()), (0, "1048576"), out)
+        moved = json.loads(json.dumps(self.CONFIG))
+        moved["text_config"]["rope_parameters"]["rope_theta"] = 5000000
+        (self.snap / "config.json").write_text(json.dumps(moved))
+        rc, out = self.box.stage(FLASH_LOCAL_PLE_DIR="none")          # a Load: none of the user's environment
+        self.assertEqual((rc, self.window()), (0, "262144"), out)
+        self.assertNotIn("--hf-overrides", self.box.out.read_text())
+        self.assertIn("is off for this checkpoint", out)
+        self.assertEqual((self.cfg / "flash-local-context").read_text(), "1m\n")
+
+    def test_prepare_keeps_the_choice_its_load_renders(self):
+        # --prepare renders nothing: the choice given with it was dropped, and its Load served the native window with no
+        # word of it (second review of v1.45.2)
+        text = (REPO / "install-flash-local.sh").read_text()
+        block = text[text.index('if [ "$MODE" = prepare ]; then'):]
+        block = block[:block.index("\nfi\n")]
+        self.assertLess(block.index("keep_choice"), block.index("exit 0"))
 
     def test_the_pinned_checkpoint_is_the_one_measured(self):
         # the real pinned config, where the box has it: the RoPE the 1M window was measured on (2026-11-09)

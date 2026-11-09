@@ -208,6 +208,12 @@ elif [ "$(head -1 "$CONTEXT_CHOICE" 2>/dev/null)" = 1m ]; then
 else
   FLASH_LOCAL_CONTEXT=native
 fi
+# The choice given, kept for the runs after (a Load stages the unit with none of the user's environment): by the render
+# that takes it, and by --prepare, which renders nothing. A refused one is not kept (render_unit).
+keep_choice(){
+  [ -n "$CONTEXT_GIVEN" ] || return 0
+  if [ "$FLASH_LOCAL_CONTEXT" = 1m ]; then mkdir -p "$CONFIG_DIR" && echo 1m > "$CONTEXT_CHOICE"; else rm -f "$CONTEXT_CHOICE"; fi
+}
 # The overrides the 1M window takes, from the pinned checkpoint's own RoPE, written to YARN_JSON only when they change
 # (its date tells a lane that serves whether it runs them, vlane_put_unit). 0: written, 1: refused (the RoPE is not the
 # one measured, or a stage has no checkpoint), 2: no checkpoint in the cache yet, which a Load fetches.
@@ -265,11 +271,15 @@ render_unit(){
          yarn="--hf-overrides \"\$\$(cat $YARN_JSON)\"" ;;
       2) echo "NOTE: FLASH_LOCAL_CONTEXT=1m: the checkpoint is not in the cache yet, so the unit keeps the native window" \
               "until the lane's Load, which fetches it and sets the 1M window" ;;
-      *) die "the 1M window's overrides could not be written (the line above says why). Nothing was changed: the lane" \
-             "keeps its window, and FLASH_LOCAL_CONTEXT=native ./install-flash-local.sh --units-only sets the native one" ;;
+      *) # asked now: refused, and nothing kept. Kept from before (a Load, an update): the lane serves its native window
+         # and says why, and no Load fails for it (second review of v1.45.2)
+         [ -z "$CONTEXT_GIVEN" ] || die "the 1M window's overrides could not be written (the line above says why)." \
+           "Nothing was changed: the lane keeps its window, and FLASH_LOCAL_CONTEXT=native" \
+           "./install-flash-local.sh --units-only sets the native one"
+         echo "NOTE: the 1M window chosen (FLASH_LOCAL_CONTEXT=1m) is off for this checkpoint: the unit serves the native" \
+              "262,144 tokens. FLASH_LOCAL_CONTEXT=native ./install-flash-local.sh --units-only drops the choice" ;;
     esac
   fi
-  RENDERED_MAXLEN="$maxlen"
   local index="$HF_CACHE/hub/models--${MODEL//\//--}/snapshots/$MODEL_REV/model.safetensors.index.json" sources
   sources="$( { grep -oE -- '-v [^ :]+:' <<< "$TABLE_MOUNTS" || true; } | sed -e 's/^-v //' -e 's/:$//' | tr '\n' ' ')"
   sed -e "s|__CHECKPOINT_INDEX__|$index|g" -e "s|__TABLE_SOURCES__|${sources% }|g" \
@@ -280,10 +290,7 @@ render_unit(){
       -e "s|__ENGINE_BIND__|$ENGINE_BIND|g" -e "s|__PORT__|$PORT|g" \
       -e "s|__TABLE_MOUNTS__|$TABLE_MOUNTS|g" -e '/^ *\\$/d' \
       "$HERE/$UNIT.template" > "$1"
-  # the choice given, kept for the runs after (a Load stages the unit with none of the user's environment)
-  if [ -n "$CONTEXT_GIVEN" ]; then
-    if [ "$FLASH_LOCAL_CONTEXT" = 1m ]; then mkdir -p "$CONFIG_DIR" && echo 1m > "$CONTEXT_CHOICE"; else rm -f "$CONTEXT_CHOICE"; fi
-  fi
+  keep_choice
 }
 
 # Step 4, the one part that needs root: the unit and its start scripts. A function, since a lane
@@ -306,7 +313,7 @@ install_service(){
   # with what the engine reads at its start besides the unit: a lane started before they changed
   # serves the old ones (vllm-lane.sh); the 1M window's overrides among them when its unit reads them
   local starts=("$CONFIG_DIR/seccomp-io-uring.json" "$TEMPLATE")
-  [ "$RENDERED_MAXLEN" = 262144 ] || starts+=("$YARN_JSON")
+  ! grep -q -- '--hf-overrides' "$RENDER" || starts+=("$YARN_JSON")
   vlane_put_unit "$RENDER" "${starts[@]}"
   # Installed, not switched to: the lane this box serves stays the lane it serves.
   echo "installed as a lane of its own. Switch to it like any lane:"
@@ -374,6 +381,7 @@ pin_tag flash-local "$FLASH_LOCAL_IMAGE"
 unpin_stale flash-local "$FLASH_LOCAL_IMAGE" || true
 
 if [ "$MODE" = prepare ]; then
+  keep_choice     # its Load renders the unit, with the window chosen here (FLASH_LOCAL_CONTEXT)
   step "Done: the Qwen3.8 Flash-Next FP4-Local lane's image is ready; its Load fetches the checkpoint and starts it"
   exit 0
 fi
