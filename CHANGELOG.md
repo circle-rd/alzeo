@@ -6,10 +6,12 @@
 the model, the key. A "Connect a client" panel in the Now view says it, ready to copy: the OpenAI address
 (`http://<the address you opened the cockpit by>:30001/v1`) and the Anthropic one, the model that serves, and where the
 key is (the cockpit's login, in `~/.config/qwen38/api-key` on the box), never the key itself. On a proxy that listens on
-the box alone (`PROXY_BIND=127.0.0.1`) it says so, and how to open it, and with a certificate it says https. Its buttons copy
+the box alone (`PROXY_BIND=127.0.0.1`) it says so, and how to open it, and with a certificate it says https. Opened
+on the box itself, it lists the addresses another machine reaches the box by, the tailnet's first. Its buttons copy
 the address, `claude-local` (which sets Claude Code up for the lane that serves) and a test request that reads the key
 from its file, and it links every client's setup (docs/clients.md). The cockpit reads the proxy's port, interface,
-certificate and client keys from its unit every 30 s, and nothing else of that unit, whose environment holds keys.
+certificate and client keys from its unit every 30 s, and nothing else of that unit, whose environment holds keys,
+and the box's addresses from `ip`, container bridges left out.
 
 **An update no longer cuts the Agent tab.** The installer fits opencode's limits to the KV pool of the boot that serves,
 and restarted the Agent tab's opencode server whenever they changed, which ended the turn it was in: on the reference
