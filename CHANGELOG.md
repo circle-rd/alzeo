@@ -2,35 +2,48 @@
 
 ## v1.45.3 (2026-11-09): the documentation says what the code does, and the site lives at alzeo.ai
 
-**Twelve statements the code contradicted, corrected.** An audit read the eight most-read pages (README.md,
+**What the pages said and the code did not, corrected.** An audit read the eight most-read pages (README.md,
 docs/cockpit.md, docs/clients.md, docs/operations.md, the two flash lanes' pages, docs/pair.md and
-docs/engine-restarts.md) against the code behind each claim, and every finding was checked again at its source before
-the fix:
+docs/engine-restarts.md) against the code behind each claim, a code review read the corrections, and every finding
+was checked again at its source before its fix:
 - `docs/operations.md`: keeping a box as it is takes a `--no-<lane>` for every lane the installer adds, the five vLLM
   lanes included (`./install.sh --no-flash --no-image --no-video` alone still brought the units of Kolibri, Bolt, Super
   VL, FP4-Local and Ornith); and only the SGLang lanes pass `--enable-metrics`, as vLLM serves `/metrics` by itself.
 - `docs/engine-restarts.md`: the proxy holds requests while any of the seven text lanes' units starts
-  (`PROXY_HOLD_UNITS`), not only the 27B's and the flash lane's, and the vLLM units run the preflight too.
+  (`PROXY_HOLD_UNITS`), not only the 27B's and the flash lane's; the vLLM units run the start guard too, and the
+  leftover engine it waits for can be vLLM's (`VLLM::EngineCore`, `vllm serve`) as well as SGLang's.
 - `README.md`: the Library view downloads a target's checkpoint and deletes stray revisions (it said its panels were
-  read-only); the 27B boots in 3.5 to 6.5 minutes (one line still said 5 to 7); seven text units share the engine's
-  port, not five; flush and abort are calls with the box's key, not sudo; the cockpit's backend is cockpit.py and six
-  modules beside it, not a single file.
+  read-only); the 27B boots in 3.5 to 6.5 minutes, 7 to 8 for its FP8 and abliterated versions (one line still said 5
+  to 7 for all); seven text units share the engine's port, not five; flush and abort are calls with the box's key,
+  not sudo; the cockpit's backend is cockpit.py and six modules beside it, not a single file.
+- `ARCHITECTURE.md`: the same, flush is not on the cockpit's sudo path.
 - `docs/clients.md`: Claude Code's setting on the flash lane is `228000` (opencode's 205,000 plus the 23,000 Claude
   Code keeps below its setting), as the same page's environment block and claude-local already gave; the FP4-Local
-  window has its 1M option since v1.45.2; the 250,000-token ceiling holds on either flash lane at its 262K window.
+  window has its 1M option since v1.45.2; the 250,000-token ceiling holds on either flash lane at its 262K window; and
+  each lane's window is named: 262,144 tokens on most lanes, 1,010,000 on the 27B in 1M mode, 1,048,576 on Super VL,
+  Ornith, and FP4-Local with its 1M option.
 - `docs/flash-local-lane.md`: `--uninstall` keeps the seccomp filter while the Ornith 1.5 122B lane, which reads it
   too, is installed.
 - `docs/cockpit.md`: the same backend sentence as the README.
 
+Four checks in `tests/test_docs_facts.py` keep these from drifting again, each read from the code: the keep-as-is
+command names a `--no-<lane>` for every lane `install.sh` adds; every count of text units or vLLM lanes a page gives
+is the number in `PROXY_HOLD_UNITS` and of the units whose template runs vLLM; no page calls the cockpit's backend a
+single file, and a page that counts its modules gives the number cockpit.py imports; neither the README nor
+ARCHITECTURE.md puts flush or abort on the sudo path while `sudoers-cockpit.template` has no line for them. Each fails
+on the pages as v1.45.2 has them, and on a page given a wrong count.
+
 **The 27B's quality on the engine it serves.** The README gives the 27B lane's GSM8K, IFEval and tool-calling scores
-measured with v1.2.1 (2026-08-20). It now adds the lane's GSM8K on SGLang 0.5.22 without torch.compile, as v1.44.0
-serves it: 99.2 % on the first 250 problems (2026-11-05, the run BENCHMARKS.md records).
+measured with v1.2.1 (2026-08-20). It now adds SGLang's own GSM8K on SGLang 0.5.22 without torch.compile, as v1.44.0
+serves it: 99.2 % on 250 problems, the test set's 6th to 255th (`sglang.test.run_eval`, 2026-11-05, the run
+BENCHMARKS.md records), with a note that it asks other problems than the table's 200, so the two are not a before and
+after.
 
 **The site's address.** The README links the project's site at https://alzeo.ai/, where hasso5703.github.io now
 redirects.
 
-**What changes on a box.** Documentation only: README.md and five pages of docs/. No script, unit, template, image or
-test changes. `tests/test_docs_facts.py`, which checks the pages' facts against the code, passes.
+**What changes on a box.** Documentation and one test file: README.md, ARCHITECTURE.md, five pages of docs/ and
+`tests/test_docs_facts.py`. No script, unit, template or image changes.
 
 ## v1.45.2 (2026-11-09): the Flash-Next FP4-Local lane can serve a window of 1,048,576 tokens
 
