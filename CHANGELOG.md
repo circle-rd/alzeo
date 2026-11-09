@@ -48,6 +48,17 @@ redirects.
 **What changes on a box.** Documentation and one test file: README.md, ARCHITECTURE.md, five pages of docs/ and
 `tests/test_docs_facts.py`. No script, unit, template or image changes.
 
+**After the push.** GitHub's CI passed on b36d1be, 89 steps, none skipped. The reference box updated in 1 min 37 s by
+the README's command (get.alzeo.ai): the 27B and the proxy kept running, the cockpit restarted and serves v1.45.3, and
+no lane's unit changed. The box had booted again earlier that evening with a KV pool of 702,327 tokens, so the update's
+fit raised opencode's limits (421,000 and 140,000 to 436,000 and 145,000). The Agent tab's server restarted then,
+although v1.45.1 says raised limits leave it running: the fit left it alone, and the cockpit's step restarted it three
+seconds later because the two configs it reads had just been rewritten. That is a defect of v1.45.1 which this update
+showed, and the next release corrects it. On the 27B the production checks passed, and so did the eight real clients:
+Claude Code, opencode, Hermes, pi, the OpenAI and Anthropic SDKs, fetch under Node and under Bun, and LiteLLM. The
+cockpit showed no banner on any of its views, and no JavaScript error. No lane, proxy, engine or unit file changed, so
+the client matrix was not run again.
+
 ## v1.45.2 (2026-11-09): the Flash-Next FP4-Local lane can serve a window of 1,048,576 tokens
 
 **A window of 1,048,576 tokens on the Qwen3.8 Flash-Next FP4-Local lane, as an option (discussion #63).** The model's
