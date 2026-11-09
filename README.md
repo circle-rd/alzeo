@@ -79,7 +79,7 @@ its test on the 27B, Qwen-Image 2.1 made the image in 40 steps and MiniMax-H3 th
 
 One command installs a boot-persistent, hardened serving stack on a single DGX Spark,
 and it is not one model: **large language models** (the Qwen3.8 family, seven
-switchable targets, 27B at 71 tok/s and Qwen3.8 Flash-Next (176B) on one box), **typed decisions**
+switchable targets, 27B at 65 to 68 tok/s and Qwen3.8 Flash-Next (176B) on one box), **typed decisions**
 (a System One endpoint speaking TypeSafe's Jev contract: calibrated probabilities
 instead of generated text), **image generation** (Qwen-Image 2.1) and **video generation**
 (MiniMax-H3), and on vLLM **Aleph Alpha's Kolibri-1** since v1.29, **NVIDIA's Nemotron 3.5
