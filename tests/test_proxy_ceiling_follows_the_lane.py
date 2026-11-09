@@ -23,9 +23,11 @@ REPO = pathlib.Path(__file__).resolve().parents[1]
 
 
 def proxy_module(prompt_ceiling, flash_ceiling):
-    saved = {k: os.environ.get(k) for k in ("PROMPT_CEILING_TOKENS", "FLASH_PROMPT_CEILING_TOKENS")}
+    saved = {k: os.environ.get(k) for k in ("PROMPT_CEILING_TOKENS", "FLASH_PROMPT_CEILING_TOKENS", "UPSTREAM")}
     os.environ["PROMPT_CEILING_TOKENS"] = str(prompt_ceiling)
     os.environ["FLASH_PROMPT_CEILING_TOKENS"] = str(flash_ceiling)
+    # no engine of the box's, whatever a test reaches: a read meant to be stubbed went to :30000 (2026-11-09)
+    os.environ["UPSTREAM"] = "http://127.0.0.1:9"
     spec = importlib.util.spec_from_file_location(f"kp_ceil_{prompt_ceiling}_{flash_ceiling}", REPO / "keepalive-proxy.py")
     mod = importlib.util.module_from_spec(spec)
     err, sys.stderr = sys.stderr, io.StringIO()
@@ -66,7 +68,6 @@ class TheProxyReadsTheServedLane(unittest.TestCase):
             with self.subTest(prompt=prompt, flash=flash, served=served):
                 m = proxy_module(prompt, flash)
                 m.served_models = lambda s=served: s
-                m.pool_tokens = lambda: 900000          # never the engine on the box (its port serves)
                 self.assertEqual(m.lane_ceiling(), want)
                 limit = m.prompt_limit(900000)
                 self.assertEqual(limit, min(int(900000 * (1 - m.OVERSIZE_MARGIN_FRAC)), want or 10 ** 9))
@@ -74,18 +75,45 @@ class TheProxyReadsTheServedLane(unittest.TestCase):
     def test_the_fp4_local_lane_at_1m_has_no_flash_ceiling(self):
         # FLASH_LOCAL_CONTEXT=1m (v1.45.2): its engine's window is past 262,144, and the flash ceiling refused every prompt
         # past 250,000 there (code review of v1.45.2); at its native window it keeps the flash ceiling
-        for window, want in ((1048576, 0), (262144, 250000), (None, 250000)):
+        for window, want in ((1048576, 0), (262144, 250000), (0, 250000)):
             with self.subTest(window=window):
                 m = proxy_module(0, 250000)
                 m.served_models = lambda: ("qwen3.8-flash-next-fp4",)
-                m.pool_tokens = lambda: 1061819
-                m._POOL["window"] = window
+                m._SERVED["window"] = window
                 self.assertEqual(m.lane_ceiling(), want)
         m = proxy_module(0, 250000)                      # the SGLang flash lane keeps it, whatever its window
         m.served_models = lambda: ("qwen3.8-flash-next",)
-        m.pool_tokens = lambda: 400384
-        m._POOL["window"] = 1048576
+        m._SERVED["window"] = 1048576
         self.assertEqual(m.lane_ceiling(), 250000)
+
+    def test_the_window_is_read_with_the_names_and_nothing_more(self):
+        # read on /v1/models with the names, as the cockpit reads it: the pool's read, which the ceiling waited on, could
+        # fail or say no pool while the engine served 1M, and ran again at every check (second review of v1.45.2)
+        import json as _json
+        m = proxy_module(0, 250000)
+
+        class Answer:
+            def __init__(self, body):
+                self.body = body
+
+            def read(self):
+                return self.body
+        asked = []
+
+        def urlopen(req, timeout=None):
+            asked.append(req.full_url)
+            return Answer(_json.dumps({"data": [{"id": "qwen3.8-flash-next-fp4", "owned_by": "vllm",
+                                                 "max_model_len": 1048576}]}).encode())
+        from unittest import mock
+        m._api_key = lambda: "k"
+        m.follow_engine_restarts = lambda: None
+        m.pool_tokens = lambda: self.fail("the ceiling reads no pool")
+        with mock.patch.object(m.urllib.request, "urlopen", urlopen):
+            self.assertEqual(m.lane_ceiling(), 0)
+            self.assertEqual(m._SERVED["window"], 1048576)
+            self.assertEqual(asked, ["http://127.0.0.1:9/v1/models"])
+            self.assertEqual(m.lane_ceiling(), 0)        # cached with the names: no second read
+        self.assertEqual(len(asked), 1)
 
     def test_an_unreachable_engine_counts_as_unknown(self):
         m = proxy_module(0, 250000)

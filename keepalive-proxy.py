@@ -855,17 +855,14 @@ def lane_ceiling():
 
 def wide_fp4_local(served):
     """True when what serves is the FP4-Local lane at its 1M window (FLASH_LOCAL_CONTEXT=1m, v1.45.2), which its
-    engine says (max_model_len past the native 262,144): measured to 1,036,576 tokens with 15.1 GiB of memory left
-    (2026-11-09), its prompts are bounded by the pool's share, not by the flash ceiling, which kept a long prefill of
-    the SGLang flash lane off the memory edge. The flash ceiling refused every prompt past 250,000 at that window
-    (code review of v1.45.2)."""
+    engine says on /v1/models with the names just read (max_model_len past the native 262,144, served_window), as the
+    cockpit and oc-fit-limits.py read it: measured to 1,036,576 tokens with 15.1 GiB of memory left (2026-11-09), its
+    prompts are bounded by the pool's share, not by the flash ceiling, which kept a long prefill of the SGLang flash
+    lane off the memory edge. The flash ceiling refused every prompt past 250,000 at that window (code review of
+    v1.45.2)."""
     if not served & QWEN_VLLM_NAMES or served & (FLASH_SERVED_NAMES - QWEN_VLLM_NAMES):
         return False
-    try:
-        pool_tokens()
-    except Exception:  # noqa: BLE001 (an engine not read keeps the ceiling)
-        return False
-    return (_POOL["window"] or 0) > 262144
+    return (_SERVED.get("window") or 0) > 262144
 
 
 def wedge_possible(pool):
@@ -2297,7 +2294,7 @@ def invalidate_pool():
     drops the cache.
     """
     _POOL.update(tokens=None, window=None, ts=0.0)
-    _SERVED.update(names=(), engine="", ts=0.0)  # v6.19: the served model names are the same kind of fact
+    _SERVED.update(names=(), engine="", window=0, ts=0.0)  # v6.19: the served model names are the same kind of fact
     _INFO_ROUTE["path"] = "/server_info"  # v6.23: a new engine gets the current route first
 
 
@@ -2427,7 +2424,7 @@ def _vllm_facts(key, timeout):
         owner = owner if isinstance(owner, str) else ""
         names = tuple(m["id"] for m in rows)
         note_engine(names, owner)
-        _SERVED.update(names=names, engine=owner, ts=time.time())
+        _SERVED.update(names=names, engine=owner, window=served_window(rows), ts=time.time())
     return vllm_pool_facts(text, models)
 
 
@@ -3352,7 +3349,7 @@ def systemone_answer(question, probabilities):
             "legend": {key: desc for key, desc in options}, "probabilities": dist}
 
 
-_SERVED = {"names": (), "engine": "", "ts": 0.0}
+_SERVED = {"names": (), "engine": "", "ts": 0.0, "window": 0}
 
 
 def served_models():
@@ -3375,16 +3372,23 @@ def served_models():
             owner = rows[0].get("owned_by")
             owner = owner if isinstance(owner, str) else ""
             note_engine(tuple(ids), owner)
-            _SERVED.update(names=tuple(ids), engine=owner, ts=time.time())
+            _SERVED.update(names=tuple(ids), engine=owner, window=served_window(rows), ts=time.time())
     except urllib.error.HTTPError:
-        _SERVED.update(names=(), engine="", ts=0.0)   # it answered, just not with a list of names
+        _SERVED.update(names=(), engine="", window=0, ts=0.0)   # it answered, just not with a list of names
     except (urllib.error.URLError, OSError) as e:
         # Nothing on the other end: that is the relay path's 503, not "the lane is shy".
-        _SERVED.update(names=(), engine="", ts=0.0)
+        _SERVED.update(names=(), engine="", window=0, ts=0.0)
         raise EngineUnreachable(str(getattr(e, "reason", None) or e)) from e
     except Exception:
-        _SERVED.update(names=(), engine="", ts=0.0)
+        _SERVED.update(names=(), engine="", window=0, ts=0.0)
     return _SERVED["names"]
+
+
+def served_window(rows) -> int:
+    """The window the engine says on /v1/models with the names it serves (max_model_len, which vLLM gives), 0 when it
+    says none: read with the names, so the one-prompt ceiling decides on the list it was read with (v6.54)."""
+    w = rows[0].get("max_model_len") if rows and isinstance(rows[0], dict) else None
+    return w if isinstance(w, int) and w > 0 else 0
 
 
 # v6.37: the last engine that named itself, kept across invalidate_pool (which also runs when
