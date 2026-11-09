@@ -28,12 +28,13 @@ was checked again at its source before its fix:
 
 Four checks in `tests/test_docs_facts.py` read these facts from the code and fail when the sentences that state them
 say otherwise: the keep-as-is command names a `--no-<lane>` for every lane `install.sh` adds; the README's and
-docs/engine-restarts.md's counts of text units and vLLM lanes are the number of units in `PROXY_HOLD_UNITS` and of
-those the cockpit's engine table says run vLLM; no page calls the cockpit's backend a single file, and a page that
-counts its modules gives the number cockpit.py imports; in the README's sentence on the cockpit's privileges, a clause
-that names flush or abort says the key they are called with, and no line of ARCHITECTURE.md that names sudo names
-them, while `sudoers-cockpit.template` has no rule for them. Each fails on the pages as v1.45.2 has them, and on the
-rewordings a review tried against it.
+docs/engine-restarts.md's counts of the text units and of the vLLM lanes are the number of units in `PROXY_HOLD_UNITS`
+and of the units the cockpit's engine table says run vLLM; no page calls the cockpit's backend a single file, and a
+page that counts its modules gives the number cockpit.py imports; while `sudoers-cockpit.template` has no rule for
+flush or abort, the README's list of what goes through sudo names neither, any other clause of that paragraph that
+names one says the key it is called with, and no line of ARCHITECTURE.md that names sudo, nor the line after it, names
+them. Each fails on the pages as v1.45.2 has them and on the rewordings three reviews tried against it; a sentence
+wrapped onto two lines, or a right count written in digits, passes.
 
 **The 27B's quality on the engine it serves.** The README gives the 27B lane's GSM8K, IFEval and tool-calling scores
 measured with v1.2.1 (2026-08-20). It now adds SGLang's own GSM8K on SGLang 0.5.22 without torch.compile, as v1.44.0
