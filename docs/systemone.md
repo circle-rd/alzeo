@@ -63,8 +63,8 @@ contract report what it has no room for: `x-systemone-label-mass` (how much of t
 first-token probability landed on any label; near 1 means the prompt worked),
 `x-systemone-branches`, and `x-systemone-cached-tokens` when the engine runs with
 `--enable-cache-report`, as the 27B lane does since discussion #49 (0, then 2,176 on a second
-question about the same state, measured 2026-10-24). The flash lane does not, and the fan-out table
-below, measured before, reads the cache through latency.
+question about the same state, measured 2026-10-24), and the flash lane since v1.40.3; the fan-out
+table below, measured before, reads the cache through latency.
 
 **Why `top_logprobs` on `/v1/chat/completions`, and never `token_ids_logprob` on `/generate`.**
 On the served build, `get_token_ids_logprobs_raw` appends a bare `[]` for a co-batched request
@@ -137,7 +137,8 @@ label is read off the next token exactly as before; it costs seconds of decode a
 closes the gap on questions a single forward pass cannot settle (the measurements above have
 the number). The thought is never returned, the contract has no field for it. Set them on the
 service with a drop-in (`sudo systemctl edit qwen38-keepalive.service`, an `[Service]` block of
-`Environment=` lines), the way `install.sh` sets the prompt ceiling.
+`Environment=` lines); the installer leaves such a drop-in alone (it writes the prompt ceiling into
+the unit itself).
 
 **Open it to a crowd and the door holds.** `SYSTEMONE_MAX_CALLS` (8) typed-decision calls
 run at once and `SYSTEMONE_MAX_INFLIGHT` (8) engine requests behind them; the next caller is

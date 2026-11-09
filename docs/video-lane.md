@@ -2,7 +2,8 @@
 
 Text to video with joint video-and-audio, plus first/last-frame conditioning, served by
 SGLang Diffusion in its own venv, on its own port, driven from the cockpit's **Video** view.
-Every plain install includes it since v1.20, now on demand: a plain run puts its units on
+Every plain install on a 128 GB box includes it since v1.20 (a 64 GB DGX Spark leaves it out: README,
+[On a 64 GB DGX Spark](../README.md#on-a-64-gb-dgx-spark)), now on demand: a plain run puts its units on
 the box, and its first Load from the cockpit builds its runtime and fetches its checkpoint
 (about 174 GB of headroom: 145 of checkpoint and Turbo adapter, 12 of runtime and its
 build, 17 for the runtime's own caches). `--all-weights`, or `--with-video`, builds it at
@@ -143,12 +144,11 @@ lane is warming up or busy; it said to start the lane until 2026-09-30, which it
 
 The page itself refuses before anything leaves the box: no prompt, a duration outside
 4 to 15 s (the cookbook's band), steps outside 1 to 100, a seed that is not a whole
-number, and a call whose estimate passes two hours' nine tenths. The cockpit filters
-the rest instead of refusing it: more than one video per call, an
-unknown task, keyframes on the `ref2va` weights, a malformed keyframe, undeclared keys
-(a LoRA path, an output path, a kwargs blob are dropped, and the lane 400s what it
-cannot serve), a ratio other than
-16:9 or 9:16, and a canvas past 1280x720 -- the image lane's `IMAGE_MAX_PIXELS` rule,
+number, and a call whose estimate passes two hours' nine tenths. The cockpit refuses
+the rest with a 400 that says why: more than one video per call, an
+unknown task, keyframes on the `ref2va` weights, a malformed keyframe, a ratio other than
+16:9 or 9:16, and a canvas past 1280x720; undeclared keys (a LoRA path, an output path,
+a kwargs blob) it drops, and the lane 400s what it cannot serve. The canvas rule is the image lane's `IMAGE_MAX_PIXELS` rule,
 because the largest canvas measured here peaks at 80.0 GiB of 121.6 and past it the cost
 is a guess and the OOM is a certain one. The page and the cockpit also refuse a canvas
 larger than 864x480 for longer than 4 s: 720P is measured at 4 s only, at 80 GiB, and the

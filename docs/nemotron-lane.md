@@ -205,7 +205,8 @@ Through the proxy on `:30001`, with the box's key, as model `nemotron-3.5-bolt`:
   `medium` and `high`; loading the lane makes it opencode's default. **pi** sends it its effort and
   starts at `high`.
 - **System One** needs a Qwen lane: its options are measured on the Qwen tokenizer. On this lane
-  the proxy says so (400) and the cockpit's Decide view offers to load the flash lane.
+  the proxy says so (400) and the cockpit's Decide view offers to load the flash lane (the 27B on a
+  64 GB box, which holds no flash lane).
 
 ## Switching to it, and back
 
@@ -218,4 +219,4 @@ Through the proxy on `:30001`, with the box's key, as model `nemotron-3.5-bolt`:
   `./install-nemotron.sh --uninstall` removes its unit, and its local image unless the Nemotron Super
   lane runs it too (the weights stay, and so does the vLLM image it was built on, which the script
   names for you to remove). The key's middleware stays while another vLLM lane (Kolibri, Nemotron
-  Super) uses it.
+  Super, Qwen3.8 Flash-Next FP4-Local, Ornith) uses it.

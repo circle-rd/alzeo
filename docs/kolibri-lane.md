@@ -144,6 +144,7 @@ other requests they tested. The call the model wrote after its reasoning is then
 - The cockpit: **Kolibri-1** in the Lanes view, **FP8** or **NVFP4**, then **Load**.
 - A terminal: `./prepare-lane.sh kolibri` the first time (it builds its image, no sudo), then
   `./switch-model.sh kolibri` (or `kolibri-nvfp4`) and the commands it prints.
-- Installed on demand by every plain `./install.sh` (its units; its first Load builds it);
+- Installed on demand by every plain `./install.sh` on a 128 GB box (its units; its first Load builds it;
+  a 64 GB DGX Spark leaves it out: README, [On a 64 GB DGX Spark](../README.md#on-a-64-gb-dgx-spark));
   `--with-kolibri` installs it whole now, and `--no-kolibri` leaves it out of the run that passes
   it (102 GB); `./install-kolibri.sh --uninstall` removes its unit and its local image (the weights stay, and so does the 23 GB vLLM image it was built on, which the script names for you to remove).

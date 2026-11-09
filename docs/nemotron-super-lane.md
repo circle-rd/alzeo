@@ -163,7 +163,8 @@ opencode's default. pi and omp send it their level, starting at `high`. System O
 - A terminal: `./prepare-lane.sh nemotron-super` the first time (it builds the image both Nemotron
   lanes run, no sudo, when the Nemotron lane has not), then `./switch-model.sh nemotron-super` and
   the commands it prints.
-- Installed on demand by every plain `./install.sh` (its units; its first Load builds the image if
+- Installed on demand by every plain `./install.sh` on a 128 GB box (a 64 GB DGX Spark leaves it out:
+  README, [On a 64 GB DGX Spark](../README.md#on-a-64-gb-dgx-spark); its units; its first Load builds the image if
   needed and fetches its weights); `--with-nemotron-super` installs it whole now
   (102 GB: 77 of checkpoint and drafter, 25 of image, 77 when the Nemotron lane is there), and
   `--no-nemotron-super` leaves it out of that run; `./install-nemotron-super.sh --uninstall` removes its

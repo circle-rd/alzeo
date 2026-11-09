@@ -1,8 +1,8 @@
 # The image lane: Qwen-Image 2.1 on one Spark
 
 Text to image, image editing and native RGBA, served by SGLang Diffusion in its own venv, on
-its own port, driven from the cockpit's **Image** view. Every plain install includes it
-since v1.20, now on demand: a plain run puts its units on the box, and its first Load from
+its own port, driven from the cockpit's **Image** view. Every plain install on a 128 GB box includes it
+since v1.20 (a 64 GB DGX Spark leaves it out: README, [On a 64 GB DGX Spark](../README.md#on-a-64-gb-dgx-spark)), now on demand: a plain run puts its units on the box, and its first Load from
 the cockpit builds its runtime and fetches its checkpoint (46 GB: 34 checkpoint, 12 runtime and its build).
 `--all-weights`, or `--with-image`, builds it at install and proves it with one image.
 `--no-image` leaves it out of the run that passes it; `--with-image` installs it whole now:
@@ -95,9 +95,10 @@ pulls a `transformers` that breaks the encoder this model needs.
 
 ### The local changes to the pinned source
 
-Five, all applied by `install-image.sh` from `image-sglang/`, all checked against the real
+Six, all applied by `install-image.sh` from `image-sglang/`, all checked against the real
 upstream files at the pin by a CI step, and all skipped with a note if a future pin no longer
-fits them. The first two are not about images, and the lane serves either way. The other
+fits them. The first three are not about images (the third, `scheduler-loopback`, is under
+"There is no API key" below), and the lane serves either way. The other
 three are [sgl-project/sglang#43391](https://github.com/sgl-project/sglang/pull/43391), merged
 upstream on 2026-10-10 and in SGLang v0.5.22 (2026-10-16), the release after the one this lane
 pins, one file each, which the Turbo cannot do without (the installer refuses to serve it on a
@@ -434,7 +435,7 @@ off, RNG on the CPU. **Reset** puts all of them back.
 
 Prompts to try are prefilled (text rendering, transparent cutout, transparent sticker,
 local edit, combining two pictures), references can be uploaded or generated on the spot
-with **Use a sample**, and any output can be sent back as a reference in one click, which
+with **Make a sample reference**, and any output can be sent back as a reference in one click, which
 is what multi-round editing is. The preview sits on a checkerboard, because a transparent
 cutout on a white card is indistinguishable from an opaque one.
 

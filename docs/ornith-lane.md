@@ -272,8 +272,9 @@ where a client lets one set it, is the way to turn it off. opencode gets an `orn
 images, with the levels `high` and `none` and a window of 990,000 tokens with 32,000 of output
 (compaction late, and still inside the 1,048,576 the engine takes); loading the lane makes it
 opencode's default. pi and omp send it their level, starting at `high`, `off` turning it off. Claude
-Code: `CLAUDE_CODE_MAX_CONTEXT_TOKENS=1000000` with its default output, at worst 1,009,000 tokens
-inside the window (the KV cache, 1,301,680 tokens, is not what binds here). System One needs a Qwen
+Code: `claude-local` sets `CLAUDE_CODE_MAX_CONTEXT_TOKENS=1013000` and `max_tokens` 32,000 here
+(opencode's 990,000 plus 23,000), at worst 1,022,000 tokens inside the window; 1000000 set by hand
+with its default output fits too, at worst 1,009,000 (the KV cache, 1,301,680 tokens, is not what binds here). System One needs a Qwen
 lane.
 
 ## What it does not have
@@ -288,7 +289,8 @@ lane.
 
 ## Installing, loading, removing
 
-A plain install puts its unit in, and its first Load from the cockpit pulls the Qwen3.8 Flash-Next FP4-Local
+A plain install on a 128 GB box puts its unit in (a 64 GB DGX Spark leaves it out: README, [On a 64 GB DGX Spark](../README.md#on-a-64-gb-dgx-spark)),
+and its first Load from the cockpit pulls the Qwen3.8 Flash-Next FP4-Local
 lane's image when that lane has not (18.2 GB on disk), fetches the checkpoint at its pinned revision
 (77.7 GB) and starts it: 5 min 31 s for the first boot on the second GX10, b12x tuning its kernels
 for this model, then 1 min 52 s there, its checkpoint on the internal disk, and 2 min 46 s to 3 min
