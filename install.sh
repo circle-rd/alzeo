@@ -3550,9 +3550,11 @@ except Exception as e:
     # was sized on, and the pair's worst case ran past it (found in review, 2026-10-23).
     if { [ "$CONTEXT_MODE" = "1m" ] || [ "$MEM_CLASS" = 64 ]; } && [ "$OPENCODE" -eq 1 ]; then
       echo "fitting the opencode limits to the KV pool this boot actually got:"
-      # --restart-agent: opencode-web was restarted above, before this fit rewrote its
-      # config, and it reads that config only at startup.
-      python3 "$REPO_DIR/oc-fit-limits.py" --engine "http://127.0.0.1:$PORT" --restart-agent \
+      # --restart-agent-if-lowered: opencode-web reads its config only at startup, so a limit this
+      # fit has to bring DOWN restarts it; limits it raises still fit as they run, and a restart ends
+      # the turn the Agent tab is in: every update cut it, the pool of this boot being larger than the
+      # one of the boot that set them (v1.44.3 on the reference box, 2026-11-08).
+      python3 "$REPO_DIR/oc-fit-limits.py" --engine "http://127.0.0.1:$PORT" --restart-agent-if-lowered \
         || echo "  NOTE: could not fit them; run python3 oc-fit-limits.py yourself, or the cockpit's button"
     fi
 

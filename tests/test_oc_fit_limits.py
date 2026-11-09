@@ -96,8 +96,8 @@ def main() -> None:
     sudoers = P(REPO_DIR, "dashboard", "sudoers-cockpit.template").read_text()
     assert "NOPASSWD: /usr/bin/systemctl restart opencode-web.service" in sudoers
     install = P(REPO_DIR, "install.sh").read_text()
-    assert 'oc-fit-limits.py" --engine "http://127.0.0.1:$PORT" --restart-agent' in install, \
-        "install.sh fits without restarting the agent"
+    assert 'oc-fit-limits.py" --engine "http://127.0.0.1:$PORT" --restart-agent-if-lowered' in install, \
+        "install.sh fits without restarting the agent when a limit comes down"
     cockpit = P(REPO_DIR, "dashboard", "cockpit.py").read_text()
     assert 'oc-fit-limits.py"), "--restart-agent"]' in cockpit, "the cockpit's button fits without restarting it"
 
@@ -120,6 +120,27 @@ def main() -> None:
             (P(d) / "opencode.json").write_text("{}")
             assert m.main(["--restart-agent"]) == 0
         assert len(restarts) == min(want, 1), (merge_said, restarts)
+
+    # 6a. The installer's fit restarts the Agent tab's server only when a limit came down: limits it raises still fit
+    #     as they run, and the restart ended the Agent tab's turn on every update (v1.44.3, 2026-11-08:
+    #     498000/166000 -> 555000/185000 on a pool larger than the boot's that had set them)
+    for merge_said, want in (("qwen38/qwen3.8-27b limits: 700000/200000 -> 567000/189000 (backup x)", 1),
+                             ("qwen38/qwen3.8-27b limits: 567000/150000 -> 567000/189000 (backup x)", 0),
+                             ("qwen38/qwen3.8-27b limits: 498000/166000 -> 555000/185000 (backup x)", 0),
+                             ("qwen38/qwen3.8-27b limits: 600000/166000 -> 555000/185000 (backup x)", 1),
+                             ("qwen38/qwen3.8-27b limits: None/None -> 555000/185000 (backup x)", 1),
+                             ("qwen38/qwen3.8-27b limits already 567000/189000: unchanged", 0)):
+        restarts.clear()
+
+        def fake(argv, **kw):
+            text = merge_said if "oc-merge-limits.py" in " ".join(map(str, argv)) else ""
+            return sp.CompletedProcess(argv, 0, stdout=text, stderr="")
+        m.subprocess.run = fake
+        with tempfile.TemporaryDirectory() as d:
+            m.CONFIG_DIR = P(d)
+            (P(d) / "opencode.json").write_text("{}")
+            assert m.main(["--restart-agent-if-lowered"]) == 0
+        assert len(restarts) == want, (merge_said, restarts)
     m.subprocess.run = real_run
 
     # 6b. A fit that changed the limits regenerates the pi and omp files (docs/pi.md), and

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Fit the opencode limits to the engine that is actually serving.
 
-Usage: oc-fit-limits.py [--dry-run] [--restart-agent] [--engine http://127.0.0.1:30000]
+Usage: oc-fit-limits.py [--dry-run] [--restart-agent | --restart-agent-if-lowered] [--engine http://127.0.0.1:30000]
 
 opencode's `limit.context` is what it grows a conversation up to before it
 compacts, and `limit.output` is what it asks the engine to generate. Both are
@@ -21,6 +21,7 @@ generated artifact and the config opencode really reads, through
 oc-merge-limits.py, and does nothing at all when the integration is off.
 """
 import json
+import re
 import os
 import subprocess
 import sys
@@ -201,6 +202,11 @@ def ceiling_from_env(text: str, served=None) -> int:
 def main(argv: list[str]) -> int:
     dry = "--dry-run" in argv
     restart = "--restart-agent" in argv
+    # the installer's: the Agent tab's server is restarted only when a limit had to come DOWN. Limits lower than the
+    # pool allows still fit, and a restart ends the turn the Agent tab is in: every update cut it, its fit raising the
+    # limits a smaller pool of an earlier boot had set (the reference box, v1.44.3, 2026-11-08: 498000/166000 ->
+    # 555000/185000). The server reads the higher ones at its next start
+    restart_lowered = "--restart-agent-if-lowered" in argv
     base = "http://127.0.0.1:30000"
     if "--engine" in argv:
         base = argv[argv.index("--engine") + 1]
@@ -248,7 +254,7 @@ def main(argv: list[str]) -> int:
     # new threshold instead of a quarter (found in review, 2026-09-24).
     keep = subprocess.run([str(REPO_DIR / "oc-limits.sh"), "--preserve", str(context)],
                           capture_output=True, text=True).stdout.strip()
-    rc, changed, merged = 0, False, False
+    rc, changed, merged, lowered = 0, False, False, False
     for target in (CONFIG_DIR / "opencode.json", Path.home() / ".config/opencode/opencode.json"):
         if not target.exists():
             continue
@@ -264,6 +270,10 @@ def main(argv: list[str]) -> int:
             continue                              # this config has no entry for the lane
         merged = True
         changed = changed or "unchanged" not in said
+        m = re.search(r"limits: (\d+)/(\d+) -> (\d+)/(\d+)", said)
+        # a pair it did not have before ("limits: none -> ..."), or one that came down
+        lowered = lowered or ("unchanged" not in said and (not m or int(m.group(3)) < int(m.group(1))
+                                                              or int(m.group(4)) < int(m.group(2))))
         if keep.isdigit() and int(keep) > 0:
             out = subprocess.run([sys.executable, str(REPO_DIR / "oc-merge-limits.py"), str(target),
                                   "--compaction", keep], capture_output=True, text=True)
@@ -279,9 +289,12 @@ def main(argv: list[str]) -> int:
         print(f"no opencode config here has an entry for {provider}/{served}: nothing fitted")
     elif rc == 0 and not changed:
         print("opencode already asks for no more than this engine can serve: nothing to restart")
-    elif rc == 0 and restart:
+    elif rc == 0 and (restart or (restart_lowered and lowered)):
         print("opencode now asks for no more than this engine can serve")
         print(restart_agent())
+    elif rc == 0 and restart_lowered:
+        print("opencode now asks for no more than this engine can serve; the Agent tab's server keeps the limits it "
+              "runs, which are lower and still fit: it reads the new ones at its next start")
     elif rc == 0:
         print("opencode now asks for no more than this engine can serve; "
               "restart opencode to pick the new limits up")
