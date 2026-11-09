@@ -108,7 +108,7 @@ class ALaneLeftOutGetsItsUnitsOnly(unittest.TestCase):
         r = resolved(self, out)
         self.assertEqual((r["LANE"], r["UNITS_ONLY"], r["LEFT_OUT"]), ("flash", "1", "1"))
         self.assertIn("Your earlier --no-flash is no longer remembered (left out with ./install.sh --no-flash on "
-                      "2026-10-20T08:00Z): a --no-flash counts for the run that passes it only now, so the flash 176B lane is "
+                      "2026-10-20T08:00Z): a --no-flash counts for the run that passes it only now, so the Qwen3.8 Flash-Next lane is "
                       "back in this run. Pass --no-flash on each run to keep it out.", out)
         self.assertIn("NOTE: the flash lane is not prepared on this box: its units only, none of its downloads, and this "
                       "run starts nothing.", out)
@@ -206,7 +206,7 @@ class ALaneLeftOutGetsItsUnitsOnly(unittest.TestCase):
             with self.subTest(args):
                 rc, out = box_run("qwen38-sglang.service", off=("27b",), args=args)
                 self.assertIn("Your earlier --no-27b is no longer remembered (left out with ./install.sh --no-27b on "
-                              "2026-10-20T08:00Z): a --no-27b counts for the run that passes it only now, so the 27B lane "
+                              "2026-10-20T08:00Z): a --no-27b counts for the run that passes it only now, so the Qwen3.8 27B lane "
                               "is back in this run. Pass --no-27b on each run to keep it out.", out)
                 self.assertNotIn("the 27b lane", out)
 
@@ -266,7 +266,7 @@ class ItsEndSaysSo(unittest.TestCase):
         other = "27b" if lane == "flash" else "flash"
         why = why or f"left out (--no-{lane})"
         script = ('step(){ echo "STEP $*"; }\n'
-                  f'LANE={lane}; SERVING_LANE="Flash FP4-Local"; LEFT_OUT=1; LEFT_WHY="{why}"; COCKPIT={cockpit}; '
+                  f'LANE={lane}; SERVING_LANE="Qwen3.8 Flash-Next FP4-Local"; LEFT_OUT=1; LEFT_WHY="{why}"; COCKPIT={cockpit}; '
                   f'MODEL_CHOICE={choice or ("stock" if lane == "27b" else "flash")}\n'
                   f'SECOND_LANE={other}; SECOND_STATE={second}; SECOND_CANNOT="the GPU\'s addressing mode is None"\n'
                   'if false; then :\n' + text[start:end] + "fi\n")

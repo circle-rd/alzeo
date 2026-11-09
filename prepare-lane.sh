@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # The heavy half of a lane installed on demand, as the user, with no sudo: what the cockpit's
 # first Load of the lane runs before its switch. The image and video lanes' runtime (a venv and
-# SGLang Diffusion, the video lane's Turbo adapter) and the Kolibri, Nemotron, Flash FP4-Local and Ornith
-# lanes' images (one image for the two Nemotron lanes, one for Flash FP4-Local and Ornith), each by its own
+# SGLang Diffusion, the video lane's Turbo adapter) and the Kolibri, Nemotron, Qwen3.8 Flash-Next FP4-Local and Ornith
+# lanes' images (one image for the two Nemotron lanes, one for Qwen3.8 Flash-Next FP4-Local and Ornith), each by its own
 # installer's --prepare; their
 # checkpoint comes with the Load's switch, as for any Load. The
 # other text lane, beside the lane that serves: the image its launcher (flash) or unit (27B)

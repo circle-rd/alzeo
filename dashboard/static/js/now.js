@@ -220,16 +220,17 @@ function renderServing(){
 // ── connect a client: the address, the model and the key, ready to copy ───────
 // Hasan (2026-10-18): the address to give a client, plain and in sight, for whoever reads nothing else. The proxy
 // listens where its unit says (api, read every 30 s); everywhere, it answers on the address this page was reached by.
-const API = {d: null, model: ''};
+const API = {d: null, model: '', target: null, said: ''};
 on('api', d => { API.d = d; renderApi(); });
-on('engine_info', d => { API.model = (d.info || {}).served_model_name || ''; renderApi(); });
+on('engine_info', d => { API.model = (d.info || {}).served_model_name || ''; API.target = d.served_target || null; renderApi(); });
 on('lifecycle', () => renderApi());
 const LOOPBACK = ['127.0.0.1', 'localhost', '::1'];
 const apiUrl = (d, host) => `${d.tls ? 'https' : 'http'}://${host.includes(':') ? '[' + host + ']' : host}:${d.port}`;
 function apiBase(d){
-  // a proxy on every interface answers on the address this page was reached by; one bound to an address, on that one
+  // a proxy on every interface answers on the address this page was reached by; one bound to an address, on that one.
+  // An IPv6 address comes in brackets from location.hostname: unwrapped, or "[[::1]]" (review of v1.45.1)
   const any = !d.bind || d.bind === '0.0.0.0' || d.bind === '::';
-  const host = any ? location.hostname : d.bind;
+  const host = any ? location.hostname.replace(/^\[(.*)\]$/, '$1') : d.bind;
   return {host, base: apiUrl(d, host)};
 }
 function renderApi(){
@@ -240,19 +241,35 @@ function renderApi(){
   // the box (127.0.0.1) said a proxy on every interface listened on the box only (captures of 2026-11-09)
   const boxOnly = LOOPBACK.includes(d.bind);
   const others = !boxOnly && LOOPBACK.includes(host) ? (d.addresses || []).map(a => `${apiUrl(d, a.addr)}/v1 (${a.iface})`) : [];
-  const model = textReady() && API.model ? API.model : '';
-  setText('api-aside', boxOnly ? 'from this box only' : 'OpenAI and Anthropic APIs');
-  facts(box, [['OpenAI API', `${base}/v1`, 'wrap'], ['Anthropic API', base, 'wrap'],
-              ['Model', model || (servingEngine() ? 'no text lane serves now' : 'nothing serves now')],
-              ['Key', `the cockpit's login, in ${d.key_file} on the box` + (d.client_keys ? ', or a client key of yours' : ''), 'wrap'],
-              boxOnly ? ['Other machines', `the proxy listens on this box only (PROXY_BIND=${d.bind}): PROXY_BIND=0.0.0.0 ./install.sh opens it, the key still the gate`, 'wrap']
-                : others.length ? ['From another machine', others.join('\n'), 'wrap lines'] : [null, null]]);
-  clear(row);
+  // the model of the lane that serves now: engine_info is read every 30 s, the lanes' states every 2, and just after a
+  // switch it still named the lane before, which a copied test then asked for (review of v1.45.1)
+  const s = servingEngine(), fresh = !!s && !!API.target && s[1].target === API.target;
+  const model = textReady() && fresh && API.model ? API.model : '';
+  const modelSaid = model || (!servingEngine() ? 'nothing serves now' : !textReady() ? 'no text lane serves now' : 'reading the lane that serves…');
+  // with client keys, the proxy refuses every other key, the cockpit's login included (keepalive-proxy.py, its wall)
+  const keySaid = d.client_keys ? "a client key of yours, from the proxy's keys file: it refuses any other, the cockpit's login included"
+    : `the cockpit's login, in ${d.key_file} on the box`;
+  const keyArg = d.client_keys ? '$YOUR_CLIENT_KEY' : `$(cat ${d.key_file})`;
+  const rows = [['OpenAI API', `${base}/v1`, 'wrap'], ['Anthropic API', base, 'wrap'], ['Model', modelSaid], ['Key', keySaid, 'wrap'],
+    boxOnly ? ['Other machines', `the proxy listens on this box only (PROXY_BIND=${d.bind}): PROXY_BIND=0.0.0.0 ./install.sh opens it, the key still the gate`, 'wrap']
+      : others.length ? ['From another machine', others.join('\n'), 'wrap lines'] : [null, null],
+    // part of the proxy's settings in a file the cockpit cannot read: what it sets is not known here (review of v1.45.1)
+    d.env_unread ? ['Not read', "the proxy's environment file: if it sets a certificate the address is https, and with client keys only those are taken", 'wrap'] : [null, null]];
   const m = model || 'MODEL';
   // claude-local sets Claude Code up for the lane that serves (proxy, key, model, budgets: docs/clients.md); the test
   // reads the key from its file, on the box, and never shows it
   const items = [['Copy the address', `${base}/v1`], ['Copy for Claude Code, on the box', 'claude-local'],
-    ['Copy a test', `curl -s ${base}/v1/chat/completions -H "Authorization: Bearer $(cat ${d.key_file})" -H 'Content-Type: application/json' -d '{"model":"${m}","messages":[{"role":"user","content":"Say ok."}],"max_tokens":8}'`]];
+    ['Copy a test', `curl -s ${base}/v1/chat/completions -H "Authorization: Bearer ${keyArg}" -H 'Content-Type: application/json' -d '{"model":"${m}","messages":[{"role":"user","content":"Say ok."}],"max_tokens":8}'`]];
+  // the unit not read: the proxy's usual port, said as a guess (review of v1.45.1)
+  const aside = !d.known ? 'its port not read: 30001 assumed' : boxOnly ? 'from this box only' : 'OpenAI and Anthropic APIs';
+  // built again only when what it says changed: rebuilt at every tick of the lanes (2 s), a selection or a focus on
+  // it was lost within two seconds (review of v1.45.1)
+  const said = JSON.stringify([rows, items, aside]);
+  if (said === API.said) return;
+  API.said = said;
+  setText('api-aside', aside);
+  facts(box, rows);
+  clear(row);
   items.forEach(([label, text]) => { const b = el('button', 'btn sm', label); b.type = 'button'; b.addEventListener('click', () => copyText(text)); row.append(b); });
   const a = el('a', 'btn sm ghost', 'Every client, step by step'); a.href = 'https://github.com/hasso5703/alzeo/blob/main/docs/clients.md';
   a.target = '_blank'; a.rel = 'noopener'; row.append(a);

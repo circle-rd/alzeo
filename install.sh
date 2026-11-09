@@ -611,7 +611,7 @@ without a terminal.
   --no-video            leave the MiniMax-H3 video lane out of this run (174 GB),
                         the same way (./install-video.sh --uninstall)
   --with-video          install it whole now and prove it
-  --no-flash            leave the flash 176B lane out of this run when it is not
+  --no-flash            leave the Qwen3.8 Flash-Next lane out of this run when it is not
                         the one serving (223 GB), the same way
   --with-flash          install it whole now beside the lane that serves
   --no-27b              leave the 27B lane out of this run when it is not the
@@ -1393,9 +1393,9 @@ fi
 # or not prepared (issue #57, below: LEFT_OUT).
 lane_title(){  # $1 a lane, by its flag's name: the name a run says
   case "$1" in
-    27b) echo "27B" ;; flash) echo "flash 176B" ;; image) echo "image (Qwen-Image 2.1)" ;;
+    27b) echo "Qwen3.8 27B" ;; flash) echo "Qwen3.8 Flash-Next" ;; image) echo "image (Qwen-Image 2.1)" ;;
     video) echo "video (MiniMax-H3)" ;; kolibri) echo "Kolibri-1" ;; nemotron) echo "Nemotron 3.5 Bolt" ;;
-    nemotron-super) echo "Nemotron 3.5 Super VL" ;; flash-local) echo "Flash FP4-Local" ;;
+    nemotron-super) echo "Nemotron 3.5 Super VL" ;; flash-local) echo "Qwen3.8 Flash-Next FP4-Local" ;;
     ornith-122b) echo "Ornith 1.5 122B" ;; *) echo "$1" ;;
   esac
 }
@@ -1655,7 +1655,7 @@ fi
 # above: none of its downloads, nothing started, the box's port, cache and binds kept, read from that
 # same lane; named (--with-<lane>), or with --all-weights, it is updated whole. The other text lane
 # follows its own rule (step 6, whole only once prepared), and the rest of the box is updated.
-# Issue #57 (2026-10-21): a box booting Flash FP4-Local fetched the flash lane it had left out again,
+# Issue #57 (2026-10-21): a box booting Qwen3.8 Flash-Next FP4-Local fetched the flash lane it had left out again,
 # 35 and 136 GB, under "Leaving the flash lane out". A --no-<lane> no longer outlives its run, so a
 # lane not prepared is what keeps those downloads off the next one too.
 LEFT_OUT=0; LEFT_WHY=""
@@ -3303,7 +3303,7 @@ else
   [ "$KOLIBRI_BOOT" -eq 1 ] && SERVING_LANE="Kolibri"
   [ "$NEMOTRON_BOOT" -eq 1 ] && SERVING_LANE="Nemotron"
   [ "$NEMOTRON_SUPER_BOOT" -eq 1 ] && SERVING_LANE="Nemotron Super"
-  [ "$FLASH_LOCAL_BOOT" -eq 1 ] && SERVING_LANE="Flash FP4-Local"
+  [ "$FLASH_LOCAL_BOOT" -eq 1 ] && SERVING_LANE="Qwen3.8 Flash-Next FP4-Local"
   [ "$ORNITH_122B_BOOT" -eq 1 ] && SERVING_LANE="Ornith 1.5 122B"
   if [ -n "$ATS_CANNOT" ]; then
     step "Done: this box is up to date, and its flash lane, which this GPU cannot start, was not started"

@@ -519,11 +519,11 @@ if [ "$CHOICE" = "flash-local" ]; then
     -v "$REPO_DIR/ckpt-fetch.py:/opt/qwen38/ckpt-fetch.py:ro" \
     -v "$FLL_HF":/hf "$FLASH_LOCAL_IMAGE" /opt/qwen38/ckpt-fetch.py "$FLASH_LOCAL_REPO" "$FLASH_LOCAL_REV" --offline-first \
     --need-gb "$FLASH_LOCAL_GB" --free-gb "$(dl_free_gb "$FLL_HF")" \
-    || die "the Flash FP4-Local checkpoint could not be verified or fetched (re-run to resume; set HF_TOKEN if it stalls)"
+    || die "the Qwen3.8 Flash-Next FP4-Local checkpoint could not be verified or fetched (re-run to resume; set HF_TOKEN if it stalls)"
   fetched "$FLASH_LOCAL_REPO @ ${FLASH_LOCAL_REV:0:12}"
   # its chat template, its n-gram table where the engine reads it, and its unit for this checkpoint
   HF_CACHE="$FLL_HF" bash "$REPO_DIR/install-flash-local.sh" --stage "$FLL_STAGE" \
-    || { rm -f "$FLL_STAGE"; die "the Flash FP4-Local unit could not be prepared (the lines above say why)"; }
+    || { rm -f "$FLL_STAGE"; die "the Qwen3.8 Flash-Next FP4-Local unit could not be prepared (the lines above say why)"; }
   FLL_REWRITTEN=""
   if ! cmp -s "$FLL_STAGE" "$FLASH_LOCAL_UNIT"; then
     diff "$FLL_STAGE" "$FLASH_LOCAL_UNIT" || true   # show exactly what changes

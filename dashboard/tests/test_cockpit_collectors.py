@@ -1934,10 +1934,6 @@ class TheVllmLanesCountersAreReadToo(Base):
         self.assertIsNone(out["aborted"], "vLLM counts no client that left: not counted, which is not none")
 
 
-if __name__ == "__main__":
-    unittest.main(verbosity=2)
-
-
 class WhereAClientSendsItsRequests(Base):
     """Hasan (2026-10-18): the address to give a client, plain and in sight. collect_api reads the keepalive unit as
     systemd runs it, whose environment holds keys: four fields leave it, nothing else."""
@@ -1966,6 +1962,22 @@ class WhereAClientSendsItsRequests(Base):
         self.assertTrue(d["key_file"].endswith("api-key"))
         self.assertNotIn("sekret", json.dumps(d))            # the unit's keys never reach the page
 
+    def test_the_environment_files_for_three_names_and_one_not_readable(self):
+        # the docs put the proxy's secrets in an EnvironmentFile, which systemctl show does not unfold (review of v1.45.1)
+        f = self.tmp / "proxy.env"
+        f.write_text("QWEN38_UPSTREAM_API_KEY=sekret-456\nexport QWEN38_TLS_CERT='/etc/ssl/box.pem'\n"
+                     "QWEN38_CLIENT_KEYS_FILE=/home/u/keys # client keys\n")
+        show = ("ExecStart={ argv[]=/usr/bin/python3 /x/keepalive-proxy.py 30001 ; }\nEnvironment=PROXY_BIND=0.0.0.0\n"
+                f"EnvironmentFiles={f} (ignore_errors=no)\n")
+        self.box({"show qwen38-keepalive.service": show})
+        d = self.cp.collect_api()
+        self.assertEqual((d["tls"], d["client_keys"], d["env_unread"]), (True, True, False))
+        self.assertNotIn("sekret", json.dumps(d))
+        self.box({"show qwen38-keepalive.service": show.replace(str(f), "/nonexistent/proxy.env")})
+        self.assertTrue(self.cp.collect_api()["env_unread"])
+        self.box({"show qwen38-keepalive.service": show.replace(str(f), "/nonexistent/proxy.env").replace("=no)", "=yes)")})
+        self.assertFalse(self.cp.collect_api()["env_unread"], "an optional file that is not there sets nothing")
+
     def test_a_proxy_on_its_defaults_and_a_unit_not_read(self):
         self.box({"show qwen38-keepalive.service": "ExecStart={ argv[]=/usr/bin/python3 /x/keepalive-proxy.py 30011 ; }\nEnvironment=\n"})
         d = self.cp.collect_api()
@@ -1973,3 +1985,7 @@ class WhereAClientSendsItsRequests(Base):
         self.box({})
         d = self.cp.collect_api()
         self.assertEqual((d["known"], d["port"], d["bind"]), (False, 30001, "0.0.0.0"))
+
+
+if __name__ == "__main__":
+    unittest.main(verbosity=2)

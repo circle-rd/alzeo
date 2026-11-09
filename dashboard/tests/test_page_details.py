@@ -994,10 +994,6 @@ class LoadingALaneIsOneJourney(unittest.TestCase):
         self.assertEqual(r["names"], ["switch:video", "unit:stop", "unit:start"])
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class AClientIsToldWhereToSendItsRequests(unittest.TestCase):
     """Hasan (2026-10-18): the address to give a client, plain and in sight, for whoever reads nothing else. The Now
     view says it with the model that serves and where the key is, ready to copy, and never shows the key."""
@@ -1030,6 +1026,37 @@ class AClientIsToldWhereToSendItsRequests(unittest.TestCase):
         r = run(self, self.BODY % ("'box.example.ts.net'", "'0.0.0.0'", "true"))
         self.assertIn("OpenAI APIhttps://box.example.ts.net:30001/v1", r["facts"])
 
+    def test_the_reviews_cases(self):
+        # review of v1.45.1: client keys refuse the cockpit's login; an IPv6 page; the model of the lane before a switch;
+        # a port not read; a file not read; the panel rebuilt at every tick of the lanes lost a selection
+        r = run(self, r"""
+        let copied = null; copyText = t => { copied = t; };
+        location.hostname = '[fd7a:115c::1]';
+        const api = (o) => Object.assign({known: true, port: 30001, bind: '0.0.0.0', tls: false, client_keys: false,
+                                          key_file: '/home/u/.config/qwen38/api-key', addresses: []}, o);
+        feed({config: CONFIG, units: UNITS, lifecycle: life({'qwen38-sglang.service': eng('ready')}),
+              engine_info: {served_target: 'stock', info: {served_model_name: 'qwen3.8-27b'}}, api: api({client_keys: true})});
+        const v6 = txt('api-facts');
+        [...$('api-copy').children].find(b => b.textContent === 'Copy a test').click();
+        const test = copied;
+        const dd = $('api-facts').querySelector('dd');
+        feed({lifecycle: life({'qwen38-sglang.service': eng('ready', {elapsed: 602})})});
+        const same = $('api-facts').querySelector('dd') === dd;
+        feed({lifecycle: life({'qwen38-sglang.service': eng('ready', {target: 'uncensored'})})});
+        const switched = txt('api-facts');
+        feed({api: api({known: false, env_unread: true})});
+        report({v6, test, same, switched, aside: txt('api-aside'), unread: txt('api-facts')});
+        """)
+        self.assertIn("OpenAI APIhttp://[fd7a:115c::1]:30001/v1", r["v6"])
+        self.assertIn("a client key of yours", r["v6"])
+        self.assertIn("the cockpit's login included", r["v6"])
+        self.assertIn("Bearer $YOUR_CLIENT_KEY", r["test"])
+        self.assertNotIn("api-key", r["test"])
+        self.assertTrue(r["same"], "rebuilt though nothing it says changed")
+        self.assertIn("Modelreading the lane that serves", r["switched"])
+        self.assertEqual(r["aside"], "its port not read: 30001 assumed")
+        self.assertIn("Not readthe proxy's environment file", r["unread"])
+
     def test_a_page_opened_on_the_box_gives_its_other_addresses(self):
         # a proxy on every interface, the page on 127.0.0.1: it said the proxy listened on the box only, with
         # PROXY_BIND=0.0.0.0 to open it (captures of 2026-11-09)
@@ -1038,3 +1065,7 @@ class AClientIsToldWhereToSendItsRequests(unittest.TestCase):
         self.assertNotEqual(r["aside"], "from this box only")
         self.assertIn("From another machinehttp://100.101.102.103:30001/v1 (tailscale0)\nhttp://192.168.1.20:30001/v1 (enP7s7)",
                       r["facts"])
+
+
+if __name__ == "__main__":
+    unittest.main()

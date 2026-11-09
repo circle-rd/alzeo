@@ -129,6 +129,7 @@ def main() -> None:
                              ("qwen38/qwen3.8-27b limits: 498000/166000 -> 555000/185000 (backup x)", 0),
                              ("qwen38/qwen3.8-27b limits: 600000/166000 -> 555000/185000 (backup x)", 1),
                              ("qwen38/qwen3.8-27b limits: None/None -> 555000/185000 (backup x)", 1),
+                             ("qwen38/qwen3.8-27b limits: 555000/185000 -> 555000/185000 (backup x)", 1),
                              ("qwen38/qwen3.8-27b limits already 567000/189000: unchanged", 0)):
         restarts.clear()
 

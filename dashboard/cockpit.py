@@ -3078,9 +3078,23 @@ def collect_api() -> dict:
     to give a client, plain and in sight, for whoever reads nothing else). Only these four are taken from the unit,
     whose environment holds keys: nothing else of it leaves this function. The host is the page's to add, the address
     the browser reached the cockpit by, the one that works from there."""
-    show = run(["systemctl", "show", "qwen38-keepalive.service", "-p", "ExecStart", "-p", "Environment"], timeout=5) or ""
+    show = run(["systemctl", "show", "qwen38-keepalive.service", "-p", "ExecStart", "-p", "Environment",
+                "-p", "EnvironmentFiles"], timeout=5) or ""
     port = re.search(r"keepalive-proxy\.py (\d+)", show)
-    env = dict(re.findall(r"(?<![A-Za-z0-9_])(PROXY_BIND|QWEN38_TLS_CERT|QWEN38_CLIENT_KEYS_FILE)=(\S*)", show))
+    names = r"(?<![A-Za-z0-9_])(PROXY_BIND|QWEN38_TLS_CERT|QWEN38_CLIENT_KEYS_FILE)="
+    env = dict(re.findall(names + r"(\S*)", show))
+    # and the files the unit reads its environment from, which systemctl show does not unfold: the docs put the
+    # proxy's secrets there, a certificate or client keys among them (review of v1.45.1). The three names only; a file
+    # this user cannot read is said, as what it sets is then unknown
+    unread = False
+    for path, optional in re.findall(r"^EnvironmentFiles=(\S+)(?: \(ignore_errors=(yes|no)\))?", show, re.M):
+        try:
+            text = Path(path).read_text(errors="replace")
+        except OSError:
+            unread = unread or optional != "yes"
+            continue
+        for k, v in re.findall(r"^\s*(?:export\s+)?" + names + r"[\"']?([^\"'\s#]*)", text, re.M):
+            env[k] = v
     # the box's addresses another machine can reach it by, the tailnet's first: the page opened on the box itself
     # (127.0.0.1) has no other to offer (captures of 2026-11-09). Container bridges are no one's way in
     addrs = []
@@ -3092,7 +3106,7 @@ def collect_api() -> dict:
     return {"node_id": "local", "known": bool(port), "port": int(port.group(1)) if port else 30001,
             "bind": env.get("PROXY_BIND") or "0.0.0.0", "tls": bool(env.get("QWEN38_TLS_CERT")),
             "client_keys": bool(env.get("QWEN38_CLIENT_KEYS_FILE")), "key_file": str(CONFIG_DIR / "api-key"),
-            "addresses": addrs}
+            "env_unread": unread, "addresses": addrs}
 
 
 def collect_engine_table() -> dict:

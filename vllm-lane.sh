@@ -5,7 +5,7 @@
 #
 #   VLANE        the lane (kolibri, nemotron, nemotron-super, flash-local, ornith-122b): its opencode provider, the
 #                record of the text lane it took the boot from (lanes.sh), its --no-<lane>, its cache folder
-#   VLANE_SHORT  the lane in a sentence (Kolibri, Nemotron, Super VL, Flash FP4-Local, Ornith 1.5 122B)
+#   VLANE_SHORT  the lane in a sentence (Kolibri, Nemotron, Super VL, Qwen3.8 Flash-Next FP4-Local, Ornith 1.5 122B)
 #   UNIT, INSTALLED, CONTAINER, CONFIG_DIR, HERE; and, for each part below, what it says it reads.
 #
 # Until v1.35 each installer carried its own copy of all of it, one renamed from the other: a fix
@@ -164,7 +164,7 @@ vlane_service_files(){  # $1... the lane's cache folders
 # The checkpoint's own chat template with this lane's fixes (patch-template.py), written to $1: again at
 # every install and every switch, and left as it is, mtime included, when nothing changed. The rest is
 # the lane's TEMPLATE_FIXES: VAR=value for patch-template.py's environment, --options for its command
-# line. One function for the vLLM lanes that patch their template (Flash FP4-Local, Ornith), which had
+# line. One function for the vLLM lanes that patch their template (Qwen3.8 Flash-Next FP4-Local, Ornith), which had
 # the same lines each (code review, 2026-10-24).
 vlane_template(){  # $1 the file, then the lane's TEMPLATE_FIXES
   local out="$1" a envs=() opts=()

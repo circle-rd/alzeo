@@ -87,7 +87,7 @@ docker_session bash "$HERE/${BASH_SOURCE[0]##*/}" "$@"
 # the preflight and the room, the fetch, the proof
 # shellcheck source=vllm-lane.sh
 . "$HERE/vllm-lane.sh"
-VLANE=flash-local; VLANE_SHORT="Flash FP4-Local"
+VLANE=flash-local; VLANE_SHORT="Qwen3.8 Flash-Next FP4-Local"
 
 # The pins, at column 0 like install.sh's: the checkpoint at its revision of 2026-10-15 19:45 UTC,
 # the last one (checked on 2026-10-20: every revision since the weights came, on 2026-10-08, changes
@@ -240,7 +240,7 @@ install_service(){
   vlane_put_unit "$RENDER" "$CONFIG_DIR/seccomp-io-uring.json" "$TEMPLATE"
   # Installed, not switched to: the lane this box serves stays the lane it serves.
   echo "installed as a lane of its own. Switch to it like any lane:"
-  echo "  the cockpit: Load on Flash FP4-Local (NVIDIA) in the Lanes view"
+  echo "  the cockpit: Load on Qwen3.8 Flash-Next FP4-Local in the Lanes view"
   echo "  a terminal : ./switch-model.sh flash-local, then the commands it prints"
 }
 
@@ -284,7 +284,7 @@ if [ "$MODE" = units ]; then
   vlane_template_if_cached "$TEMPLATE" "${TEMPLATE_FIXES[@]}"
   install_service
   step "Done: the Qwen3.8 Flash-Next FP4-Local lane is installed; its first Load prepares it"
-  echo "  the cockpit: Load on Flash FP4-Local (NVIDIA) in the Lanes view pulls its image (about 18 GB, 10 to"
+  echo "  the cockpit: Load on Qwen3.8 Flash-Next FP4-Local in the Lanes view pulls its image (about 18 GB, 10 to"
   echo "               download), fetches its checkpoint (about $WEIGHTS_GB GB), then starts it"
   echo "  a terminal : ./install-flash-local.sh --prepare, then ./switch-model.sh flash-local and the commands it prints"
   exit 0
@@ -324,5 +324,5 @@ VLANE_PARSERS="the qwen3_xml parser is"; VLANE_BOOT="about 6 min, 17 at its firs
 vlane_prove
 
 step "Done: the Qwen3.8 Flash-Next FP4-Local lane is installed and proved it serves on $ENGINE_BIND:$PORT"
-echo "  switch to it : Load on Flash FP4-Local (NVIDIA) in the cockpit, or ./switch-model.sh flash-local"
+echo "  switch to it : Load on Qwen3.8 Flash-Next FP4-Local in the cockpit, or ./switch-model.sh flash-local"
 echo "  clients      : the proxy on :30001 with the box's key, model qwen3.8-flash-next-fp4 (OpenAI and Anthropic APIs)"

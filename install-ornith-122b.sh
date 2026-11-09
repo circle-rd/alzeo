@@ -20,7 +20,7 @@
 # does not have the room, this refuses before downloading anything.
 #
 # WHY THIS IMAGE. The checkpoint mixes NVFP4 experts read as W4A16 and FP8 projections, which
-# ModelOpt calls MIXED_PRECISION: the community b12x vLLM build NVIDIA's Flash FP4-Local card names
+# ModelOpt calls MIXED_PRECISION: the community b12x vLLM build NVIDIA's Qwen3.8 Flash-Next FP4-Local card names
 # for a DGX Spark reads it with the b12x kernels and loader it serves FP4-Local with, and served this
 # model right on every test (docs/ornith-lane.md says what was measured). The two lanes pull it once.
 #

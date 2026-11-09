@@ -271,9 +271,12 @@ def main(argv: list[str]) -> int:
         merged = True
         changed = changed or "unchanged" not in said
         m = re.search(r"limits: (\d+)/(\d+) -> (\d+)/(\d+)", said)
-        # a pair it did not have before ("limits: none -> ..."), or one that came down
-        lowered = lowered or ("unchanged" not in said and (not m or int(m.group(3)) < int(m.group(1))
-                                                              or int(m.group(4)) < int(m.group(2))))
+        # a pair it did not have before ("limits: None/None -> ..."), one that came down, or the same pair said again,
+        # which means another key of the block was rewritten: its input, which can only come down to the context (the
+        # merge sets input to it), unseen in this line (review of v1.45.1)
+        if "unchanged" not in said:
+            a, b, c, d = (int(g) for g in m.groups()) if m else (0, 0, 0, 0)
+            lowered = lowered or not m or c < a or d < b or (c, d) == (a, b)
         if keep.isdigit() and int(keep) > 0:
             out = subprocess.run([sys.executable, str(REPO_DIR / "oc-merge-limits.py"), str(target),
                                   "--compaction", keep], capture_output=True, text=True)
@@ -293,8 +296,9 @@ def main(argv: list[str]) -> int:
         print("opencode now asks for no more than this engine can serve")
         print(restart_agent())
     elif rc == 0 and restart_lowered:
-        print("opencode now asks for no more than this engine can serve; the Agent tab's server keeps the limits it "
-              "runs, which are lower and still fit: it reads the new ones at its next start")
+        # said as it is: the server may not run, and the change may be the compaction block alone (review of v1.45.1)
+        print("opencode now asks for no more than this engine can serve; the Agent tab's server, if it runs, keeps "
+              "what it read at its start, which still fits: it reads the new settings at its next start")
     elif rc == 0:
         print("opencode now asks for no more than this engine can serve; "
               "restart opencode to pick the new limits up")
