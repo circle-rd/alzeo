@@ -4,6 +4,10 @@ The stack serves two dialects through one hardened entry point. This page
 says which, what each client must send, and what is measured on the
 reference box versus what is merely how a client is configured.
 
+The address to give a client, the model that serves and where the key is are in
+the cockpit's Now view, ready to copy ("Connect a client", since v1.45.1), with
+the box's other addresses when the cockpit is opened on the box itself.
+
 ## The surface
 
 Agent clients should connect to the **keepalive proxy** (default

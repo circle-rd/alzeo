@@ -92,6 +92,15 @@ marks and scripts are all served by the box: the page fetches nothing from elsew
   the cockpit runs a real generation canary and reports `ready`, `loading`,
   `wedged` or `stopped` from that, with the served checkpoint named from the
   unit rather than guessed.
+- **Where a client sends its requests.** The Now view's "Connect a client" panel gives
+  the OpenAI address (`http://<the address you opened the cockpit by>:30001/v1`) and the
+  Anthropic one, the model that serves and where the key is, never the key itself, each
+  ready to copy. Opened on the box, it lists the addresses another machine reaches it
+  by, the tailnet's first; on a proxy that listens on the box alone (`PROXY_BIND=127.0.0.1`)
+  it says so and how to open it, with a certificate it says https, and with client keys
+  on it asks for one, as the proxy then refuses any other. Its test request reads the key
+  from its file through a descriptor, never from curl's arguments, and `claude-local`
+  sets Claude Code up for the lane that serves ([clients](clients.md)).
 - **Belts.** A host `MemAvailable` floor that aborts generations before the box
   reaches the memory edge, and a counter of the kernel's `NVRM` allocation
   refusals, which is how the memory-edge behaviour in the flash section was
