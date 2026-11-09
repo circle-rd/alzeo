@@ -26,18 +26,20 @@ was checked again at its source before its fix:
   too, is installed.
 - `docs/cockpit.md`: the same backend sentence as the README.
 
-Four checks in `tests/test_docs_facts.py` keep these from drifting again, each read from the code: the keep-as-is
-command names a `--no-<lane>` for every lane `install.sh` adds; every count of text units or vLLM lanes a page gives
-is the number in `PROXY_HOLD_UNITS` and of the units whose template runs vLLM; no page calls the cockpit's backend a
-single file, and a page that counts its modules gives the number cockpit.py imports; neither the README nor
-ARCHITECTURE.md puts flush or abort on the sudo path while `sudoers-cockpit.template` has no line for them. Each fails
-on the pages as v1.45.2 has them, and on a page given a wrong count.
+Four checks in `tests/test_docs_facts.py` read these facts from the code and fail when the sentences that state them
+say otherwise: the keep-as-is command names a `--no-<lane>` for every lane `install.sh` adds; the README's and
+docs/engine-restarts.md's counts of text units and vLLM lanes are the number of units in `PROXY_HOLD_UNITS` and of
+those the cockpit's engine table says run vLLM; no page calls the cockpit's backend a single file, and a page that
+counts its modules gives the number cockpit.py imports; in the README's sentence on the cockpit's privileges, a clause
+that names flush or abort says the key they are called with, and no line of ARCHITECTURE.md that names sudo names
+them, while `sudoers-cockpit.template` has no rule for them. Each fails on the pages as v1.45.2 has them, and on the
+rewordings a review tried against it.
 
 **The 27B's quality on the engine it serves.** The README gives the 27B lane's GSM8K, IFEval and tool-calling scores
 measured with v1.2.1 (2026-08-20). It now adds SGLang's own GSM8K on SGLang 0.5.22 without torch.compile, as v1.44.0
 serves it: 99.2 % on 250 problems, the test set's 6th to 255th (`sglang.test.run_eval`, 2026-11-05, the run
-BENCHMARKS.md records), with a note that it asks other problems than the table's 200, so the two are not a before and
-after.
+BENCHMARKS.md records), with a note that the table's GSM8K (200 problems, v1.2.1's engine) is no before and after
+for it.
 
 **The site's address.** The README links the project's site at https://alzeo.ai/, where hasso5703.github.io now
 redirects.
