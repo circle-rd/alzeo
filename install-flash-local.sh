@@ -134,7 +134,8 @@ if [ "$ACTION" = uninstall ]; then
   # would have untagged every lane's pin, none of which a unit names by that tag.
   vlane_uninstall_runtime qwen38-flash-local "$FLASH_LOCAL_IMAGE" "$FLASH_LOCAL_REPO"
   pin_untag flash-local
-  rm -f "$CONFIG_DIR/chat-template-flash-local.jinja" "$CONFIG_DIR/flash-local-ple-dir" "$CONFIG_DIR/flash-local-files.sh"
+  rm -f "$CONFIG_DIR/chat-template-flash-local.jinja" "$CONFIG_DIR/flash-local-ple-dir" "$CONFIG_DIR/flash-local-files.sh" \
+        "$CONFIG_DIR/flash-local-context" "$CONFIG_DIR/flash-local-yarn.json"
   # The seccomp profile is the Ornith lane's too: it stays while that lane's unit reads it.
   if [ -f "$LANES_UNIT_DIR/qwen38-ornith-122b.service" ]; then
     echo "seccomp-io-uring.json kept: the Ornith 1.5 122B lane reads it too"
@@ -193,34 +194,30 @@ TABLE_DIR_ARG=(--dir "${FLASH_LOCAL_PLE_DIR:-}")
 # 1,061,819 tokens at the lane's share, a passphrase retrieved 8 times of 8 up to 1,036,576 tokens (608 s to the first
 # token there), at least 15.1 GiB of memory left. Kept for the runs after in a file of its own, as the PLE folder is:
 # a Load from the cockpit stages the unit with none of the user's environment. native (or empty) brings 262,144 back.
-CONTEXT_CHOICE="$CONFIG_DIR/flash-local-context"
+# The choice is read here and kept by the render that takes it (render_unit): a refused one is not kept.
+CONTEXT_CHOICE="$CONFIG_DIR/flash-local-context"; YARN_JSON="$CONFIG_DIR/flash-local-yarn.json"; CONTEXT_GIVEN=""
 if [ -n "${FLASH_LOCAL_CONTEXT+set}" ]; then
   case "$FLASH_LOCAL_CONTEXT" in
-    1m) mkdir -p "$CONFIG_DIR" && echo 1m > "$CONTEXT_CHOICE" ;;
-    ""|native) rm -f "$CONTEXT_CHOICE"; FLASH_LOCAL_CONTEXT=native ;;
+    1m) ;;
+    ""|native) FLASH_LOCAL_CONTEXT=native ;;
     *) die "FLASH_LOCAL_CONTEXT=$FLASH_LOCAL_CONTEXT: native (262,144 tokens, the default) or 1m (1,048,576 by YaRN)" ;;
   esac
+  CONTEXT_GIVEN=1
 elif [ "$(head -1 "$CONTEXT_CHOICE" 2>/dev/null)" = 1m ]; then
   FLASH_LOCAL_CONTEXT=1m
 else
   FLASH_LOCAL_CONTEXT=native
 fi
-MAXLEN=262144; YARN_ARG=""
-if [ "$FLASH_LOCAL_CONTEXT" = 1m ]; then
-  MAXLEN=1048576
-  # read by the unit's start from its file: the JSON on the unit's own line would go through systemd's quoting
-  YARN_ARG="--hf-overrides \"\$\$(cat $CONFIG_DIR/flash-local-yarn.json)\""
-fi
-# The overrides the 1M window takes, from the pinned checkpoint's own RoPE: refused when it is not the one measured
+# The overrides the 1M window takes, from the pinned checkpoint's own RoPE, written to YARN_JSON only when they change
+# (its date tells a lane that serves whether it runs them, vlane_put_unit). 0: written, 1: refused (the RoPE is not the
+# one measured, or a stage has no checkpoint), 2: no checkpoint in the cache yet, which a Load fetches.
 flash_local_yarn(){
   local cfg="$HF_CACHE/hub/models--${MODEL//\//--}/snapshots/$MODEL_REV/config.json"
-  # a lane installed on demand renders its unit before its checkpoint is there: its Load (the stage, after the fetch)
-  # writes the file; a stage without the checkpoint's config is refused, as its unit would start without it
   if [ ! -f "$cfg" ]; then
     [ "$MODE" != stage ] || { echo "FLASH_LOCAL_CONTEXT=1m: no config.json in $(dirname "$cfg")" >&2; return 1; }
-    return 0
+    return 2
   fi
-  python3 - "$cfg" "$CONFIG_DIR/flash-local-yarn.json" <<'PY'
+  python3 - "$cfg" "$YARN_JSON" <<'PY' || return 1
 import json, sys
 c = json.load(open(sys.argv[1])); t = c.get("text_config", c); r = dict(t.get("rope_parameters") or {})
 want = {"rope_type": "default", "mrope_interleaved": True, "mrope_section": [11, 11, 10],
@@ -228,8 +225,16 @@ want = {"rope_type": "default", "mrope_interleaved": True, "mrope_section": [11,
 if t.get("max_position_embeddings") != 262144 or any(r.get(k) != v for k, v in want.items()):
     sys.exit("FLASH_LOCAL_CONTEXT=1m: the pinned checkpoint's RoPE is not the one the 1M window was measured on")
 r.update(rope_type="yarn", factor=4.0, original_max_position_embeddings=262144)
-json.dump({"text_config": {"rope_parameters": r, "max_position_embeddings": 1048576}}, open(sys.argv[2], "w"),
-          separators=(",", ":"))
+text = json.dumps({"text_config": {"rope_parameters": r, "max_position_embeddings": 1048576}}, separators=(",", ":"))
+try:
+    same = open(sys.argv[2]).read() == text
+except OSError:
+    same = False
+if not same:
+    with open(sys.argv[2] + ".new", "w") as f:
+        f.write(text)
+    import os
+    os.replace(sys.argv[2] + ".new", sys.argv[2])
 PY
 }
 TABLE_MOUNTS=""
@@ -251,17 +256,34 @@ lane_table(){  # $1 copy: make the copies whole first; mounts: only name the cop
 # The unit, rendered for this box: written to $1. Its start checks what the engine reads before it runs: the
 # checkpoint's index at the pinned revision, and each copy of the table its mounts name.
 render_unit(){
-  [ "$FLASH_LOCAL_CONTEXT" != 1m ] || flash_local_yarn || die "the 1M window's overrides could not be written (the line above says why)"
+  local maxlen=262144 yarn="" rc=0
+  if [ "$FLASH_LOCAL_CONTEXT" = 1m ]; then
+    flash_local_yarn || rc=$?
+    case "$rc" in
+      0) maxlen=1048576
+         # read by the unit's start from its file: the JSON on the unit's own line would go through systemd's quoting
+         yarn="--hf-overrides \"\$\$(cat $YARN_JSON)\"" ;;
+      2) echo "NOTE: FLASH_LOCAL_CONTEXT=1m: the checkpoint is not in the cache yet, so the unit keeps the native window" \
+              "until the lane's Load, which fetches it and sets the 1M window" ;;
+      *) die "the 1M window's overrides could not be written (the line above says why). Nothing was changed: the lane" \
+             "keeps its window, and FLASH_LOCAL_CONTEXT=native ./install-flash-local.sh --units-only sets the native one" ;;
+    esac
+  fi
+  RENDERED_MAXLEN="$maxlen"
   local index="$HF_CACHE/hub/models--${MODEL//\//--}/snapshots/$MODEL_REV/model.safetensors.index.json" sources
   sources="$( { grep -oE -- '-v [^ :]+:' <<< "$TABLE_MOUNTS" || true; } | sed -e 's/^-v //' -e 's/:$//' | tr '\n' ' ')"
   sed -e "s|__CHECKPOINT_INDEX__|$index|g" -e "s|__TABLE_SOURCES__|${sources% }|g" \
       -e "s|__USER__|$(id -un)|g" -e "s|__GROUP__|$(id -gn "$(id -un)")|g" -e "s|__HOME__|$HOME|g" \
       -e "s|__IMAGE__|$LOCAL_IMAGE|g" -e "s|__MODEL__|$MODEL|g" -e "s|__REV__|$MODEL_REV|g" \
       -e "s|__GMU__|$GMU|g" -e "s|__SEQS__|$SEQS|g" -e "s|__HF_CACHE__|$HF_CACHE|g" \
-      -e "s|__MAXLEN__|$MAXLEN|g" -e "s|__YARN__|$YARN_ARG|g" \
+      -e "s|__MAXLEN__|$maxlen|g" -e "s|__YARN__|$yarn|g" \
       -e "s|__ENGINE_BIND__|$ENGINE_BIND|g" -e "s|__PORT__|$PORT|g" \
       -e "s|__TABLE_MOUNTS__|$TABLE_MOUNTS|g" -e '/^ *\\$/d' \
       "$HERE/$UNIT.template" > "$1"
+  # the choice given, kept for the runs after (a Load stages the unit with none of the user's environment)
+  if [ -n "$CONTEXT_GIVEN" ]; then
+    if [ "$FLASH_LOCAL_CONTEXT" = 1m ]; then mkdir -p "$CONFIG_DIR" && echo 1m > "$CONTEXT_CHOICE"; else rm -f "$CONTEXT_CHOICE"; fi
+  fi
 }
 
 # Step 4, the one part that needs root: the unit and its start scripts. A function, since a lane
@@ -282,8 +304,10 @@ install_service(){
   RENDER="$(mktemp)"; trap 'rm -f "$RENDER"' EXIT
   render_unit "$RENDER"
   # with what the engine reads at its start besides the unit: a lane started before they changed
-  # serves the old ones (vllm-lane.sh)
-  vlane_put_unit "$RENDER" "$CONFIG_DIR/seccomp-io-uring.json" "$TEMPLATE"
+  # serves the old ones (vllm-lane.sh); the 1M window's overrides among them when its unit reads them
+  local starts=("$CONFIG_DIR/seccomp-io-uring.json" "$TEMPLATE")
+  [ "$RENDERED_MAXLEN" = 262144 ] || starts+=("$YARN_JSON")
+  vlane_put_unit "$RENDER" "${starts[@]}"
   # Installed, not switched to: the lane this box serves stays the lane it serves.
   echo "installed as a lane of its own. Switch to it like any lane:"
   echo "  the cockpit: Load on Qwen3.8 Flash-Next FP4-Local in the Lanes view"

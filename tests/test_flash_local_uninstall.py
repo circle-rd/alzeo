@@ -31,7 +31,8 @@ class TheUninstall(unittest.TestCase):
         self.cfg = self.home / ".config" / "qwen38"
         self.cfg.mkdir(parents=True)
         (self.cfg / "vllm-auth").mkdir()
-        for f in ("chat-template-flash-local.jinja", "seccomp-io-uring.json", "flash-local-files.sh"):
+        for f in ("chat-template-flash-local.jinja", "seccomp-io-uring.json", "flash-local-files.sh",
+                  "flash-local-context", "flash-local-yarn.json"):
             (self.cfg / f).write_text("x\n")
         self.sd = self.d / "systemd"
         self.sd.mkdir()
@@ -89,7 +90,10 @@ class TheUninstall(unittest.TestCase):
         f = self.folder(self.home / "flash-local-ple", [A, B])
         self.run_block()
         self.assertFalse(f.exists())
-        for gone in ("chat-template-flash-local.jinja", "seccomp-io-uring.json", "flash-local-files.sh"):
+        # the 1M window's choice and overrides too: kept, a later install came back to it unasked (code review of
+        # v1.45.2)
+        for gone in ("chat-template-flash-local.jinja", "seccomp-io-uring.json", "flash-local-files.sh",
+                     "flash-local-context", "flash-local-yarn.json"):
             self.assertFalse((self.cfg / gone).exists(), gone)
 
     def test_a_folder_with_no_list_is_left_alone(self):

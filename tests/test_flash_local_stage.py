@@ -403,6 +403,70 @@ class TheMillionTokenWindow(unittest.TestCase):
         self.assertNotEqual(rc, 0, out)
         self.assertIn("native (262,144 tokens, the default) or 1m", out)
 
+    def test_a_refused_choice_is_not_kept_and_the_refusal_says_how_to_go_back(self):
+        # the choice was kept before its overrides were checked: one refused try left every Load after it refused,
+        # and nothing said how to go back (code review of v1.45.2)
+        moved = json.loads(json.dumps(self.CONFIG))
+        moved["text_config"]["rope_parameters"]["mrope_section"] = [16, 24, 24]
+        (self.snap / "config.json").write_text(json.dumps(moved))
+        rc, out = self.box.stage(FLASH_LOCAL_PLE_DIR="none", FLASH_LOCAL_CONTEXT="1m")
+        self.assertNotEqual(rc, 0, out)
+        self.assertIn("FLASH_LOCAL_CONTEXT=native ./install-flash-local.sh --units-only", out)
+        self.assertFalse((self.cfg / "flash-local-context").exists())
+        rc, out = self.box.stage(FLASH_LOCAL_PLE_DIR="none")          # the Load after it
+        self.assertEqual((rc, self.window()), (0, "262144"), out)
+
+    def test_a_unit_put_in_before_its_checkpoint_keeps_the_native_window_until_its_load(self):
+        # --units-only (an update, a lane installed on demand) renders the unit before the checkpoint is in the cache:
+        # the unit took the 1M window and named overrides no run had written, and its start failed (code review of
+        # v1.45.2). The installer's own lines from the choice to the render run here, as --units-only runs them.
+        (self.snap / "config.json").unlink()
+        text = (REPO / "install-flash-local.sh").read_text()
+        part = text[text.index('CONTEXT_CHOICE="$CONFIG_DIR/flash-local-context"'):
+                    text.index("# Step 4, the one part that needs root")]
+        unit = self.box.t / "units-only.service"
+        script = "\n".join(["set -euo pipefail", 'die(){ echo "die: $*"; exit 1; }', f'HERE="{REPO}"',
+                            "UNIT=qwen38-flash-local.service", f'CONFIG_DIR="{self.cfg}"', f'HF_CACHE="{self.box.hf}"',
+                            f'MODEL="{PINS["FLASH_LOCAL_REPO"]}"', f'MODEL_REV="{PINS["FLASH_LOCAL_REV"]}"', "MODE=units",
+                            "LOCAL_IMAGE=img GMU=0.8 SEQS=8 ENGINE_BIND=127.0.0.1 PORT=30000",
+                            part, f'render_unit "{unit}"'])
+        r = subprocess.run(["bash", "-c", script], capture_output=True, text=True, timeout=60,
+                           env={"PATH": "/usr/bin:/bin", "HOME": str(self.box.home), "FLASH_LOCAL_CONTEXT": "1m"})
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("--max-model-len 262144 ", unit.read_text())
+        self.assertNotIn("--hf-overrides", unit.read_text())
+        self.assertIn("the checkpoint is not in the cache yet", r.stdout + r.stderr)
+        self.assertEqual((self.cfg / "flash-local-context").read_text(), "1m\n")
+        # its Load, the checkpoint fetched, sets the 1M window
+        (self.snap / "config.json").write_text(json.dumps(self.CONFIG))
+        rc, out = self.box.stage(FLASH_LOCAL_PLE_DIR="none")
+        self.assertEqual((rc, self.window()), (0, "1048576"), out)
+
+    def test_the_overrides_keep_their_date_when_they_do_not_change(self):
+        # a lane that serves is told it runs older files when one is newer than its start (vlane_put_unit): written
+        # again at every run, the overrides would have said so after every update
+        rc, out = self.box.stage(FLASH_LOCAL_PLE_DIR="none", FLASH_LOCAL_CONTEXT="1m")
+        self.assertEqual(rc, 0, out)
+        y = self.cfg / "flash-local-yarn.json"
+        os.utime(y, (1_000_000_000, 1_000_000_000))
+        rc, out = self.box.stage(FLASH_LOCAL_PLE_DIR="none")
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(y.stat().st_mtime, 1_000_000_000)
+        y.write_text("{}")                                            # and changed, they are written again
+        os.utime(y, (1_000_000_000, 1_000_000_000))
+        rc, out = self.box.stage(FLASH_LOCAL_PLE_DIR="none")
+        self.assertEqual(rc, 0, out)
+        self.assertNotEqual(y.stat().st_mtime, 1_000_000_000)
+        self.assertIn('"factor":4.0', y.read_text())
+
+    def test_a_lane_that_serves_is_told_when_its_overrides_changed(self):
+        # vlane_put_unit is handed what the engine reads at its start: the overrides too, when its unit reads them
+        text = (REPO / "install-flash-local.sh").read_text()
+        body = text[text.index("install_service(){"):]
+        body = body[:body.index("\n}\n")]
+        self.assertIn('[ "$RENDERED_MAXLEN" = 262144 ] || starts+=("$YARN_JSON")', body)
+        self.assertIn('vlane_put_unit "$RENDER" "${starts[@]}"', body)
+
     def test_the_pinned_checkpoint_is_the_one_measured(self):
         # the real pinned config, where the box has it: the RoPE the 1M window was measured on (2026-11-09)
         real = pathlib.Path.home() / ".cache/huggingface/hub" / HUB / "snapshots" / PINS["FLASH_LOCAL_REV"] / "config.json"
