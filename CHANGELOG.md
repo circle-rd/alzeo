@@ -5,12 +5,13 @@
 **The cockpit says where a client sends its requests.** Nothing on the page said what to give a client: the address,
 the model, the key. A "Connect a client" panel in the Now view says it, ready to copy: the OpenAI address
 (`http://<the address you opened the cockpit by>:30001/v1`) and the Anthropic one, the model that serves, and where the
-key is (the cockpit's login, in `~/.config/qwen38/api-key` on the box), never the key itself. On a proxy that listens on
+key is (the cockpit's login, in `~/.config/qwen38/api-key` on the box, or with client keys on, one of them: the proxy
+then refuses any other), never the key itself. On a proxy that listens on
 the box alone (`PROXY_BIND=127.0.0.1`) it says so, and how to open it, and with a certificate it says https. Opened
 on the box itself, it lists the addresses another machine reaches the box by, the tailnet's first. Its buttons copy
 the address, `claude-local` (which sets Claude Code up for the lane that serves) and a test request that reads the key
 from its file, and it links every client's setup (docs/clients.md). The cockpit reads the proxy's port, interface,
-certificate and client keys from its unit every 30 s, and nothing else of that unit, whose environment holds keys,
+certificate and client keys from its unit and its environment files every 30 s, and nothing else of them, which hold keys,
 and the box's addresses from `ip`, container bridges left out.
 
 **An update no longer cuts the Agent tab.** The installer fits opencode's limits to the KV pool of the boot that serves,
@@ -26,7 +27,8 @@ pages and the lane pages name each version as its makers publish it (Qwen3.8 27B
 abliterated NVFP4 · dealignai, Qwen3.8 Flash-Next FP4-Local · NVIDIA...) with the engine each lane runs and its version
 (SGLang 0.5.22, SGLang nightly 53295c6, vLLM b12x build 8244d1c, vLLM 0.29.0 + Aleph Alpha plugin 1.0.0, vLLM nightly
 77154ca6 + b12x 1.5.1, SGLang Diffusion 0.5.21). The installers, switch-model.sh and uninstall.sh say "the Qwen3.8
-Flash-Next FP4-Local lane", and install.sh's summary of the lanes "Flash-Next" where it said "Flash 176B". The ids
+Flash-Next FP4-Local lane" and name its Load button as the cockpit does, install.sh's summary of the lanes says
+"Flash-Next" where it said "Flash 176B", and its other sentences "Qwen3.8 27B" and "Qwen3.8 Flash-Next". The ids
 commands take (`stock`, `uncensored`, `flash`, `flash-local`...) do not change.
 
 **What an update does.** The update runs the new get.sh. The cockpit restarts and serves the new page. The engine and
