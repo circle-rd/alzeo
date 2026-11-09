@@ -574,21 +574,21 @@ if [ "$CHOICE" = "flash-local" ]; then
     # the pair and the window of the unit just staged: 1,048,576 tokens with FLASH_LOCAL_CONTEXT=1m (v1.45.2)
     FLL_WINDOW="$({ grep -oE -- '--max-model-len [0-9]+' "$FLASH_LOCAL_UNIT" 2>/dev/null || true; } | awk 'NR == 1 {print $2}')"
     FLL_PAIR="$("$REPO_DIR/oc-limits.sh" flash-local --from "$FLASH_LOCAL_UNIT")" || FLL_PAIR=""
+    read -r FLL_CTX FLL_OUT _ <<< "$FLL_PAIR"
     FLL_NAME="$(python3 "$REPO_DIR/oc-point-default.py" --label flash-local "${FLL_WINDOW:-262144}" || true)"
     FLL_PORT="$({ grep -m1 -oE 'PROXY_PORT=[0-9]+|keepalive-proxy.py [0-9]+' /etc/systemd/system/qwen38-keepalive.service 2>/dev/null || true; } | grep -oE '[0-9]+$' || true)"
     FLL_SRC="$(mktemp)"
     if [ -n "$FLL_PAIR" ] && python3 "$REPO_DIR/oc-flash-local.py" "http://127.0.0.1:${FLL_PORT:-30001}/v1" "$CONFIG_DIR/api-key" \
-         "${FLL_PAIR%% *}" "$(echo "$FLL_PAIR" | cut -d' ' -f2)" "${FLL_NAME:-Qwen3.8-Flash-Next FP4-Local (local, 262K)}" > "$FLL_SRC"; then
+         "$FLL_CTX" "$FLL_OUT" "${FLL_NAME:-Qwen3.8-Flash-Next FP4-Local (local, 262K)}" > "$FLL_SRC"; then
       # The compaction block is global: sized from this lane's window as every text switch sizes
       # it from its own. pi's keepRecentTokens follows (pi-gen).
-      FLL_KEEP="$("$REPO_DIR/oc-limits.sh" --preserve "${FLL_PAIR%% *}")" || FLL_KEEP=""
+      FLL_KEEP="$("$REPO_DIR/oc-limits.sh" --preserve "$FLL_CTX")" || FLL_KEEP=""
       for OC_JSON in "$CONFIG_DIR/opencode.json" "$HOME/.config/opencode/opencode.json"; do
         [ -f "$OC_JSON" ] || continue
         python3 "$REPO_DIR/oc-merge-limits.py" "$OC_JSON" --add-providers "$FLL_SRC" >/dev/null || true
         # and an entry already there takes the pair of the unit's window: --add-providers adds a missing provider only,
         # and a Load to 1M kept 205,000 under a compaction block sized for 840,000 (second review of v1.45.2)
-        python3 "$REPO_DIR/oc-merge-limits.py" "$OC_JSON" flash-local qwen3.8-flash-next-fp4 "${FLL_PAIR%% *}" \
-          "$(echo "$FLL_PAIR" | cut -d' ' -f2)" >/dev/null \
+        python3 "$REPO_DIR/oc-merge-limits.py" "$OC_JSON" flash-local qwen3.8-flash-next-fp4 "$FLL_CTX" "$FLL_OUT" >/dev/null \
           || echo "NOTE: could not update the Qwen3.8 Flash-Next FP4-Local limits in $OC_JSON; check them by hand ($FLL_PAIR)"
         python3 "$REPO_DIR/oc-point-default.py" "$OC_JSON" flash-local flash-local "${FLL_WINDOW:-262144}" \
           || echo "NOTE: could not update $OC_JSON (hand-edited?); set its \"model\" field yourself"

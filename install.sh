@@ -83,7 +83,9 @@ _ENV_DRAFT2_REPO="${DRAFT2_REPO:-}"; _ENV_DRAFT2_REV="${DRAFT2_REV:-}"
 _ENV_DRAFT2_QUANT="${DRAFT2_QUANT:-}"; _ENV_DRAFT2_TOKENS="${DRAFT2_TOKENS:-}"
 # FLASH_LOCAL_CONTEXT, the Qwen3.8 Flash-Next FP4-Local lane's window, is set by its own installer and a Load: this run
 # sizes the clients from the lane's unit before it renders that unit again, so a window chosen here would have reached
-# the unit and not the clients (second review of v1.45.2). The window kept from before goes on as it was.
+# the unit and not the clients (second review of v1.45.2). Not read, the unit rendered again serves the window it served:
+# it changes only when its checkpoint is not in the cache (a pin moved), and that unit starts no engine before the Load
+# that fetches the checkpoint and sets the clients for its window (flash-local-files.sh, switch-model.sh).
 if [ -n "${FLASH_LOCAL_CONTEXT+set}" ]; then
   printf 'NOTE: FLASH_LOCAL_CONTEXT is not read by ./install.sh: run FLASH_LOCAL_CONTEXT=%s ./install-flash-local.sh --units-only,\n      then Load the lane (docs/flash-local-lane.md). This run keeps the window chosen before.\n' "$FLASH_LOCAL_CONTEXT"
   unset FLASH_LOCAL_CONTEXT
