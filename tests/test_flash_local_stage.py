@@ -532,7 +532,8 @@ class TheMillionTokenWindow(unittest.TestCase):
         # the real pinned config, where the box has it: the RoPE the 1M window was measured on (2026-11-09)
         real = pathlib.Path.home() / ".cache/huggingface/hub" / HUB / "snapshots" / PINS["FLASH_LOCAL_REV"] / "config.json"
         if not real.exists():
-            self.skipTest("the pinned FP4-Local checkpoint is not on this machine")
+            # a reason the CI lists (ci.yml): the runner never has the checkpoint, the reference box does
+            self.skipTest("needs the pinned bytes cached (the FP4-Local checkpoint's config.json at its pinned revision)")
         t = json.loads(real.read_text())["text_config"]
         self.assertEqual(t["max_position_embeddings"], 262144)
         self.assertEqual({k: t["rope_parameters"][k] for k in self.CONFIG["text_config"]["rope_parameters"]},
