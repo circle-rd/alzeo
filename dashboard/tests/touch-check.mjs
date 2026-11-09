@@ -166,6 +166,19 @@ try {
     const x = r.left + r.width / 2, y = r.top + r.height / 2, t = document.elementFromPoint(x, y);
     const who = t ? (t.id ? '#' + t.id : t.tagName.toLowerCase() + (typeof t.className === 'string' && t.className.trim() ? '.' + t.className.trim().split(/\\s+/).join('.') : '')) : 'nothing';
     return { x, y, self: !!t && (t === e || e.contains(t)), who }; })()`);
+  // the same aim, again until two in a row agree: a drawer still settling (its slide, its scroll to the item) moved
+  // the item between the aim and the tap, and on a loaded machine "settings" was tapped where "logs" now stood (the
+  // local CI of v1.45.0, 2026-11-08, its captures running beside it; 264 of 264 when run alone)
+  const aimStill = async sel => {
+    let a = await aim(sel);
+    for (let i = 0; i < 12 && a; i++) {
+      await sleep(80);
+      const b = await aim(sel);
+      if (b && Math.abs(a.x - b.x) < 0.5 && Math.abs(a.y - b.y) < 0.5) return b;
+      a = b;
+    }
+    return a;
+  };
   const state = () => evalJs(`JSON.stringify({ view: document.body.dataset.view, hash: location.hash,
     open: document.body.classList.contains('railopen'), current: (document.querySelector('.rail .nav[aria-current="page"]') || {}).dataset?.view || null,
     shown: [...document.querySelectorAll('.view.active')].map(s => s.id) })`).then(JSON.parse);
@@ -233,7 +246,7 @@ try {
     await sleep(350);   // the drawer's slide-in, so the items are where a finger lands
     for (const v of VIEWS) {
       if (!(await state()).open) { const mb = await aim('#menubtn'); await tapXY(mb.x, mb.y); await waitFor("document.body.classList.contains('railopen')", 3000); await sleep(350); }
-      const a = await aim(`.rail .nav[data-view="${v}"]`);
+      const a = await aimStill(`.rail .nav[data-view="${v}"]`);
       ok(`${d.name}: the ${v} item is the element under a finger`, a && a.self, a && a.who);
       if (!a) continue;
       await tapXY(a.x, a.y);
@@ -280,7 +293,7 @@ try {
   await device(DESKTOP, false);
   await evalJs("(setRailMin(false), showView('now'), 1)"); await sleep(200);
   for (const v of VIEWS) {
-    const a = await aim(`.rail .nav[data-view="${v}"]`);
+    const a = await aimStill(`.rail .nav[data-view="${v}"]`);
     if (a) { await clickXY(a.x, a.y); await sleep(250); }
     const s = await state();
     ok(`${DESKTOP.name}: a click on ${v} shows ${v}`, a && a.self && s.view === v && s.current === v, a ? a.who + ' ' + JSON.stringify(s) : 'not rendered');
