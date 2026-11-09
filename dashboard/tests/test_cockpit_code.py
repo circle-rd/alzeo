@@ -133,12 +133,19 @@ class Fingerprint(unittest.TestCase):
             "ExecStart=/bin/bash -c 'exec docker run eugr/spark-vllm-b12x@sha256:" + "0" * 64 + " vllm serve x \\\n"
             "    --max-model-len 1048576 --max-num-seqs 8 \\\n    --host 127.0.0.1 --port 30000'\n")
         old_dir, self.ck.UNIT_DIR = self.ck.UNIT_DIR, d
+        ei = self.ck._engine_inputs()
+        read, old_read = [], ei._read
+        ei._read = lambda f: (read.append(f), old_read(f))[1]
         try:
             table = self.ck.engine_table()
         finally:
             self.ck.UNIT_DIR = old_dir
+            ei._read = old_read
         self.assertEqual(table["qwen38-flash-local.service"]["window"], 1048576)
         self.assertIsNone(table["qwen38-sglang.service"]["window"], "no unit file there: nothing said")
+        # read once, for its window and for what its engine starts (code review of v1.45.2: twice every 30 s)
+        self.assertNotIn(str(d / "qwen38-flash-local.service"), read)
+        self.assertIs(table["qwen38-flash-local.service"]["pinned"], False, "its image is not the pin")
 
     def test_quiet_when_nothing_moved(self):
         self.assertEqual(self.ck.code_is_stale(), [])

@@ -224,7 +224,7 @@ on('engine_info', d => {
   // the version the serving engine reports, which engineLabel says for its lane (decision 1178)
   // its unit: the target it names, or the lane that serves when it names none (a checkpoint no pin names)
   const liveUnit = d.served_target ? TARGET_UNIT(d.served_target) : (servingEngine() || [])[0];
-  F.liveEngine = liveUnit && i.version ? {unit: liveUnit, version: i.version} : null;
+  F.liveEngine = liveUnit && i.version ? {unit: liveUnit, version: i.version, window: i.context_length || 0} : null;
   // which engine, named as everywhere else on the page: SGLang gives a bare number, the Kolibri lane "vLLM 0.29.0"
   // (the row read "SGLang vLLM 0.29.0" there: review, 2026-10-14), the flash lane's nightly "0.0.0.dev1+g53295c697"
   const named = F.liveEngine ? engineLabel(F.liveEngine.unit) : '';

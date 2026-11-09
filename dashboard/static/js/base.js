@@ -274,10 +274,13 @@ function nameParts(full, unit){
 // table, which its tests check against the installers' pins. 'SGLang 0.5.22'; '' for a unit with none. The lane that
 // serves says the version its engine reports (engine_info): when that is not the one the pinned image reports (an
 // image of the operator's), the engine's own word is said, never the pin's.
-// a lane's kind with the window its unit runs, where that is the 1M one its installer offers (FLASH_LOCAL_CONTEXT=1m,
-// discussion #63): the words of LANE_META say the native window, and said "262K" of a lane serving 1,048,576
+// a lane's kind with the window it runs, where that is the 1M one its installer offers (FLASH_LOCAL_CONTEXT=1m,
+// discussion #63): the words of LANE_META say the native window, and said "262K" of a lane serving 1,048,576. The lane
+// that serves says its engine's window (engine_info), the others the one their unit starts with: a unit staged again
+// while its lane serves names a window its engine does not run yet (code review of v1.45.2)
 const laneKind = unit => {
-  const k = LANE_META[unit].kind, w = ((F.engineTable || {})[unit] || {}).window;
+  const k = LANE_META[unit].kind, live = F.liveEngine && F.liveEngine.unit === unit ? F.liveEngine.window : 0;
+  const w = live > 0 ? live : ((F.engineTable || {})[unit] || {}).window;
   return w >= 1000000 && /262K tokens/.test(k) ? k.replace('262K tokens', '1M tokens') : k;
 };
 function engineLabel(unit){

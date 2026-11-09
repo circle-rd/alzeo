@@ -53,11 +53,12 @@ def _unit_text(raw):
     return b"".join(ln for ln in raw.splitlines(keepends=True) if not UNIT_DEP_KEYS.match(ln.decode("utf-8", "replace")))
 
 
-def inputs(unit, config_dir, hf_cache, ckpts):
-    """(files, image refs, container names) the engine of this unit reads at start."""
+def inputs(unit, config_dir, hf_cache, ckpts, text=None):
+    """(files, image refs, container names) the engine of this unit reads at start. `text`: the unit's own, when the
+    caller has read it already (the cockpit's engine table, which reads its window there)."""
     config_dir = config_dir.rstrip("/")
     files = [unit] + sorted(glob.glob(unit + ".d/*.conf"))
-    texts = [_read(f) for f in files]
+    texts = [_read(unit) if text is None else text] + [_read(f) for f in files[1:]]
     cfg = re.escape(config_dir)
     for script in sorted(set(re.findall(cfg + r"/[A-Za-z0-9._-]+\.sh", "\n".join(texts)))):
         if os.path.isfile(script) and os.path.basename(script) not in NOT_INPUTS:

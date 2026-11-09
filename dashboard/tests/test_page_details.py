@@ -1087,5 +1087,24 @@ class ALaneSaysTheWindowItsUnitRuns(unittest.TestCase):
         self.assertEqual(r["native"], "Text and images, 262K tokens of context")
         self.assertEqual(r["wide"], "Text and images, 1M tokens of context")
 
+    def test_the_lane_that_serves_says_its_engines_window(self):
+        # a unit staged again while its lane serves names a window its engine does not run yet: the page said "1M" of
+        # an engine serving 262,144 (code review of v1.45.2). The lane that serves says its engine's, the unit the others
+        r = run(self, r"""
+        const row = (window) => ({engine: 'vLLM', version: 'b12x build 8244d1c', label: 'vLLM b12x build 8244d1c', pin: 'p',
+                                  reports: 'x', pinned: true, window});
+        const U = JSON.parse(JSON.stringify(UNITS)); U.units['qwen38-flash-local.service'] = {active: 'active', enabled: 'enabled'};
+        const life2 = life({'qwen38-flash-local.service': eng('ready')});
+        feed({config: CONFIG, units: U, lifecycle: life2, engine_table: {table: {'qwen38-flash-local.service': row(1048576)}}});
+        feed({engine_info: {served_target: null, info: {context_length: 262144, version: '0.20.1'}}});
+        feed({lifecycle: life2, engine_table: {table: {'qwen38-flash-local.service': row(1048576)}}});
+        const restaged = BAYS.get('qwen38-flash-local.service').kind.textContent;
+        feed({engine_info: {served_target: null, info: {context_length: 1048576, version: '0.20.1'}}});
+        feed({lifecycle: life2, engine_table: {table: {'qwen38-flash-local.service': row(262144)}}});
+        report({restaged, wide: BAYS.get('qwen38-flash-local.service').kind.textContent});
+        """)
+        self.assertEqual(r["restaged"], "Text and images, 262K tokens of context")
+        self.assertEqual(r["wide"], "Text and images, 1M tokens of context")
+
 if __name__ == "__main__":
     unittest.main()
