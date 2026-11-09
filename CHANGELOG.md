@@ -1,6 +1,6 @@
 # Changelog
 
-## v1.45.0 (2026-11-08): the cockpit names each lane's engine and each version by its official name, and fits every screen
+## v1.45.0 (2026-11-09): the cockpit names each lane's engine and each version by its official name, and fits every screen
 
 **Each lane says its engine and its version.** The cockpit names the engine each lane runs, with its version, wherever
 the lane appears: first on the second line of the header's capsule ("SGLang 0.5.22 · idle, KV pool 3 %, up 2 h"), at
@@ -69,6 +69,12 @@ one of its modules, was not watched. A test reads the cockpit's imports and fail
 
 **What an update does.** The update runs the new get.sh. The cockpit restarts and serves the new page. Nothing else
 this release ships is read by an engine, the proxy or the Agent tab's opencode-web.
+
+**After the push.** GitHub's CI passed on 396b028, 89 steps, none skipped. The reference box updated in 1 min 37 s by
+the README's command (get.alzeo.ai): the engine, the proxy and the Agent tab's opencode-web kept running, as nothing
+they read changed and opencode's limits already fitted the pool, and the cockpit restarted. On the 27B the production
+checks passed, and so did the eight real clients: Claude Code, opencode, Hermes, pi, the OpenAI and Anthropic SDKs,
+fetch under Node and under Bun, and LiteLLM. The cockpit showed no banner on any of its views.
 
 ## v1.44.3 (2026-11-08): the local CI starts every job, and its pair tests take 16% less time
 
