@@ -63,7 +63,7 @@ builds on its published config,
 takes its measurements as its DGX Spark reference, and it is listed in
 [awesome-dgx-spark](https://github.com/bidual/awesome-dgx-spark).
 
-![The cockpit's Now view: one pool of unified memory and what holds it, and the eight lanes in their rack with their makers' marks, the serving one edged in green](docs/img/cockpit-now.png)
+![The cockpit's Now view: one pool of unified memory and what holds it, then the lanes in their rack with their makers' marks, the serving one edged in green, and Qwen4 27B to come](docs/img/cockpit-now.png)
 
 *The cockpit, installed by default: one pool of unified memory, lanes that take turns in it, and the whole box run from a browser, on a laptop or a phone.*
 
@@ -202,7 +202,7 @@ cd ~/dgx-spark-qwen38
 ./bench.sh              # verify your tok/s
 ```
 
-First boot takes **~7-9 minutes** for a 27B target (CUDA graph capture and kernel compilation; later boots about 7 to 8 minutes on the reference box, a median of 7 min 26 s over its last five, as the cockpit's Lanes view counts them) and **~12-15 minutes** for a flash target, every boot: the server writes the whole 47.7 GiB N-gram table into its file each time (measured here: 12 min 21 s to `/health` on a fresh table). The Qwen3.8 Flash-Next FP4-Local lane writes no table: 17 minutes at its first boot, while b12x tunes its kernels for this GPU, then about 5 and a half. With `--all-weights` the install then proves each other lane it built, one after the other while the served one waits, and brings it back; a plain install leaves each to its first Load. Then:
+First boot takes **~7-9 minutes** for a 27B target (CUDA graph capture and kernel compilation; later boots 3.5 to 6.5 minutes on the reference box for the default NVFP4 · RadixArk, a median of 3 min 43 s over its last twelve, and about 7 to 8 minutes for its abliterated and FP8 versions, as the cockpit's Lanes view counts them) and **~12-15 minutes** for a flash target, every boot: the server writes the whole 47.7 GiB N-gram table into its file each time (measured here: 12 min 21 s to `/health` on a fresh table). The Qwen3.8 Flash-Next FP4-Local lane writes no table: 17 minutes at its first boot, while b12x tunes its kernels for this GPU, then about 5 and a half. With `--all-weights` the install then proves each other lane it built, one after the other while the served one waits, and brings it back; a plain install leaves each to its first Load. Then:
 
 - **opencode**: ready config at `~/.config/qwen38/opencode.json`, see [opencode integration](docs/opencode.md)
 - **The address to copy**: the cockpit's Now view gives it, with the model that serves and where the key is ("Connect a client")

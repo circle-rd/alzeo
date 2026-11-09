@@ -34,8 +34,10 @@ taken for the checkpoint's refusal and the window the page said: each is fixed, 
 before.
 
 **The docs.** The cockpit's tour (docs/cockpit.md) and the clients page (docs/clients.md) start from the "Connect a
-client" panel. The README gives the later boots as measured (median 7 min 26 s) and the 27B's speed of today, 65 to 68
-tokens a second.
+client" panel. The README gives the 27B's later boots as the cockpit counts them on the reference box (3.5 to 6.5
+minutes for the default version, a median of 3 min 43 s over twelve, about 7 to 8 for its abliterated and FP8 versions) and
+its speed of today, 65 to 68 tokens a second. Its two captures of the cockpit are of v1.45.1, with the name Alzeo and
+each version's official name: they were of v1.37.0.
 
 **The tests.** The finger test of the cockpit's drawer aims again until two aims in a row agree, then taps: on a loaded
 machine the drawer was still settling, and "settings" was tapped where "logs" then stood.

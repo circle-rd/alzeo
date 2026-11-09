@@ -1,7 +1,7 @@
 # When an engine stops: what the box does, measured
 
 An engine that dies is started again by systemd, and a boot takes minutes: about 7.5 on the
-27B lane and 11 on the flash lane in the runs below (the README gives 5 to 9 and 12 to 15).
+27B lane and 11 on the flash lane in the runs below (the README gives 3.5 to 9 and 12 to 15).
 This page says what happens in that time, to the box and to
 the clients, and what v1.21.0 added so that a restart can neither freeze the machine nor end
 an agent's session. Every number here was measured on the reference box (DGX Spark, driver
@@ -131,7 +131,7 @@ The same units tell the proxy that the engine behind it is a new one. What it re
 engine (the KV pool, the longest prompt the engine accepts, the model names it serves) it keeps
 600 s, and until v1.22.14 only a request that found the engine gone dropped them: after a lane
 switch made while no request came, a lane that boots in less than those 600 s served its first
-minutes under the stopped lane's (the 27B boots in about 7 min on the reference box: for up to
+minutes under the stopped lane's (the 27B booted in about 7 min on the reference box then: for up to
 2.5 min it refused every prompt past the flash lane's 250,000-token ceiling, and `/v1/systemone`
 answered as the flash), and a restart of the 27B kept the pool of the boot before. systemd
 gives every start of a unit a new invocation id; the proxy asks for the ids of
