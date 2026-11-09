@@ -169,7 +169,7 @@ The README is the entry point. Everything longer lives next to it, one subject p
                          +-----------------------------+
 ```
 
-The engine answers `/health` even when it is wedged, so the cockpit runs a real generation canary and reports `ready`, `loading`, `wedged` or `stopped` from that. Everything privileged the cockpit can do (unit start/stop/restart, lane switch, flush, abort) goes through an exact-argv sudoers allowlist and is audited. The Agent view frames opencode's own web interface behind the cockpit login, so sessions on the box run from a laptop or a phone with no terminal. Full tour: [docs/cockpit.md](docs/cockpit.md). Since v1.12 it is **installed by the one-liner like everything else**: when the installer finishes it prints the URL, and that page is where this box is meant to be driven from. `--no-cockpit` opts out, and the choice sticks.
+The engine answers `/health` even when it is wedged, so the cockpit runs a real generation canary and reports `ready`, `loading`, `wedged` or `stopped` from that. Everything privileged the cockpit can do (unit start/stop/restart, lane switch) goes through an exact-argv sudoers allowlist, flush and abort are calls with the box's key, and every action is audited. The Agent view frames opencode's own web interface behind the cockpit login, so sessions on the box run from a laptop or a phone with no terminal. Full tour: [docs/cockpit.md](docs/cockpit.md). Since v1.12 it is **installed by the one-liner like everything else**: when the installer finishes it prints the URL, and that page is where this box is meant to be driven from. `--no-cockpit` opts out, and the choice sticks.
 
 ## Quickstart
 
@@ -316,9 +316,8 @@ v1.9 wins every row of the frozen battery against v1.2 except eval-style math (o
 | Independent users on this config | **92-94/100** tool-calling ([forum thread](https://forums.developer.nvidia.com/t/380257)) |
 | Losslessness | token-identity study vs the pure model in BENCHMARKS.md ("The losslessness study") |
 
-On the engine it runs today (SGLang 0.5.22, since v1.39.0), the same lane scored **98.4%** and **99.6%** on GSM8K's
-first 250 problems in two runs on the reference box (2026-11-03 and 2026-11-07, the comparisons that kept 0.5.22 against
-0.5.23).
+On the engine it runs today (SGLang 0.5.22 without torch.compile, as v1.44.0 serves it), the same lane scored **99.2%**
+on GSM8K's first 250 problems (2026-11-05, BENCHMARKS.md).
 
 And the flash lane (`flash`, the RadixArk export), measured on this box on 2026-09-18 at the
 `context` tier, every eval run against the serving surface this repo installs:
@@ -811,7 +810,7 @@ native context, or watch host `MemAvailable` if you run it at 1M.
 The flash target is Qwen3.8-Flash-Next (Qwen4-generation preview: 176B hybrid
 MoE, 6B active, QSA sparse attention, multimodal) in RadixArk's NVFP4, served
 by SGLang with the model's own NEXTN/MTP speculative head and a working radix
-(prefix) cache. The five text units publish the same port and are never enabled
+(prefix) cache. The seven text units publish the same port and are never enabled
 together: switching targets flips which unit starts at boot, the API surface
 and the keepalive proxy stay put.
 
@@ -892,7 +891,7 @@ systemctl status qwen38-keepalive       # keepalive proxy state
 systemctl status qwen38-dashboard       # cockpit state, if you installed it
 python3 conc-check.py                   # does this lane still answer correctly at concurrency 8
 python3 systemone-check.py              # /v1/systemone: every shape, every refusal, mixed with ordinary chat
-sudo systemctl restart qwen38-sglang    # 27B: ~5-7 min boot; the radix (prefix) cache starts empty
+sudo systemctl restart qwen38-sglang    # 27B: ~3.5-6.5 min boot; the radix (prefix) cache starts empty
 sudo systemctl restart qwen38-flash     # flash: ~12-15 min boot (weight load, and the PLE table written from scratch)
 journalctl -u qwen38-sglang -f          # server logs (or the unit of the lane that serves)
 journalctl -u qwen38-keepalive -f       # one line per proxied request (bytes, first/last event, outcome)
@@ -911,7 +910,7 @@ extras, and what an upgrade from an earlier version actually does:
 ## The cockpit (installed by default)
 
 A local dashboard for this stack: what is served right now, whether it is healthy for real, and
-the handful of actions you would otherwise type by hand. Single-file stdlib backend, no pip and no
+the handful of actions you would otherwise type by hand. A stdlib backend (cockpit.py and six modules beside it), no pip and no
 venv. Since v1.12 `install.sh` installs it as step 10/10, once the engine has answered a real
 generation, and prints its URL as the last thing it says:
 
@@ -940,7 +939,7 @@ question you had when you opened the page.
 | **Lanes** | Which lanes exist, which one serves, each one's versions by their official names and its engine with its version, what the probes and containers say, the engine's facts and the proxy | Act on any lane this repo installed: Load runs the switch-stop-start journey in one path |
 | **Traffic** | What the engine and the proxy each did with the same traffic: live feed, abandoned-request guard, pool and decode, and the last 5 minutes from the engine's own counters (prompt tokens from the cache, decode speed, first token, tokens per second) | Read a dead decode from both sides of the wire |
 | **Machine** | Unified memory, the GB10, the CPU, and whether the safety belts are holding | Watch the memory edge this hardware actually has |
-| **Library** | Every target as data: recipes and the engine each runs, drift against what is running, registry of what is on disk, upstream watch, full inventory | Read what is installed and what it costs in bytes; rescan (the panels are read-only: `./uninstall.sh --list` shows the same inventory, and `./uninstall.sh` prints the reclaim commands) |
+| **Library** | Every target as data: recipes and the engine each runs, drift against what is running, registry of what is on disk, upstream watch, full inventory | Read what is installed and what it costs in bytes; rescan, download a target's checkpoint, delete the stray revisions (`./uninstall.sh --list` shows the same inventory, and `./uninstall.sh` prints the reclaim commands) |
 | **Decide** | The typed-decisions endpoint, from a browser: is it served, and what does it answer? | Ask the lane with prefilled examples, copy the matching curl, read the probabilities |
 | **Image** | Qwen-Image 2.1, when it is the serving lane: generation, editing with up to ten references, native RGBA | Generate and edit at the model's defaults (**Reset**), start from the sample prompts, follow each stage of a request, copy the matching curl |
 | **Video** | MiniMax-H3, when it is the serving lane: text to video with joint video-and-audio, first/last-frame conditioning | Generate at the cookbook's defaults (**Reset**), follow the request to completed, play and download the MP4, copy the matching curl |

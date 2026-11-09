@@ -30,7 +30,7 @@ does.
 
 ## The start guard (`engine-preflight.sh`)
 
-Every engine unit (27B, flash, image, video) runs it before its engine. It waits up to 60 s
+Every engine unit (the 27B, the flash lane, the five vLLM lanes, image and video) runs it before its engine. It waits up to 60 s
 and refuses the start while it finds:
 
 - **GPU memory still held by what is left of an engine**: an SGLang process (its title is
@@ -97,7 +97,7 @@ engines, with the real clients:
 | Claude Code 2.1.286 (`claude-qwen`) | 11 attempts, 30 to 38 s apart, then fails at 325 s | waits, takes the answer, 1 request | sends it again without streaming |
 
 So every engine restart ended every session it caught, in both clients. Now a request that finds the
-engine not answering, while `qwen38-sglang.service` or `qwen38-flash.service` is starting,
+engine not answering, while one of the seven text lanes' units is starting,
 waiting for its next attempt, up, or in the stop half of a restart (the unit "deactivating"
 under a `restart` job), waits for it (`PROXY_HOLD_UNITS`, at most `PROXY_HOLD_MAX_S`, 1200 s,
 both in the proxy's unit):

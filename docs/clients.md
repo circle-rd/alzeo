@@ -118,7 +118,7 @@ model with the flash lane's chat template, so a client sees the Qwen levels belo
 `medium` and `xhigh`, with one difference: a request that names no level gets `xhigh`, its model
 card's default. `none` turns the reasoning off there too (the proxy says it in the template's words,
 v6.43). Its reasoning comes in the `reasoning` field (vLLM's name), it reads images sent inside the
-request (a data URL) and fetches no URL, and its window is 262,144 tokens. `/v1/systemone` is not
+request (a data URL) and fetches no URL, and its window is 262,144 tokens (1,048,576 with `FLASH_LOCAL_CONTEXT=1m`, docs/flash-local-lane.md). `/v1/systemone` is not
 served on it: the endpoint says which lanes serve it.
 
 The Nemotron lanes (vLLM, [docs/nemotron-lane.md](nemotron-lane.md) and
@@ -149,7 +149,7 @@ lane cannot serve comes back refused rather than silently cut. The proxy
 refuses a prompt past 92% of the lane's KV pool (`OVERSIZE_MARGIN_FRAC`, 0.08)
 with a 400 `context_too_long` (`code: context_length_exceeded`, the code
 opencode compacts on), whose message names the count, the limit and the pool;
-while the flash lane serves, the limit is also held under its one-prompt
+while a flash lane serves at its 262K window (Flash-Next, or FP4-Local without its 1M option), the limit is also held under its one-prompt
 ceiling (`FLASH_PROMPT_CEILING_TOKENS`, 250,000 by default), which keeps a long
 flash prefill off the memory edge. The engine itself refuses a request whose
 prompt plus `max_tokens` passes its window (262,144 tokens, 1,010,000 in 1M
@@ -274,9 +274,9 @@ below (`0` turns a ceiling off).
   sent it again without a stream, which it gave up on after about 6 minutes:
   a long answer never came, and the proxy's hold during a restart could not
   keep such a request alive (measured on the reference box, 2026-10-02);
-  `700000` lets a session grow past the window. On the flash lane: `205000`
-  with `CLAUDE_CODE_EXTRA_BODY='{"max_tokens":32000}'`, the limits opencode uses
-  there; a launcher can pick the pair by the lane that serves
+  `700000` lets a session grow past the window. On the flash lane: `228000`
+  (opencode's 205,000 plus the 23,000 Claude Code keeps below its setting) with
+  `CLAUDE_CODE_EXTRA_BODY='{"max_tokens":32000}'`, the limits opencode uses there; a launcher can pick the pair by the lane that serves
   (`systemctl is-active --quiet qwen38-flash.service`).
 
   The idle-timeout variables are the difference between "hangs" and "slow";

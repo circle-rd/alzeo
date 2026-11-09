@@ -249,7 +249,7 @@ table's copies when they are needed, and starts it: 17 to 19 minutes for the fir
 kernels for this GPU, about 5 min 30 s after. From a terminal: `./prepare-lane.sh flash-local` the
 first time, then `./switch-model.sh flash-local`. `--with-flash-local` installs it whole at install
 time and proves it, `--no-flash-local` leaves it out of that run, and `./install-flash-local.sh
---uninstall` removes its unit, its caches, its patched template, its filter, its check of its files,
+--uninstall` removes its unit, its caches, its patched template, its filter (kept while the Ornith 1.5 122B lane, which reads it too, is installed), its check of its files,
 its image's pin tag and the table's copies. The image and the checkpoint stay, and it prints how to
 delete them.
 

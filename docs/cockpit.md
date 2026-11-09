@@ -6,7 +6,7 @@ The full tour. The README carries the short version: what the cockpit is, how it
 
 A local dashboard for this stack: what is served right now, whether it is
 healthy for real, and the handful of actions you would otherwise type by hand.
-Single-file stdlib backend, no pip and no venv. Since v1.12 `install.sh`
+A stdlib backend (cockpit.py and six modules beside it), no pip and no venv. Since v1.12 `install.sh`
 installs it as step 10/10, once the engine has answered a real generation, and
 prints its URL as the last thing it says. You do not run anything else:
 
