@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Keepalive proxy in front of SGLang or vLLM (v6.53). No content logging, and the only
+"""Keepalive proxy in front of SGLang or vLLM (v6.54). No content logging, and the only
 rewriting is the tool-schema guard (role 4); two routes, POST /v1/systemone (role 5) and the
 operator's POST /proxy/stop (role 7), are answered here instead of relayed.
 
@@ -59,6 +59,9 @@ Ten roles, nothing else:
    lists every box's models (see "Two boxes behind one endpoint" below). A model both boxes serve is
    shared: a conversation stays on the box that holds its prefix, a new one goes to the box with the
    fewest requests in flight (v6.52, docs/pair.md).
+
+v6.54: the Qwen3.8 Flash-Next FP4-Local lane at its 1M window (FLASH_LOCAL_CONTEXT=1m, v1.45.2) has no flash ceiling:
+its engine's window, read with its pool, says so, and its prompts are bounded by the pool's share (wide_fp4_local).
 
 v6.53: an SSE answer's end is read as its engine sends it, whatever its client's pace (v1.44.0, decisions 1106 to
 1109). The thread that reads the engine never waits for the one that writes the client: the answer waits in a spool
@@ -845,9 +848,24 @@ def lane_ceiling():
             served = set(served_models())
         except EngineUnreachable:
             served = set()
-        if not served or served & FLASH_SERVED_NAMES:
+        if not served or (served & FLASH_SERVED_NAMES and not wide_fp4_local(served)):
             ceiling = FLASH_PROMPT_CEILING_TOKENS if ceiling <= 0 else min(ceiling, FLASH_PROMPT_CEILING_TOKENS)
     return ceiling
+
+
+def wide_fp4_local(served):
+    """True when what serves is the FP4-Local lane at its 1M window (FLASH_LOCAL_CONTEXT=1m, v1.45.2), which its
+    engine says (max_model_len past the native 262,144): measured to 1,036,576 tokens with 15.1 GiB of memory left
+    (2026-11-09), its prompts are bounded by the pool's share, not by the flash ceiling, which kept a long prefill of
+    the SGLang flash lane off the memory edge. The flash ceiling refused every prompt past 250,000 at that window
+    (code review of v1.45.2)."""
+    if not served & QWEN_VLLM_NAMES or served & (FLASH_SERVED_NAMES - QWEN_VLLM_NAMES):
+        return False
+    try:
+        pool_tokens()
+    except Exception:  # noqa: BLE001 (an engine not read keeps the ceiling)
+        return False
+    return (_POOL["window"] or 0) > 262144
 
 
 def wedge_possible(pool):
@@ -9191,7 +9209,7 @@ if __name__ == "__main__":
     holds = (f"holds requests up to {HOLD_MAX_S:.0f}s while {' or '.join(HOLD_UNITS)} comes back"
              if HOLD_UNITS and HOLD_MAX_S > 0 else "holds nothing")
     # one f-string: the cockpit's tests render this line from the source
-    log(f"v6.53 on {BIND}:{port} -> {UPSTREAM} (keepalive {KEEPALIVE_S:.0f}s, max silence {MAX_SILENCE_S:.0f}s, {holds})")
+    log(f"v6.54 on {BIND}:{port} -> {UPSTREAM} (keepalive {KEEPALIVE_S:.0f}s, max silence {MAX_SILENCE_S:.0f}s, {holds})")
     # v6.47: what the memory floor's refusal reads, read once here, so the journal shows it works where
     # the unit runs this proxy (its sandbox leaves /proc/meminfo readable)
     avail = mem_available_gib()

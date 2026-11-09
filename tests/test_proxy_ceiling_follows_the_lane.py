@@ -66,9 +66,26 @@ class TheProxyReadsTheServedLane(unittest.TestCase):
             with self.subTest(prompt=prompt, flash=flash, served=served):
                 m = proxy_module(prompt, flash)
                 m.served_models = lambda s=served: s
+                m.pool_tokens = lambda: 900000          # never the engine on the box (its port serves)
                 self.assertEqual(m.lane_ceiling(), want)
                 limit = m.prompt_limit(900000)
                 self.assertEqual(limit, min(int(900000 * (1 - m.OVERSIZE_MARGIN_FRAC)), want or 10 ** 9))
+
+    def test_the_fp4_local_lane_at_1m_has_no_flash_ceiling(self):
+        # FLASH_LOCAL_CONTEXT=1m (v1.45.2): its engine's window is past 262,144, and the flash ceiling refused every prompt
+        # past 250,000 there (code review of v1.45.2); at its native window it keeps the flash ceiling
+        for window, want in ((1048576, 0), (262144, 250000), (None, 250000)):
+            with self.subTest(window=window):
+                m = proxy_module(0, 250000)
+                m.served_models = lambda: ("qwen3.8-flash-next-fp4",)
+                m.pool_tokens = lambda: 1061819
+                m._POOL["window"] = window
+                self.assertEqual(m.lane_ceiling(), want)
+        m = proxy_module(0, 250000)                      # the SGLang flash lane keeps it, whatever its window
+        m.served_models = lambda: ("qwen3.8-flash-next",)
+        m.pool_tokens = lambda: 400384
+        m._POOL["window"] = 1048576
+        self.assertEqual(m.lane_ceiling(), 250000)
 
     def test_an_unreachable_engine_counts_as_unknown(self):
         m = proxy_module(0, 250000)
@@ -86,16 +103,22 @@ class TheFitToolAndTheCockpitAgree(unittest.TestCase):
             env = f"Environment=UPSTREAM=http://127.0.0.1:30000 PROMPT_CEILING_TOKENS={prompt} FLASH_PROMPT_CEILING_TOKENS={flash}"
             with self.subTest(prompt=prompt, flash=flash, served=served):
                 self.assertEqual(fit.ceiling_from_env(env, served[0] if served else None), want)
+        # and at the FP4-Local lane's 1M window, as the proxy decides (v1.45.2)
+        env = "Environment=UPSTREAM=http://127.0.0.1:30000 PROMPT_CEILING_TOKENS=0 FLASH_PROMPT_CEILING_TOKENS=250000"
+        self.assertEqual(fit.ceiling_from_env(env, "qwen3.8-flash-next-fp4", 1048576), 0)
+        self.assertEqual(fit.ceiling_from_env(env, "qwen3.8-flash-next-fp4", 262144), 250000)
+        self.assertEqual(fit.ceiling_from_env(env, "qwen3.8-flash-next", 1048576), 250000)
 
     def test_the_cockpit_asks_the_fit_tool(self):
         cockpit = (REPO / "dashboard/cockpit.py").read_text()
         block = cockpit[cockpit.index("def collect_engine_info():"):cockpit.index("CANARY: dict =")]
         # one reading of it for the SGLang lanes' panel and the vLLM lanes' (proxy_prompt_ceiling,
         # since the Qwen3.8 Flash-Next FP4-Local lane, which the proxy holds to the flash lane's ceiling)
-        self.assertIn('proxy_prompt_ceiling(slim.get("served_model_name"))', block)
-        helper = cockpit[cockpit.index("def proxy_prompt_ceiling(served)"):]
+        # with the engine's window: the FP4-Local lane at 1M has no flash ceiling (v1.45.2)
+        self.assertIn('proxy_prompt_ceiling(slim.get("served_model_name"), int(slim.get("context_length") or 0))', block)
+        helper = cockpit[cockpit.index("def proxy_prompt_ceiling(served"):]
         helper = helper[:helper.index("\n\n\n")]
-        self.assertIn('_oc_fit().ceiling_from_env(env or "", served)', helper)
+        self.assertIn('_oc_fit().ceiling_from_env(env or "", served, window)', helper)
         self.assertEqual(cockpit.count("ceiling_from_env("), 1, "one reading of the ceiling")
 
 

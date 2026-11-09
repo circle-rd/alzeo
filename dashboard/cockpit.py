@@ -1100,7 +1100,7 @@ def collect_engine_info():
             served_target = VAR2TARGET[var]
             break
     # the one-prompt ceiling the proxy applies to the model that serves (proxy_prompt_ceiling)
-    ceiling = proxy_prompt_ceiling(slim.get("served_model_name"))
+    ceiling = proxy_prompt_ceiling(slim.get("served_model_name"), int(slim.get("context_length") or 0))
     return {"node_id": "local", "info": slim, "prompt_ceiling_tokens": ceiling,
             "served_target": served_target}
 
@@ -1166,17 +1166,17 @@ def nemotron_engine_info(models: list | None = None):
     # the one-prompt ceiling the proxy applies to it, read as for the SGLang lanes: the Flash
     # FP4-Local lane gets the flash lane's (proxy v6.43), and 0 read there instead said that no
     # ceiling held while the proxy refused prompts past 250,000 (found in review, 2026-10-19)
-    return {"node_id": "local", "info": slim, "prompt_ceiling_tokens": proxy_prompt_ceiling(slim.get("served_model_name")),
+    return {"node_id": "local", "info": slim, "prompt_ceiling_tokens": proxy_prompt_ceiling(slim.get("served_model_name"), int(slim.get("context_length") or 0)),
             "served_target": target}
 
 
-def proxy_prompt_ceiling(served) -> int:
+def proxy_prompt_ceiling(served, window: int = 0) -> int:
     """The one-prompt ceiling the proxy applies to the model that serves, as deployed in the
     keepalive unit (0 = pool share only): the fit tool's own reading of it, so the two cannot
     disagree (the flash lane's ceiling follows that lane since proxy v6.25)."""
     env = run(["systemctl", "show", "qwen38-keepalive.service", "-p", "Environment"], timeout=5)
     try:
-        return _oc_fit().ceiling_from_env(env or "", served)
+        return _oc_fit().ceiling_from_env(env or "", served, window)
     except Exception:  # noqa: BLE001 (a missing fit tool must not darken the panel)
         m = re.search(r"(?<![A-Z_])PROMPT_CEILING_TOKENS=(\d+)", env or "")
         return int(m.group(1)) if m else 0

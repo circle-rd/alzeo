@@ -169,7 +169,7 @@ def fit(pool: int, ceiling: int = 0, window: int = 0,
 FLASH_SERVED_NAMES = ("qwen3.8-flash-next", "qwen3.8-flash-next-fp4")
 
 
-def ceiling_from_env(text: str, served=None) -> int:
+def ceiling_from_env(text: str, served=None, window: int = 0) -> int:
     """The one-prompt ceiling the proxy applies to the `served` model, out of
     `systemctl show -p Environment` output: PROMPT_CEILING_TOKENS on any lane, and
     FLASH_PROMPT_CEILING_TOKENS while the flash lane serves (v6.25), the proxy's own rule
@@ -194,7 +194,10 @@ def ceiling_from_env(text: str, served=None) -> int:
                     values[key] = 0
     ceiling = values.get("PROMPT_CEILING_TOKENS", 0)
     flash = values.get("FLASH_PROMPT_CEILING_TOKENS", 0)
-    if flash > 0 and (not served or served in FLASH_SERVED_NAMES):
+    # the FP4-Local lane at its 1M window (FLASH_LOCAL_CONTEXT=1m, v1.45.2) gets no flash ceiling, as the proxy decides
+    # (wide_fp4_local): its engine's window says so
+    wide = served == "qwen3.8-flash-next-fp4" and window > 262144
+    if flash > 0 and (not served or served in FLASH_SERVED_NAMES) and not wide:
         ceiling = flash if ceiling <= 0 else min(ceiling, flash)
     return ceiling
 
@@ -227,8 +230,8 @@ def main(argv: list[str]) -> int:
         return 1
     env = subprocess.run(["systemctl", "show", "qwen38-keepalive.service", "-p", "Environment"],
                          capture_output=True, text=True).stdout
-    ceiling = ceiling_from_env(env, served)
     window = int(info.get("context_length") or 0)
+    ceiling = ceiling_from_env(env, served, window)
     cap = lane_cap(served) if 0 < window <= NATIVE_WINDOW else None
     context, output = fit(pool, ceiling, window, cap)
     # Rounding to the kilo bottoms out at zero on an implausibly small pool, and
