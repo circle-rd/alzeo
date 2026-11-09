@@ -1,5 +1,50 @@
 # Changelog
 
+## v1.45.2 (2026-11-09): the Flash-Next FP4-Local lane can serve a window of 1,048,576 tokens
+
+**A window of 1,048,576 tokens on the Qwen3.8 Flash-Next FP4-Local lane, as an option (discussion #63).** The model's
+card says it extends to 1,000,000 tokens and gives no recipe for it. `FLASH_LOCAL_CONTEXT=1m ./install-flash-local.sh
+--units-only`, then a Load of the lane, serves 1,048,576 tokens: YaRN, a factor of 4 over the native 262,144 with the
+model's multimodal RoPE kept, and `--max-model-len 1048576`, with the lane's own image, flags and memory share. Measured
+on the reference box: ready in 406 s, a KV pool of 1,061,819 tokens, a passphrase hidden in filler retrieved 8 times of
+8 at 131K, 262K, 524K and 1,036,576 tokens (608 s to the first token at the last), and at least 15.1 GiB of memory left.
+On GSM8K (250 questions, 8 at a time), where every prompt is short, the lane scores 96.8 % at its native window and
+97.6 % with YaRN, the same within the noise of 250 questions, at the same speed (107 and 111 tokens a second out). It is
+not the default: its makers ship 262,144, and the 1M window is measured here on retrieval and on GSM8K only.
+`FLASH_LOCAL_CONTEXT=native` brings 262,144 back.
+
+The choice is kept for the Loads after, which stage the unit with none of your environment, and `--prepare` keeps it
+too, once checked against a checkpoint already in the cache. The unit reads its overrides at its start from `~/.config/qwen38/flash-local-yarn.json`, written from the pinned
+checkpoint's own RoPE and only when they change. A choice whose checkpoint has another RoPE than the one measured is
+refused, and nothing of it is kept. A choice kept from before that a checkpoint refuses serves the native window, and
+the Load says why. Any other fault, a config that does not parse or a file that cannot be written, stops the Load and
+says what it is. Before the checkpoint is in the cache, the unit keeps the native window, and the Load that fetches it
+sets the 1M one. `--uninstall` removes the choice and the overrides with the lane. `./install.sh` does not read
+`FLASH_LOCAL_CONTEXT` and says so: it sizes the clients from the lane's unit before it renders that unit again, so an
+update keeps the window chosen.
+
+At 1M, the proxy (v6.54) relays a prompt up to 92 % of the pool, about 976,000 tokens. The 250,000-token ceiling it
+keeps on this lane at its native window is for that window. It reads the engine's window on `/v1/models` with the names
+it serves, as the cockpit does. A Load gives opencode, pi and `claude-local` 840,000 tokens of context and 32,000 for
+the answer, in both opencode configs, whether the lane's entry was there or not, and keeps 205,000 verbatim at a
+compaction. That pair fits the cockpit's check with a pool 10 % smaller than the one measured. The cockpit's Lanes and
+Now views say 1M tokens of context, from the engine for the lane that serves and from its unit for the others. Three
+code reviews of the branch found the proxy's ceiling, the clients' limits, the choice kept before its check, a fault
+taken for the checkpoint's refusal and the window the page said: each is fixed, with a test that fails on the code
+before.
+
+**The docs.** The cockpit's tour (docs/cockpit.md) and the clients page (docs/clients.md) start from the "Connect a
+client" panel. The README gives the later boots as measured (median 7 min 26 s) and the 27B's speed of today, 65 to 68
+tokens a second.
+
+**The tests.** The finger test of the cockpit's drawer aims again until two aims in a row agree, then taps: on a loaded
+machine the drawer was still settling, and "settings" was tapped where "logs" then stood.
+
+**What an update does.** The proxy (v6.54) and the cockpit restart. The engine that serves keeps running. A box that
+has not chosen the 1M window keeps its FP4-Local unit as it was. An install and a Load now set opencode's limits for
+the FP4-Local lane as they do for the 27B and the flash lane: the native pair, 205,000 and 32,000, in place of numbers
+edited by hand, with a dated backup of the file.
+
 ## v1.45.1 (2026-11-09): the cockpit says where a client sends its requests, and an update no longer cuts the Agent tab
 
 **The cockpit says where a client sends its requests.** Nothing on the page said what to give a client: the address,

@@ -216,6 +216,7 @@ share, plus YaRN, a factor of 4 over the native 262,144 with the model's multimo
 | a passphrase hidden in filler, two trials at each depth | 8 of 8 retrieved: at 131K, 262K, 524K and 1,036,576 tokens |
 | time to the first token | 58 s at 131K, 122 s at 262K, 268 s at 524K, 608 s at 1.04M (about 1,700 tokens a second) |
 | memory available, lowest during the longest prompt | 15.1 GiB |
+| GSM8K, 250 questions, 8 at a time (short prompts) | 97.6 % with YaRN, 96.8 % at the native window: the same within the noise, at the same speed |
 
 ```bash
 cd ~/dgx-spark-qwen38 && FLASH_LOCAL_CONTEXT=1m ./install-flash-local.sh --units-only      # then Load the lane
@@ -238,7 +239,7 @@ At 1M, the proxy relays a prompt up to 92 % of the pool (about 976,000 tokens): 
 ceiling it keeps on this lane at its native window is for that window. The Load gives opencode, pi
 and `claude-local` a context of 840,000 tokens and 32,000 for the answer, which fit a pool 10 %
 smaller than the one measured, and the cockpit's Lanes and Now views say 1M tokens of context.
-It is not the default: YaRN applies its scaling to every prompt, short ones included.
+It is not the default: its makers ship 262,144, and the 1M window is measured here on retrieval and on GSM8K only.
 
 ## Installing, loading, removing
 
