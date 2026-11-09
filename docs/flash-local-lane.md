@@ -199,7 +199,7 @@ Machine view counts the refusals of the last hour.
   fit), and stopping the lane stops its generations.
 - System One (`/v1/systemone`) answers on the SGLang lanes only: this lane serves on vLLM, and the
   endpoint says to load one of them.
-- A 1M window by default: the model's own window is 262,144 tokens, which this lane serves whole,
+- No 1M window by default: the model's own window is 262,144 tokens, which this lane serves whole,
   as the card's command for a DGX Spark does. A window of 1,048,576 is an option, below.
 
 ## A window of 1,048,576 tokens: FLASH_LOCAL_CONTEXT=1m
@@ -229,7 +229,13 @@ of the lane, from the cockpit or `./switch-model.sh flash-local`, starts it with
 The choice is kept for the Loads after (a Load from the cockpit stages the unit with none of your
 environment). The unit reads its overrides from `~/.config/qwen38/flash-local-yarn.json` at its
 start, written from the pinned checkpoint's own RoPE, and the installer refuses the option when
-that RoPE is not the one measured. The cockpit's Lanes and Now views then say 1M tokens of context.
+that RoPE is not the one measured, and keeps nothing of it then. Before the checkpoint is in the
+cache, the unit keeps the native window: the Load that fetches it sets the 1M one.
+
+At 1M, the proxy relays a prompt up to 92 % of the pool (about 976,000 tokens): the 250,000-token
+ceiling it keeps on this lane at its native window is for that window. The Load gives opencode, pi
+and `claude-local` a context of 840,000 tokens and 32,000 for the answer, which fit a pool 10 %
+smaller than the one measured, and the cockpit's Lanes and Now views say 1M tokens of context.
 It is not the default: YaRN applies its scaling to every prompt, short ones included.
 
 ## Installing, loading, removing
