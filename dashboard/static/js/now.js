@@ -249,7 +249,9 @@ function renderApi(){
   // with client keys, the proxy refuses every other key, the cockpit's login included (keepalive-proxy.py, its wall)
   const keySaid = d.client_keys ? "a client key of yours, from the proxy's keys file: it refuses any other, the cockpit's login included"
     : `the cockpit's login, in ${d.key_file} on the box`;
-  const keyArg = d.client_keys ? '$YOUR_CLIENT_KEY' : `$(cat ${d.key_file})`;
+  // the header through a descriptor, never an argument of curl's, where any local user reads it in /proc (the rule of
+  // tests/test_no_secret_in_argv.py, which caught this command at first)
+  const keyHeader = `@<(printf 'Authorization: Bearer %s\\n' "${d.client_keys ? '$YOUR_CLIENT_KEY' : `$(cat ${d.key_file})`}")`;
   const rows = [['OpenAI API', `${base}/v1`, 'wrap'], ['Anthropic API', base, 'wrap'], ['Model', modelSaid], ['Key', keySaid, 'wrap'],
     boxOnly ? ['Other machines', `the proxy listens on this box only (PROXY_BIND=${d.bind}): PROXY_BIND=0.0.0.0 ./install.sh opens it, the key still the gate`, 'wrap']
       : others.length ? ['From another machine', others.join('\n'), 'wrap lines'] : [null, null],
@@ -259,7 +261,7 @@ function renderApi(){
   // claude-local sets Claude Code up for the lane that serves (proxy, key, model, budgets: docs/clients.md); the test
   // reads the key from its file, on the box, and never shows it
   const items = [['Copy the address', `${base}/v1`], ['Copy for Claude Code, on the box', 'claude-local'],
-    ['Copy a test', `curl -s ${base}/v1/chat/completions -H "Authorization: Bearer ${keyArg}" -H 'Content-Type: application/json' -d '{"model":"${m}","messages":[{"role":"user","content":"Say ok."}],"max_tokens":8}'`]];
+    ['Copy a test', `curl -s ${base}/v1/chat/completions -H ${keyHeader} -H 'Content-Type: application/json' -d '{"model":"${m}","messages":[{"role":"user","content":"Say ok."}],"max_tokens":8}'`]];
   // the unit not read: the proxy's usual port, said as a guess (review of v1.45.1)
   const aside = !d.known ? 'its port not read: 30001 assumed' : boxOnly ? 'from this box only' : 'OpenAI and Anthropic APIs';
   // built again only when what it says changed: rebuilt at every tick of the lanes (2 s), a selection or a focus on
