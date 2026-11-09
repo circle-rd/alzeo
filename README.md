@@ -318,8 +318,8 @@ v1.9 wins every row of the frozen battery against v1.2 except eval-style math (o
 
 On the engine it runs today (SGLang 0.5.22 without torch.compile, as v1.44.0 serves it), SGLang's own GSM8K
 (`sglang.test.run_eval`, 250 problems, the test set's 6th to 255th after the five it shows as examples, 8 at a time)
-gives **99.2%** (2026-11-05, BENCHMARKS.md). It asks other problems than the table's 200, so the two scores are not a
-before and after.
+gives **99.2%** (2026-11-05, BENCHMARKS.md). The table's GSM8K is the v1.2.1 study's, 200 problems on that release's
+engine: the two scores are not a before and after.
 
 And the flash lane (`flash`, the RadixArk export), measured on this box on 2026-09-18 at the
 `context` tier, every eval run against the serving surface this repo installs:

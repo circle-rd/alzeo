@@ -277,9 +277,9 @@ below (`0` turns a ceiling off).
   keep such a request alive (measured on the reference box, 2026-10-02);
   `700000` lets a session grow past the window. On the flash lane: `228000`
   (opencode's 205,000 plus the 23,000 Claude Code keeps below its setting) with
-  `CLAUDE_CODE_EXTRA_BODY='{"max_tokens":32000}'`, so that Claude Code's prompts stop where opencode's do there;
-  a launcher can pick the pair by the lane that serves
-  (`systemctl is-active --quiet qwen38-flash.service`).
+  `CLAUDE_CODE_EXTRA_BODY='{"max_tokens":32000}'`, so that Claude Code's prompts stop where opencode's do there.
+  `claude-local` already takes the pair of the lane that serves from that lane's opencode limits (above); a
+  launcher of your own can do the same.
 
   The idle-timeout variables are the difference between "hangs" and "slow";
   they are named in issue #2 and in the failure family diagnosed in
