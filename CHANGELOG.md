@@ -1,5 +1,37 @@
 # Changelog
 
+## v1.45.3 (2026-11-09): the documentation says what the code does, and the site lives at alzeo.ai
+
+**Twelve statements the code contradicted, corrected.** An audit read the eight most-read pages (README.md,
+docs/cockpit.md, docs/clients.md, docs/operations.md, the two flash lanes' pages, docs/pair.md and
+docs/engine-restarts.md) against the code behind each claim, and every finding was checked again at its source before
+the fix:
+- `docs/operations.md`: keeping a box as it is takes a `--no-<lane>` for every lane the installer adds, the five vLLM
+  lanes included (`./install.sh --no-flash --no-image --no-video` alone still brought the units of Kolibri, Bolt, Super
+  VL, FP4-Local and Ornith); and only the SGLang lanes pass `--enable-metrics`, as vLLM serves `/metrics` by itself.
+- `docs/engine-restarts.md`: the proxy holds requests while any of the seven text lanes' units starts
+  (`PROXY_HOLD_UNITS`), not only the 27B's and the flash lane's, and the vLLM units run the preflight too.
+- `README.md`: the Library view downloads a target's checkpoint and deletes stray revisions (it said its panels were
+  read-only); the 27B boots in 3.5 to 6.5 minutes (one line still said 5 to 7); seven text units share the engine's
+  port, not five; flush and abort are calls with the box's key, not sudo; the cockpit's backend is cockpit.py and six
+  modules beside it, not a single file.
+- `docs/clients.md`: Claude Code's setting on the flash lane is `228000` (opencode's 205,000 plus the 23,000 Claude
+  Code keeps below its setting), as the same page's environment block and claude-local already gave; the FP4-Local
+  window has its 1M option since v1.45.2; the 250,000-token ceiling holds on either flash lane at its 262K window.
+- `docs/flash-local-lane.md`: `--uninstall` keeps the seccomp filter while the Ornith 1.5 122B lane, which reads it
+  too, is installed.
+- `docs/cockpit.md`: the same backend sentence as the README.
+
+**The 27B's quality on the engine it serves.** The README gives the 27B lane's GSM8K, IFEval and tool-calling scores
+measured with v1.2.1 (2026-08-20). It now adds the lane's GSM8K on SGLang 0.5.22 without torch.compile, as v1.44.0
+serves it: 99.2 % on the first 250 problems (2026-11-05, the run BENCHMARKS.md records).
+
+**The site's address.** The README links the project's site at https://alzeo.ai/, where hasso5703.github.io now
+redirects.
+
+**What changes on a box.** Documentation only: README.md and five pages of docs/. No script, unit, template, image or
+test changes. `tests/test_docs_facts.py`, which checks the pages' facts against the code, passes.
+
 ## v1.45.2 (2026-11-09): the Flash-Next FP4-Local lane can serve a window of 1,048,576 tokens
 
 **A window of 1,048,576 tokens on the Qwen3.8 Flash-Next FP4-Local lane, as an option (discussion #63).** The model's
