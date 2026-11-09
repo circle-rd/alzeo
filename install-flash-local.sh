@@ -215,21 +215,25 @@ keep_choice(){
   if [ "$FLASH_LOCAL_CONTEXT" = 1m ]; then mkdir -p "$CONFIG_DIR" && echo 1m > "$CONTEXT_CHOICE"; else rm -f "$CONTEXT_CHOICE"; fi
 }
 # The overrides the 1M window takes, from the pinned checkpoint's own RoPE, written to YARN_JSON only when they change
-# (its date tells a lane that serves whether it runs them, vlane_put_unit). 0: written, 1: refused (the RoPE is not the
-# one measured, or a stage has no checkpoint), 2: no checkpoint in the cache yet, which a Load fetches.
+# (its date tells a lane that serves whether it runs them, vlane_put_unit). 0: written, 2: no checkpoint in the cache yet,
+# which a Load fetches, 3: refused, the checkpoint's RoPE is not the one measured, 1: anything else (a stage with no
+# checkpoint, a file that cannot be read or written), which the line above it says.
 flash_local_yarn(){
   local cfg="$HF_CACHE/hub/models--${MODEL//\//--}/snapshots/$MODEL_REV/config.json"
   if [ ! -f "$cfg" ]; then
     [ "$MODE" != stage ] || { echo "FLASH_LOCAL_CONTEXT=1m: no config.json in $(dirname "$cfg")" >&2; return 1; }
     return 2
   fi
-  python3 - "$cfg" "$YARN_JSON" <<'PY' || return 1
+  local rc=0
+  python3 - "$cfg" "$YARN_JSON" <<'PY' || rc=$?
 import json, sys
 c = json.load(open(sys.argv[1])); t = c.get("text_config", c); r = dict(t.get("rope_parameters") or {})
 want = {"rope_type": "default", "mrope_interleaved": True, "mrope_section": [11, 11, 10],
         "partial_rotary_factor": 0.25, "rope_theta": 10000000}
 if t.get("max_position_embeddings") != 262144 or any(r.get(k) != v for k, v in want.items()):
-    sys.exit("FLASH_LOCAL_CONTEXT=1m: the pinned checkpoint's RoPE is not the one the 1M window was measured on")
+    print("FLASH_LOCAL_CONTEXT=1m: the pinned checkpoint's RoPE is not the one the 1M window was measured on",
+          file=sys.stderr)
+    sys.exit(3)
 r.update(rope_type="yarn", factor=4.0, original_max_position_embeddings=262144)
 text = json.dumps({"text_config": {"rope_parameters": r, "max_position_embeddings": 1048576}}, separators=(",", ":"))
 try:
@@ -242,6 +246,7 @@ if not same:
     import os
     os.replace(sys.argv[2] + ".new", sys.argv[2])
 PY
+  case "$rc" in 0|3) return "$rc" ;; *) return 1 ;; esac
 }
 TABLE_MOUNTS=""
 lane_table(){  # $1 copy: make the copies whole first; mounts: only name the copies already there
@@ -261,6 +266,10 @@ lane_table(){  # $1 copy: make the copies whole first; mounts: only name the cop
 
 # The unit, rendered for this box: written to $1. Its start checks what the engine reads before it runs: the
 # checkpoint's index at the pinned revision, and each copy of the table its mounts name.
+refuse_window(){
+  die "the 1M window's overrides could not be written (the line above says why). Nothing was changed: the lane keeps" \
+      "its window, and FLASH_LOCAL_CONTEXT=native ./install-flash-local.sh --units-only sets the native one"
+}
 render_unit(){
   local maxlen=262144 yarn="" rc=0
   if [ "$FLASH_LOCAL_CONTEXT" = 1m ]; then
@@ -271,13 +280,12 @@ render_unit(){
          yarn="--hf-overrides \"\$\$(cat $YARN_JSON)\"" ;;
       2) echo "NOTE: FLASH_LOCAL_CONTEXT=1m: the checkpoint is not in the cache yet, so the unit keeps the native window" \
               "until the lane's Load, which fetches it and sets the 1M window" ;;
-      *) # asked now: refused, and nothing kept. Kept from before (a Load, an update): the lane serves its native window
-         # and says why, and no Load fails for it (second review of v1.45.2)
-         [ -z "$CONTEXT_GIVEN" ] || die "the 1M window's overrides could not be written (the line above says why)." \
-           "Nothing was changed: the lane keeps its window, and FLASH_LOCAL_CONTEXT=native" \
-           "./install-flash-local.sh --units-only sets the native one"
+      3) # the checkpoint refuses it. Asked now: refused, and nothing kept. Kept from before (a Load, an update): the
+         # lane serves its native window and says why, and no Load fails for it (second review of v1.45.2)
+         [ -z "$CONTEXT_GIVEN" ] || refuse_window
          echo "NOTE: the 1M window chosen (FLASH_LOCAL_CONTEXT=1m) is off for this checkpoint: the unit serves the native" \
               "262,144 tokens. FLASH_LOCAL_CONTEXT=native ./install-flash-local.sh --units-only drops the choice" ;;
+      *) refuse_window ;;    # a fault, not the checkpoint's word: said as it is (third review of v1.45.2)
     esac
   fi
   local index="$HF_CACHE/hub/models--${MODEL//\//--}/snapshots/$MODEL_REV/model.safetensors.index.json" sources
@@ -381,7 +389,13 @@ pin_tag flash-local "$FLASH_LOCAL_IMAGE"
 unpin_stale flash-local "$FLASH_LOCAL_IMAGE" || true
 
 if [ "$MODE" = prepare ]; then
-  keep_choice     # its Load renders the unit, with the window chosen here (FLASH_LOCAL_CONTEXT)
+  # its Load renders the unit, with the window chosen here (FLASH_LOCAL_CONTEXT): checked first against a checkpoint
+  # already in the cache, as a render checks it (third review of v1.45.2)
+  if [ -n "$CONTEXT_GIVEN" ] && [ "$FLASH_LOCAL_CONTEXT" = 1m ]; then
+    rc=0; flash_local_yarn || rc=$?
+    [ "$rc" = 0 ] || [ "$rc" = 2 ] || refuse_window
+  fi
+  keep_choice
   step "Done: the Qwen3.8 Flash-Next FP4-Local lane's image is ready; its Load fetches the checkpoint and starts it"
   exit 0
 fi

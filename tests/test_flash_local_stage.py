@@ -482,13 +482,51 @@ class TheMillionTokenWindow(unittest.TestCase):
         self.assertIn("is off for this checkpoint", out)
         self.assertEqual((self.cfg / "flash-local-context").read_text(), "1m\n")
 
-    def test_prepare_keeps_the_choice_its_load_renders(self):
+    def run_lines(self, mode, tail, **env):
+        """The installer's own lines from the choice to the render, then `tail`, as `mode` runs them."""
+        text = (REPO / "install-flash-local.sh").read_text()
+        part = text[text.index('CONTEXT_CHOICE="$CONFIG_DIR/flash-local-context"'):
+                    text.index("# Step 4, the one part that needs root")]
+        script = "\n".join(["set -euo pipefail", 'die(){ echo "die: $*"; exit 1; }', "step(){ :; }", f'HERE="{REPO}"',
+                            "UNIT=qwen38-flash-local.service", f'CONFIG_DIR="{self.cfg}"', f'HF_CACHE="{self.box.hf}"',
+                            f'MODEL="{PINS["FLASH_LOCAL_REPO"]}"', f'MODEL_REV="{PINS["FLASH_LOCAL_REV"]}"', f"MODE={mode}",
+                            "LOCAL_IMAGE=img GMU=0.8 SEQS=8 ENGINE_BIND=127.0.0.1 PORT=30000", part, tail])
+        r = subprocess.run(["bash", "-c", script], capture_output=True, text=True, timeout=60,
+                           env={"PATH": "/usr/bin:/bin", "HOME": str(self.box.home), **env})
+        return r.returncode, r.stdout + r.stderr
+
+    def test_prepare_keeps_the_choice_its_load_renders_once_checked(self):
         # --prepare renders nothing: the choice given with it was dropped, and its Load served the native window with no
-        # word of it (second review of v1.45.2)
+        # word of it (second review of v1.45.2); then it kept one a checkpoint already in the cache refuses (third)
         text = (REPO / "install-flash-local.sh").read_text()
         block = text[text.index('if [ "$MODE" = prepare ]; then'):]
-        block = block[:block.index("\nfi\n")]
-        self.assertLess(block.index("keep_choice"), block.index("exit 0"))
+        block = block[:block.index("\nfi\n") + 4].replace("exit 0", ":")
+        moved = json.loads(json.dumps(self.CONFIG))
+        moved["text_config"]["rope_parameters"]["mrope_section"] = [16, 24, 24]
+        (self.snap / "config.json").write_text(json.dumps(moved))
+        rc, out = self.run_lines("prepare", block, FLASH_LOCAL_CONTEXT="1m")
+        self.assertNotEqual(rc, 0, out)
+        self.assertIn("RoPE is not the one the 1M window was measured on", out)
+        self.assertFalse((self.cfg / "flash-local-context").exists())
+        (self.snap / "config.json").write_text(json.dumps(self.CONFIG))
+        rc, out = self.run_lines("prepare", block, FLASH_LOCAL_CONTEXT="1m")
+        self.assertEqual(rc, 0, out)
+        self.assertEqual((self.cfg / "flash-local-context").read_text(), "1m\n")
+        (self.snap / "config.json").unlink()                         # not fetched yet: kept, its Load checks it
+        (self.cfg / "flash-local-context").unlink()
+        rc, out = self.run_lines("prepare", block, FLASH_LOCAL_CONTEXT="1m")
+        self.assertEqual((rc, (self.cfg / "flash-local-context").read_text()), (0, "1m\n"), out)
+
+    def test_a_fault_is_not_taken_for_the_checkpoints_refusal(self):
+        # a kept choice whose overrides cannot be written (a config that does not parse, a disk full) served the native
+        # window and said the checkpoint had refused it (third review of v1.45.2): the Load stops and says the fault
+        rc, out = self.box.stage(FLASH_LOCAL_PLE_DIR="none", FLASH_LOCAL_CONTEXT="1m")
+        self.assertEqual((rc, self.window()), (0, "1048576"), out)
+        (self.snap / "config.json").write_text("{ not json")
+        rc, out = self.box.stage(FLASH_LOCAL_PLE_DIR="none")          # a Load
+        self.assertNotEqual(rc, 0, out)
+        self.assertIn("could not be written", out)
+        self.assertNotIn("is off for this checkpoint", out)
 
     def test_the_pinned_checkpoint_is_the_one_measured(self):
         # the real pinned config, where the box has it: the RoPE the 1M window was measured on (2026-11-09)
