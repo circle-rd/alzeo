@@ -4,7 +4,7 @@
   <img src="docs/img/tour.webp" width="270" alt="The cockpit in ten seconds: a laptop and a phone driving the box, the live memory, a coding agent whose test passes, an image and a video made on the box, the seven lanes">
 </p>
 <p align="center"><a href="#see-it-in-49-seconds">Watch the 49-second tour, with sound</a></p>
-<p align="center"><a href="https://hasso5703.github.io/">The website: every model measured, guides, every GB10 machine</a></p>
+<p align="center"><a href="https://alzeo.ai/">The website: every model measured, guides, every GB10 machine</a></p>
 
 **Qwen3.8-27B at 65.2 to 68.5 tok/s with a 1M context, Qwen3.8 Flash-Next (176B) on a single box, images,
 video, Kolibri-1, Nemotron 3.5 Bolt, Nemotron 3.5 Super VL and Ornith 1.5 122B: installed and pinned by one command**, the lane that serves proved before it ends and every other built at its first Load, on a DGX Spark or another
@@ -315,6 +315,10 @@ v1.9 wins every row of the frozen battery against v1.2 except eval-style math (o
 | tool-eval-bench, 69 scenarios | **91/100** (Excellent), reproducible to the point across seeds |
 | Independent users on this config | **92-94/100** tool-calling ([forum thread](https://forums.developer.nvidia.com/t/380257)) |
 | Losslessness | token-identity study vs the pure model in BENCHMARKS.md ("The losslessness study") |
+
+On the engine it runs today (SGLang 0.5.22, since v1.39.0), the same lane scored **98.4%** and **99.6%** on GSM8K's
+first 250 problems in two runs on the reference box (2026-11-03 and 2026-11-07, the comparisons that kept 0.5.22 against
+0.5.23).
 
 And the flash lane (`flash`, the RadixArk export), measured on this box on 2026-09-18 at the
 `context` tier, every eval run against the serving surface this repo installs:
