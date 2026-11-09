@@ -3072,6 +3072,20 @@ def engine_table() -> dict:
     return table
 
 
+def collect_api() -> dict:
+    """Where a client sends its requests: the keepalive proxy's port, the interface it listens on, whether it speaks
+    TLS and whether it takes keys of its own, read from its unit as systemd runs it (Hasan, 2026-10-18: the address
+    to give a client, plain and in sight, for whoever reads nothing else). Only these four are taken from the unit,
+    whose environment holds keys: nothing else of it leaves this function. The host is the page's to add, the address
+    the browser reached the cockpit by, the one that works from there."""
+    show = run(["systemctl", "show", "qwen38-keepalive.service", "-p", "ExecStart", "-p", "Environment"], timeout=5) or ""
+    port = re.search(r"keepalive-proxy\.py (\d+)", show)
+    env = dict(re.findall(r"(?<![A-Za-z0-9_])(PROXY_BIND|QWEN38_TLS_CERT|QWEN38_CLIENT_KEYS_FILE)=(\S*)", show))
+    return {"node_id": "local", "known": bool(port), "port": int(port.group(1)) if port else 30001,
+            "bind": env.get("PROXY_BIND") or "0.0.0.0", "tls": bool(env.get("QWEN38_TLS_CERT")),
+            "client_keys": bool(env.get("QWEN38_CLIENT_KEYS_FILE")), "key_file": str(CONFIG_DIR / "api-key")}
+
+
 def collect_engine_table() -> dict:
     """Each lane's engine and its version, named the same way everywhere on the page (decision 1178): engine_table()
     every 30 s, the first time at the cockpit's start. Read once into the page's config, an install-<lane>.sh run
@@ -3091,7 +3105,8 @@ TIERS = [
     (5.0, {"metrics": collect_engine_metrics}),
     # the other box of a pair (decision 975), its own thread too: a box that went holds its read 8 s
     (5.0, {"pair": collect_pair}),
-    (30.0, {"engine_info": collect_engine_info, "engine_table": collect_engine_table, "repo": collect_repo,
+    (30.0, {"engine_info": collect_engine_info, "engine_table": collect_engine_table, "api": collect_api,
+            "repo": collect_repo,
             "kernel": collect_kernel,
             "lanes_ready": collect_lanes_ready, "lanes_startable": collect_lanes_startable,
             "opencode": collect_opencode, "reqguard": collect_guard,

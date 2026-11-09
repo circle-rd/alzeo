@@ -996,3 +996,34 @@ class LoadingALaneIsOneJourney(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AClientIsToldWhereToSendItsRequests(unittest.TestCase):
+    """Hasan (2026-10-18): the address to give a client, plain and in sight, for whoever reads nothing else. The Now
+    view says it with the model that serves and where the key is, ready to copy, and never shows the key."""
+
+    BODY = r"""
+    location.hostname = %s;
+    feed({config: CONFIG, units: UNITS, lifecycle: life({'qwen38-sglang.service': eng('ready')}),
+          engine_info: {served_target: 'stock', info: {served_model_name: 'qwen3.8-27b'}},
+          api: {known: true, port: 30001, bind: %s, tls: %s, client_keys: false, key_file: '/home/u/.config/qwen38/api-key'}});
+    report({facts: txt('api-facts'), aside: txt('api-aside'), buttons: [...$('api-copy').children].map(b => b.textContent)});
+    """
+
+    def test_the_address_the_page_was_reached_by_the_model_and_where_the_key_is(self):
+        r = run(self, self.BODY % ("'100.101.102.103'", "'0.0.0.0'", "false"))
+        self.assertIn("OpenAI APIhttp://100.101.102.103:30001/v1", r["facts"])
+        self.assertIn("Anthropic APIhttp://100.101.102.103:30001", r["facts"])
+        self.assertIn("Modelqwen3.8-27b", r["facts"])
+        self.assertIn("/home/u/.config/qwen38/api-key on the box", r["facts"])
+        self.assertNotIn("Other machines", r["facts"])
+        self.assertEqual(r["buttons"], ["Copy the address", "Copy for Claude Code, on the box", "Copy a test",
+                                        "Every client, step by step"])
+
+    def test_a_proxy_on_the_box_alone_says_so_and_tls_is_https(self):
+        r = run(self, self.BODY % ("'100.101.102.103'", "'127.0.0.1'", "false"))
+        self.assertIn("OpenAI APIhttp://127.0.0.1:30001/v1", r["facts"])
+        self.assertIn("Other machines", r["facts"])
+        self.assertEqual(r["aside"], "from this box only")
+        r = run(self, self.BODY % ("'box.example.ts.net'", "'0.0.0.0'", "true"))
+        self.assertIn("OpenAI APIhttps://box.example.ts.net:30001/v1", r["facts"])

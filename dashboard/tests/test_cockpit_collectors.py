@@ -1936,3 +1936,29 @@ class TheVllmLanesCountersAreReadToo(Base):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class WhereAClientSendsItsRequests(Base):
+    """Hasan (2026-10-18): the address to give a client, plain and in sight. collect_api reads the keepalive unit as
+    systemd runs it, whose environment holds keys: four fields leave it, nothing else."""
+
+    SHOW = ("ExecStart={ path=/usr/bin/python3 ; argv[]=/usr/bin/python3 /home/u/.config/qwen38/keepalive-proxy.py 30001 ; "
+            "ignore_errors=no ; start_time=[n/a] }\n"
+            "Environment=UPSTREAM=http://127.0.0.1:30000 PROXY_BIND=0.0.0.0 QWEN38_UPSTREAM_API_KEY=sekret-123 "
+            "QWEN38_TLS_CERT=/etc/ssl/box.pem QWEN38_CLIENT_KEYS_FILE=/home/u/.config/qwen38/client-keys\n")
+
+    def test_its_port_its_interface_its_tls_and_its_client_keys(self):
+        self.box({"show qwen38-keepalive.service": self.SHOW})
+        d = self.cp.collect_api()
+        self.assertEqual({k: d[k] for k in ("known", "port", "bind", "tls", "client_keys")},
+                         {"known": True, "port": 30001, "bind": "0.0.0.0", "tls": True, "client_keys": True})
+        self.assertTrue(d["key_file"].endswith("api-key"))
+        self.assertNotIn("sekret", json.dumps(d))            # the unit's keys never reach the page
+
+    def test_a_proxy_on_its_defaults_and_a_unit_not_read(self):
+        self.box({"show qwen38-keepalive.service": "ExecStart={ argv[]=/usr/bin/python3 /x/keepalive-proxy.py 30011 ; }\nEnvironment=\n"})
+        d = self.cp.collect_api()
+        self.assertEqual((d["port"], d["bind"], d["tls"], d["client_keys"]), (30011, "0.0.0.0", False, False))
+        self.box({})
+        d = self.cp.collect_api()
+        self.assertEqual((d["known"], d["port"], d["bind"]), (False, 30001, "0.0.0.0"))

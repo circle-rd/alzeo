@@ -217,6 +217,40 @@ function renderServing(){
   sayOnce('lane', `${laneLabel(unit)}: ${stateLabel(e)}`);
 }
 
+// ── connect a client: the address, the model and the key, ready to copy ───────
+// Hasan (2026-10-18): the address to give a client, plain and in sight, for whoever reads nothing else. The proxy
+// listens where its unit says (api, read every 30 s); everywhere, it answers on the address this page was reached by.
+const API = {d: null, model: ''};
+on('api', d => { API.d = d; renderApi(); });
+on('engine_info', d => { API.model = (d.info || {}).served_model_name || ''; renderApi(); });
+on('lifecycle', () => renderApi());
+function apiBase(d){
+  const any = !d.bind || d.bind === '0.0.0.0' || d.bind === '::';
+  const host = any ? location.hostname : d.bind;
+  return {host, base: `${d.tls ? 'https' : 'http'}://${host.includes(':') ? '[' + host + ']' : host}:${d.port}`};
+}
+function renderApi(){
+  const d = API.d, box = $('api-facts'), row = $('api-copy');
+  if (!d || !box) return;
+  const {host, base} = apiBase(d);
+  const onlyHere = ['127.0.0.1', 'localhost', '::1'].includes(host);
+  const model = textReady() && API.model ? API.model : '';
+  setText('api-aside', onlyHere ? 'from this box only' : 'OpenAI and Anthropic APIs');
+  facts(box, [['OpenAI API', `${base}/v1`, 'wrap'], ['Anthropic API', base, 'wrap'],
+              ['Model', model || (servingEngine() ? 'no text lane serves now' : 'nothing serves now')],
+              ['Key', `the cockpit's login, in ${d.key_file} on the box` + (d.client_keys ? ', or a client key of yours' : ''), 'wrap'],
+              onlyHere ? ['Other machines', 'the proxy listens on this box only (PROXY_BIND=' + d.bind + '): PROXY_BIND=0.0.0.0 ./install.sh opens it, the key still the gate', 'wrap'] : [null, null]]);
+  clear(row);
+  const m = model || 'MODEL';
+  // claude-local sets Claude Code up for the lane that serves (proxy, key, model, budgets: docs/clients.md); the test
+  // reads the key from its file, on the box, and never shows it
+  const items = [['Copy the address', `${base}/v1`], ['Copy for Claude Code, on the box', 'claude-local'],
+    ['Copy a test', `curl -s ${base}/v1/chat/completions -H "Authorization: Bearer $(cat ${d.key_file})" -H 'Content-Type: application/json' -d '{"model":"${m}","messages":[{"role":"user","content":"Say ok."}],"max_tokens":8}'`]];
+  items.forEach(([label, text]) => { const b = el('button', 'btn sm', label); b.type = 'button'; b.addEventListener('click', () => copyText(text)); row.append(b); });
+  const a = el('a', 'btn sm ghost', 'Every client, step by step'); a.href = 'https://github.com/hasso5703/alzeo/blob/main/docs/clients.md';
+  a.target = '_blank'; a.rel = 'noopener'; row.append(a);
+}
+
 // ── activity: what the seated lane is doing ───────────────────────────────────
 function renderActivity(){
   const s = servingEngine(), fx = $('act-facts');
