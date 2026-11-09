@@ -81,6 +81,13 @@ _ENV_PLE_DIR="${PLE_DIR:-}"; FLASH_TIER_ENV="${FLASH_TIER:-}"
 _ENV_SPEC_TOKEN_MAP_SIZE="${SPEC_TOKEN_MAP_SIZE:-}"; _ENV_FLASH_REPLAYSSM_SPEC="${FLASH_REPLAYSSM_SPEC:-}"
 _ENV_DRAFT2_REPO="${DRAFT2_REPO:-}"; _ENV_DRAFT2_REV="${DRAFT2_REV:-}"
 _ENV_DRAFT2_QUANT="${DRAFT2_QUANT:-}"; _ENV_DRAFT2_TOKENS="${DRAFT2_TOKENS:-}"
+# FLASH_LOCAL_CONTEXT, the Qwen3.8 Flash-Next FP4-Local lane's window, is set by its own installer and a Load: this run
+# sizes the clients from the lane's unit before it renders that unit again, so a window chosen here would have reached
+# the unit and not the clients (second review of v1.45.2). The window kept from before goes on as it was.
+if [ -n "${FLASH_LOCAL_CONTEXT+set}" ]; then
+  printf 'NOTE: FLASH_LOCAL_CONTEXT is not read by ./install.sh: run FLASH_LOCAL_CONTEXT=%s ./install-flash-local.sh --units-only,\n      then Load the lane (docs/flash-local-lane.md). This run keeps the window chosen before.\n' "$FLASH_LOCAL_CONTEXT"
+  unset FLASH_LOCAL_CONTEXT
+fi
 # the side lanes' checkpoints, which their installers read from the environment (2026-10-17)
 _ENV_KOLIBRI_VARIANT="${KOLIBRI_VARIANT:-}"; _ENV_IMAGE_MODEL="${IMAGE_MODEL:-}"; _ENV_VIDEO_VARIANT="${VIDEO_VARIANT:-}"
 # A run installs the text lane that does not serve as well, beside the one it serves: it
@@ -2751,6 +2758,13 @@ if [ -f "$OC_USER_CFG" ]; then
     # Offered whatever the limits branch decided above: the level comes from the
     # template this run patched, not from the context mode.
     python3 "$REPO_DIR/oc-merge-limits.py" "$OC_USER_CFG" qwen38 qwen3.8-27b --add-variant lean || true
+  fi
+  # The Qwen3.8 Flash-Next FP4-Local lane's pair follows its unit's window (FLASH_LOCAL_CONTEXT=1m): --add-providers
+  # above adds a missing provider only, and the compaction block is sized from this pair when the lane boots (second
+  # review of v1.45.2)
+  if [ "$OC_FLASH_LOCAL" -eq 1 ] && [ -n "$OC_FLASH_LOCAL_CTX" ]; then
+    python3 "$REPO_DIR/oc-merge-limits.py" "$OC_USER_CFG" flash-local qwen3.8-flash-next-fp4 \
+      "$OC_FLASH_LOCAL_CTX" "$OC_FLASH_LOCAL_OUT" >/dev/null || true
   fi
 fi
 # The default model and the served entry's picker name follow the install, not

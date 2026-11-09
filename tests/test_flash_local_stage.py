@@ -500,5 +500,104 @@ class TheMillionTokenWindow(unittest.TestCase):
         self.assertEqual({k: t["rope_parameters"][k] for k in self.CONFIG["text_config"]["rope_parameters"]},
                          self.CONFIG["text_config"]["rope_parameters"])
 
+class TheLoadSetsTheClientsForTheWindow(unittest.TestCase):
+    """A Load of the FP4-Local lane gives opencode (and through its config pi and claude-local) the pair of the window its
+    unit runs (FLASH_LOCAL_CONTEXT=1m, v1.45.2). It added the provider when it was missing and never touched one already
+    there: a Load to 1M kept 205,000 under a compaction block sized for 840,000, and a Load back kept 840,000 against a
+    proxy that refuses past 250,000 (second review of v1.45.2). switch-model.sh's own block runs here, on copies of the
+    two configs, with a systemctl that answers nothing and a sudo that is never reached."""
+
+    def setUp(self):
+        self.d = pathlib.Path(tempfile.mkdtemp(prefix="fl-load-oc-"))
+        self.addCleanup(shutil.rmtree, self.d, True)
+        self.cfg = self.d / "cfg"
+        self.home = self.d / "home"
+        (self.home / ".config" / "opencode").mkdir(parents=True)
+        self.cfg.mkdir()
+        (self.cfg / "api-key").write_text("k\n")
+        self.bin = self.d / "bin"
+        self.bin.mkdir()
+        for tool in ("systemctl", "sudo"):
+            (self.bin / tool).write_text("#!/bin/sh\nexit 1\n")
+            (self.bin / tool).chmod(0o755)
+        gen = subprocess.run([sys.executable, str(REPO / "oc-flash-local.py"), "http://127.0.0.1:30001/v1",
+                              str(self.cfg / "api-key"), "205000", "32000",
+                              "Qwen3.8-Flash-Next FP4-Local NVIDIA + MTP (local, 262K)"],
+                             capture_output=True, text=True, check=True)
+        base = {"model": "qwen38/qwen3.8-27b", "compaction": {"preserve_recent_tokens": 46000, "prune": False},
+                "provider": {"qwen38": {"models": {"qwen3.8-27b": {
+                    "name": "x", "limit": {"context": 547000, "input": 547000, "output": 182000}}}},
+                             **json.loads(gen.stdout)["provider"]}}
+        self.configs = (self.cfg / "opencode.json", self.home / ".config" / "opencode" / "opencode.json")
+        for c in self.configs:
+            c.write_text(json.dumps(base, indent=2) + "\n")
+        text = (REPO / "switch-model.sh").read_text()
+        start = text.rindex('  if [ -f "$CONFIG_DIR/opencode.off" ]; then', 0, text.index("FLL_OC_SUM="))
+        end = text.index('  echo "Clients reach it through the proxy on :30001 with the box\'s key, as model qwen3.8-flash-next-fp4."')
+        self.block = text[start:end].replace("/etc/systemd/system/qwen38-keepalive.service", str(self.d / "keepalive.service"))
+
+    def load(self, window):
+        unit = self.d / "qwen38-flash-local.service"
+        unit.write_text(f"ExecStart=/bin/bash -c 'exec docker run x vllm serve m \\\n    --max-model-len {window} --max-num-seqs 8'\n")
+        script = "\n".join(["set -uo pipefail", f'REPO_DIR="{REPO}"', f'CONFIG_DIR="{self.cfg}"',
+                            f'FLASH_LOCAL_UNIT="{unit}"', self.block])
+        r = subprocess.run(["bash", "-c", script], capture_output=True, text=True, timeout=60,
+                           env={"PATH": f"{self.bin}:/usr/bin:/bin", "HOME": str(self.home)})
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertNotIn("NOTE", r.stdout + r.stderr)
+        return [json.loads(c.read_text()) for c in self.configs]
+
+    def test_a_load_to_1m_and_back_moves_the_limits_of_the_entry_already_there(self):
+        for window, ctx, label in ((1048576, 840000, "(local, 1M)"), (262144, 205000, "(local, 262K)")):
+            keep = int(subprocess.run(["bash", str(REPO / "oc-limits.sh"), "--preserve", str(ctx)],
+                                      capture_output=True, text=True, check=True).stdout)
+            for c in self.load(window):
+                with self.subTest(window=window):
+                    m = c["provider"]["flash-local"]["models"]["qwen3.8-flash-next-fp4"]
+                    self.assertEqual(m["limit"], {"context": ctx, "input": ctx, "output": 32000})
+                    self.assertTrue(m["name"].endswith(label), m["name"])
+                    self.assertEqual(c["model"], "flash-local/qwen3.8-flash-next-fp4")
+                    self.assertEqual(c["compaction"]["preserve_recent_tokens"], keep)
+                    self.assertLess(keep, ctx - 20000, "a compaction keeps less than its threshold")
+
+
+class TheInstallSetsTheClientsForTheWindow(unittest.TestCase):
+    """install.sh's own blocks: the user's opencode config gets the FP4-Local pair of the unit's window, as the compaction
+    block it merges is sized from that pair when the lane boots, and FLASH_LOCAL_CONTEXT is not read there, which would
+    have reached the unit and not the clients sized before it (second review of v1.45.2)."""
+    TEXT = (REPO / "install.sh").read_text()
+
+    def test_the_users_config_takes_the_fp4_local_pair(self):
+        start = self.TEXT.index('if [ -f "$OC_USER_CFG" ]; then\n  if [ "${LANE:-27b}" = "flash" ]; then')
+        block = self.TEXT[start:self.TEXT.index("# The default model and the served entry's picker name follow the install", start)]
+        d = pathlib.Path(tempfile.mkdtemp(prefix="fl-install-oc-"))
+        self.addCleanup(shutil.rmtree, d, True)
+        cfg = d / "opencode.json"
+        cfg.write_text(json.dumps({"provider": {
+            "qwen38": {"models": {"qwen3.8-27b": {"limit": {"context": 547000, "input": 547000, "output": 182000}}}},
+            "flash-local": {"models": {"qwen3.8-flash-next-fp4": {
+                "limit": {"context": 205000, "input": 205000, "output": 32000}}}}}}, indent=2) + "\n")
+        script = "\n".join(["set -uo pipefail", f'REPO_DIR="{REPO}"', f'OC_USER_CFG="{cfg}"', "LANE=27b",
+                            "OC_CTX=547000 OC_OUT=182000 OC_KEEP=205000 CONTEXT_MODE=1m _ENV_CONTEXT_MODE= MEM_CLASS=128",
+                            f'SGL_UNIT_PATH="{d}/none.service"', "OC_FLASH_LOCAL=1 OC_FLASH_LOCAL_CTX=840000 OC_FLASH_LOCAL_OUT=32000",
+                            block])
+        r = subprocess.run(["bash", "-c", script], capture_output=True, text=True, timeout=60,
+                           env={"PATH": "/usr/bin:/bin", "HOME": str(d)})
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        c = json.loads(cfg.read_text())
+        self.assertEqual(c["provider"]["flash-local"]["models"]["qwen3.8-flash-next-fp4"]["limit"],
+                         {"context": 840000, "input": 840000, "output": 32000})
+        self.assertEqual(c["compaction"]["preserve_recent_tokens"], 205000)
+
+    def test_flash_local_context_is_not_read_by_the_install(self):
+        start = self.TEXT.index('if [ -n "${FLASH_LOCAL_CONTEXT+set}" ]; then')
+        block = self.TEXT[start:self.TEXT.index("\nfi\n", start) + 4]
+        self.assertLess(start, self.TEXT.index("install-flash-local.sh\" \"$(side_mode"))
+        r = subprocess.run(["bash", "-c", block + 'echo "after=${FLASH_LOCAL_CONTEXT-unset}"'], capture_output=True,
+                           text=True, timeout=30, env={"PATH": "/usr/bin:/bin", "FLASH_LOCAL_CONTEXT": "1m"})
+        self.assertIn("FLASH_LOCAL_CONTEXT=1m ./install-flash-local.sh --units-only", r.stdout)
+        self.assertIn("after=unset", r.stdout)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

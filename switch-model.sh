@@ -585,6 +585,11 @@ if [ "$CHOICE" = "flash-local" ]; then
       for OC_JSON in "$CONFIG_DIR/opencode.json" "$HOME/.config/opencode/opencode.json"; do
         [ -f "$OC_JSON" ] || continue
         python3 "$REPO_DIR/oc-merge-limits.py" "$OC_JSON" --add-providers "$FLL_SRC" >/dev/null || true
+        # and an entry already there takes the pair of the unit's window: --add-providers adds a missing provider only,
+        # and a Load to 1M kept 205,000 under a compaction block sized for 840,000 (second review of v1.45.2)
+        python3 "$REPO_DIR/oc-merge-limits.py" "$OC_JSON" flash-local qwen3.8-flash-next-fp4 "${FLL_PAIR%% *}" \
+          "$(echo "$FLL_PAIR" | cut -d' ' -f2)" >/dev/null \
+          || echo "NOTE: could not update the Qwen3.8 Flash-Next FP4-Local limits in $OC_JSON; check them by hand ($FLL_PAIR)"
         python3 "$REPO_DIR/oc-point-default.py" "$OC_JSON" flash-local flash-local "${FLL_WINDOW:-262144}" \
           || echo "NOTE: could not update $OC_JSON (hand-edited?); set its \"model\" field yourself"
         [ -n "$FLL_KEEP" ] && { python3 "$REPO_DIR/oc-merge-limits.py" "$OC_JSON" --compaction "$FLL_KEEP" \
