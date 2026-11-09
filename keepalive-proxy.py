@@ -61,7 +61,8 @@ Ten roles, nothing else:
    fewest requests in flight (v6.52, docs/pair.md).
 
 v6.54: the Qwen3.8 Flash-Next FP4-Local lane at its 1M window (FLASH_LOCAL_CONTEXT=1m, v1.45.2) has no flash ceiling:
-its engine's window, read with its pool, says so, and its prompts are bounded by the pool's share (wide_fp4_local).
+its engine's window, read on /v1/models with the names it serves (served_window), says so, and its prompts are bounded
+by the pool's share (wide_fp4_local).
 
 v6.53: an SSE answer's end is read as its engine sends it, whatever its client's pace (v1.44.0, decisions 1106 to
 1109). The thread that reads the engine never waits for the one that writes the client: the answer waits in a spool
@@ -2403,12 +2404,7 @@ def vllm_pool_facts(metrics_text, models):
                 pool = int(labels.get("num_gpu_blocks") or 0) * int(labels.get("block_size") or 0)
             except ValueError:
                 pool = 0
-    window = 0
-    for row in models or []:
-        if isinstance(row, dict) and isinstance(row.get("max_model_len"), int):
-            window = row["max_model_len"]
-            break
-    return pool, window
+    return pool, served_window(models)
 
 
 def _vllm_facts(key, timeout):
@@ -3385,10 +3381,13 @@ def served_models():
 
 
 def served_window(rows) -> int:
-    """The window the engine says on /v1/models with the names it serves (max_model_len, which vLLM gives), 0 when it
-    says none: read with the names, so the one-prompt ceiling decides on the list it was read with (v6.54)."""
-    w = rows[0].get("max_model_len") if rows and isinstance(rows[0], dict) else None
-    return w if isinstance(w, int) and w > 0 else 0
+    """The window the engine says on /v1/models (max_model_len, which vLLM gives): the first row that says one, 0 when
+    none does. Read with the names, so the one-prompt ceiling decides on the list it was read with (v6.54), and the one
+    reader of it here (vllm_pool_facts reads the window through it too)."""
+    for row in rows or []:
+        if isinstance(row, dict) and isinstance(row.get("max_model_len"), int):
+            return max(0, row["max_model_len"])
+    return 0
 
 
 # v6.37: the last engine that named itself, kept across invalidate_pool (which also runs when

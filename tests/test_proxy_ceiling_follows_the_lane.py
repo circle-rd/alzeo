@@ -115,6 +115,16 @@ class TheProxyReadsTheServedLane(unittest.TestCase):
             self.assertEqual(m.lane_ceiling(), 0)        # cached with the names: no second read
         self.assertEqual(len(asked), 1)
 
+    def test_one_reader_of_the_window_for_the_names_and_the_pool(self):
+        # an alias listed first with no window: the names' reader looked at the first row only, the pool's at the first
+        # that says one, and the lane at 1M fell back under the flash ceiling (third review of v1.45.2)
+        m = proxy_module(0, 250000)
+        rows = [{"id": "alias"}, {"id": "qwen3.8-flash-next-fp4", "max_model_len": 1048576}]
+        self.assertEqual(m.served_window(rows), 1048576)
+        self.assertEqual(m.vllm_pool_facts("", rows)[1], 1048576)
+        self.assertEqual(m.served_window([{"id": "x", "max_model_len": "1048576"}, "junk"]), 0)
+        self.assertEqual(m.served_window(None), 0)
+
     def test_an_unreachable_engine_counts_as_unknown(self):
         m = proxy_module(0, 250000)
 
