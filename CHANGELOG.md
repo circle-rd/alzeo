@@ -1,5 +1,78 @@
 # Changelog
 
+## v1.45.4 (2026-11-10): an update that raises opencode's limits leaves the Agent tab running, and eighteen more pages say what the code does
+
+**An update that raises opencode's limits leaves the Agent tab running.** Since v1.45.1 the installer's fit restarts
+the Agent tab's opencode server only when a limit has to come down, as limits it raises still fit while the server
+runs. The server restarted all the same: `dashboard/install-agent.sh`, which the installer runs after the fit,
+restarts opencode-web when one of the two configs it reads is newer than its start, and the fit had just rewritten
+them. So the turn the Agent tab was in ended at every update that followed a boot with a larger pool. The reference
+box shows it twice in its journal: at the update to v1.45.2 (limits raised at 16:41:42, opencode-web restarted at
+16:41:45) and at the update to v1.45.3 (21:34:06 and 21:34:09). The notes of v1.45.2 said the server had not been
+restarted. They were written from the fit's own message, not from the journal, and are corrected above.
+
+The fit now lists the configs it only raised in `~/.config/qwen38/opencode-web.kept`, one line each: which of the two
+files it is, the sha256 it left it with, and the start of the server that may keep running on what it read.
+`install-agent.sh` leaves out of its check a config listed for the server that runs. Nothing is listed for a file
+that something else changed since that start, and any change after the fit restarts the server as before, as do a
+new opencode, a changed unit or new credentials. The server reads the higher limits at its next start. One other
+fit of the installer, which follows an engine it has just restarted, still restarts it.
+
+A review of the branch found two faults in the first version of this record, corrected before the release. A line
+named no file, and the user's config is often the same bytes as this repo's own (the installer creates it as a
+copy): a copy made since the server's start was then vouched for by the other file's line. And a record that could
+not be read or written stopped the fit after it had written the limits.
+
+`tests/test_install_restarts.py` runs the script's guard as written against such configs, and the fit's own record
+against that guard: listed for the server that runs, for another server, changed again after the fit, one config of
+the two, the same bytes in the other file, a file dated the second the server started, a record that cannot be read,
+a newer opencode. It fails on the code before with either file put back. `tests/test_oc_fit_limits.py` runs the fit
+itself: two lines when it raised both configs of a server that had read them, none for files changed since the
+server's start, none when a limit came down (the server is restarted) and none without the installer's flag. It
+fails on the fit before.
+
+**What eighteen more pages said and the code did not, corrected.** A second audit read the lane pages and the other
+usage pages against the code behind each claim, every finding was checked again at its source before its fix, and a
+review of the corrections found two more pages and four sentences to make exact:
+- A 64 GB DGX Spark: `docs/context-1m.md` and the pages of the image, video, Kolibri, Super VL, Ornith, flash and
+  FP4-Local lanes said every plain install brings the 1M window or their lane. On a 64 GB box the installer leaves
+  these lanes out and refuses `CONTEXT_MODE=1m`, as the README's section on it says, and each page now says so.
+- `docs/systemone.md`: the flash lane reports cached tokens since v1.40.3, and the installer writes the prompt ceiling
+  into the unit and leaves a user's drop-in alone.
+- `docs/image-lane.md`: six local patches, three of them not about images, and the button is "Make a sample
+  reference".
+- `docs/ornith-lane.md`: `claude-local` sets `CLAUDE_CODE_MAX_CONTEXT_TOKENS=1013000` and `max_tokens` 32,000 there
+  (opencode's 990,000 plus 23,000).
+- `docs/video-lane.md`: the cockpit refuses the requests the page lists with a 400 that says why, and drops undeclared
+  keys.
+- `docs/nemotron-lane.md`: the Decide view offers the 27B on a 64 GB box, and the key's middleware stays while any of
+  the four other vLLM lanes uses it.
+- `docs/opencode.md`: opencode's defaults already run every tool unasked, so dropping `--yolo` gives no prompt: the
+  way is `"*": "ask"` in the bash object, as docs/agents-and-network.md says. The installer also merges the shell deny
+  rules and a lean variant into the user's config, and CI runs the Agent view on arm64 with install.sh's digest.
+- `TESTING.md`: a run whose every step was skipped exits 3, the proxy's coverage floor is 85%, four gates need pip
+  packages, and the lifecycle tests are 285 (the page said 139).
+- `CONTRIBUTING.md`: ruff checks every tracked Python file, the gates are four, and the sleep-on-idle gate is the
+  SGLang text lanes' (the image and video lanes, on SGLang's diffusion runtime, do not take the flag). It reads the
+  27B's two 128 GB templates, the flash launcher and `run.sh`.
+- `ARCHITECTURE.md`: the SGLang text lanes carry `--sleep-on-idle`, `oc-limits.sh` has five callers, `check-pins.sh`
+  also runs daily, and the Ornith page is listed.
+- `MIRROR.md`: `check-pins.sh` watches the lanes the mirror does not cover yet.
+- `dashboard/CAPABILITIES.md`: a bay per lane, the switch as a step of a Load (there when the boot is not on that
+  target yet or the lane lacks a file it needs), a logs view that filters and copies, the opencode panel in Settings,
+  and two paired boxes since v1.42.0.
+- `extras/gguf/README.md`: the text lanes run on SGLang and vLLM, and the speech lane's recognizer is a GGUF on
+  llama.cpp.
+- `ROADMAP.md`: v1.40 to v1.45 shipped, and the coordination ports (v1.40.6) and the metrics panel (v1.22) leave the
+  planned list.
+
+**What changes on a box.** `oc-fit-limits.py` and `dashboard/install-agent.sh`, and one small file the fit writes
+beside opencode's config when it only raises the limits. No unit, template or image changes.
+
+**What an update does.** The update runs the new get.sh. The cockpit restarts and serves the new page. The engine and
+the proxy keep running, as nothing they read changed. The Agent tab's opencode server restarts if its limits come
+down, and keeps running if they go up or stay.
+
 ## v1.45.3 (2026-11-09): the documentation says what the code does, and the site lives at alzeo.ai
 
 **What the pages said and the code did not, corrected.** An audit read the eight most-read pages (README.md,
@@ -117,8 +190,9 @@ for byte, and the 27B served again.
 **After the push.** GitHub's CI passed on 498e100, 89 steps, none skipped. The reference box updated in 1 min 38 s by
 the README's command (get.alzeo.ai): the 27B, the lane that served, kept running, the proxy (v6.54) and the cockpit
 restarted, and no lane's unit changed: the nine were written again as they were, FP4-Local's included. opencode's
-limits were fitted to the pool of the boot that serves (558,000 and 186,000), and the Agent tab's server was not
-restarted. On the 27B the production checks passed, and so did the eight real clients: Claude Code, opencode, Hermes,
+limits were fitted to the pool of the boot that serves (558,000 and 186,000). The Agent tab's server restarted three
+seconds after that fit, at 16:41:45 in its journal: this note first said it was not restarted, which was wrong, and
+v1.45.4 corrects the note and the cause. On the 27B the production checks passed, and so did the eight real clients: Claude Code, opencode, Hermes,
 pi, the OpenAI and Anthropic SDKs, fetch under Node and under Bun, and LiteLLM. The client matrix on the two lanes
 this release changes passed 16 cases of 16: FP4-Local loaded from the cockpit's path in 612 s and the 27B again in
 213 s, eight clients on each. After it, opencode's FP4-Local entry was back at 205,000 and 32,000, "(local, 262K)". The
