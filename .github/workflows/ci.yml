@@ -1436,22 +1436,25 @@ jobs:
           pip install 'coverage==7.16.0' 2>/dev/null || true
           PY="$(./tests/testpy.sh coverage)"
           rm -f .coverage*
-          for f in tests/test_proxy_guard.py tests/test_proxy_abort.py \
-                   tests/test_proxy_keepalive.py tests/test_proxy_client_keys.py \
-                   tests/test_proxy_systemone.py tests/test_proxy_hold.py \
-                   tests/test_proxy_short_body.py tests/test_proxy_engine_withholds_headers.py \
-                   tests/test_proxy_door.py tests/test_proxy_follows_engine_restarts.py \
-                   tests/test_proxy_vllm_lane.py \
-                   tests/test_proxy_body_budget.py tests/test_proxy_connection_ceiling.py \
-                   tests/test_proxy_content_encoding.py tests/test_proxy_count_routes_cap.py \
-                   tests/test_proxy_rejudge_after_hold.py tests/test_proxy_score_guard.py \
-                   tests/test_proxy_uncountable_shapes.py tests/test_proxy_unknown_vocab.py \
-                   tests/test_proxy_video_guard.py tests/test_proxy_override_headers.py \
-                   tests/test_proxy_floor_stop.py tests/test_proxy_tool_targets.py tests/test_proxy_pair.py \
-                   tests/test_tools.py tests/test_oc_fit_limits.py tests/test_oc_merge_limits.py; do
-            "$PY" -m coverage run --branch --parallel-mode --source=. \
-              --omit="dashboard/*,tests/*,.venv-test/*" "$f" >/dev/null 2>&1 || true
-          done
+          # Four files at a time, the longest first: one after the other they took 1,283 s on
+          # 2026-11-10, 892 of them the pair's tests, which are four files since. --parallel-mode
+          # gives every run a data file of its own, which combine reads below.
+          files="tests/test_proxy_pair_one_model_inprocess.py tests/test_proxy_pair_one_model.py \
+                 tests/test_proxy_pair.py tests/test_proxy_pair_inprocess.py tests/test_proxy_hold.py \
+                 tests/test_proxy_guard.py tests/test_proxy_abort.py tests/test_proxy_keepalive.py \
+                 tests/test_proxy_client_keys.py tests/test_proxy_systemone.py \
+                 tests/test_proxy_short_body.py tests/test_proxy_engine_withholds_headers.py \
+                 tests/test_proxy_door.py tests/test_proxy_follows_engine_restarts.py \
+                 tests/test_proxy_vllm_lane.py tests/test_proxy_body_budget.py \
+                 tests/test_proxy_connection_ceiling.py tests/test_proxy_content_encoding.py \
+                 tests/test_proxy_count_routes_cap.py tests/test_proxy_rejudge_after_hold.py \
+                 tests/test_proxy_score_guard.py tests/test_proxy_uncountable_shapes.py \
+                 tests/test_proxy_unknown_vocab.py tests/test_proxy_video_guard.py \
+                 tests/test_proxy_override_headers.py tests/test_proxy_floor_stop.py \
+                 tests/test_proxy_tool_targets.py tests/test_tools.py tests/test_oc_fit_limits.py \
+                 tests/test_oc_merge_limits.py"
+          echo $files | tr ' ' '\n' | xargs -P 4 -n 1 sh -c \
+            '"$0" -m coverage run --branch --parallel-mode --source=. --omit="dashboard/*,tests/*,.venv-test/*" "$1" >/dev/null 2>&1 || true' "$PY"
           "$PY" -m coverage combine -q
           "$PY" -m coverage report --sort=cover | tee "$scratch/rootcov.txt"
           rm -f .coverage*
@@ -1471,7 +1474,8 @@ jobs:
           # 2026-10-17: 87% again with the nine suites of v6.41's guards in the list above;
           # without them its new code read as untested, 81%.
           # 2026-11-02: role 10 (v6.50, the pair) read as untested, 80%, until test_proxy_pair.py ran its
-          # entry in-process too and joined the list.
+          # entry in-process too and joined the list (its in-process cases are two files of their own
+          # since 2026-11-10: test_proxy_pair_inprocess.py and test_proxy_pair_one_model_inprocess.py).
           FLOORS = {"keepalive-proxy.py": 85, "patch-yarn.py": 90,
                     "oc-fit-limits.py": 37, "build-token-map.py": 35}
           got, bad = {}, []
