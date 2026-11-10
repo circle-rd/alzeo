@@ -1,43 +1,6 @@
 # Changelog
 
-## v1.46.1 (2026-11-10): a 64 GB box's first install no longer says two false things about Bolt's opencode limits
-
-**What was wrong.** A new 64 GB DGX Spark ends its first install on Nemotron 3.5 Bolt (since v1.40.0): the installer
-loads it the way the cockpit's Load does, and then ran `oc-fit-limits.py` against it. That tool fits opencode's limits
-to the KV pool of an SGLang engine, which it reads from `/server_info`. Bolt is served by vLLM, which has neither
-`/server_info` nor `/get_server_info`. So on a box with opencode on, the default, the fit failed on every such run,
-and the end of the install said two false things. `no engine to read at http://127.0.0.1:30000 (HTTPError): start
-one first, the pool is only known once it has booted` was printed under a Bolt that served. Then `NOTE: opencode's
-limits were not fitted to Bolt; the cockpit's button fits them` named a button that answers, while Bolt serves, that
-Nemotron's opencode limits are its own and that there is nothing to fit to its pool. A 64 GB box that boots the 27B
-and is given `--recommended`, which loads Bolt the same way, got the same two lines. A box installed with
-`--no-opencode` did not: there the tool says that the integration is off, and stops.
-
-Nothing else was wrong on those boxes. Bolt's opencode limits are its own pair, 205,000 and 32,000, written with its
-provider before its engine starts, by the installer's opencode step or by the switch of the load. That switch points
-opencode at Bolt and restarts the Agent tab's server, if it runs, when the configs it reads changed. The fit had
-nothing to add, and never got past its read of the engine.
-
-Found by reading the code, not on a box: no 64 GB box was at hand, and the test of that ending replaced the tool with
-a stand-in that always succeeded. The tool was then run against a server that answers 404 to both routes, as vLLM
-does: return code 1, and that first line.
-
-**What changes.** The installer no longer runs the fit after Bolt's first load. After its summary the run says
-`Nemotron 3.5 Bolt serves now, and at boot; the 27B is a Load away in the cockpit`, then its record line and the line
-of v1.46.0.
-
-**Tests.** `tests/test_spark_64.py` runs the installer's own ending, and its stand-in for the tool now answers as the
-tool does to a vLLM engine, one line and a return code of 1. A new check reads that nothing runs after the probe that
-finds Bolt answering and that the ending carries no NOTE. It fails on the code before.
-
-**What changes on a box.** `install.sh` only: two lines out, a comment in. No unit, template, image or page changes.
-
-**What an update does.** Nothing new on a 128 GB box, nor on a 64 GB box whose first install already ended whole: the
-two lines were those of a first install, and of `--recommended` on a box that boots the 27B. The update runs get.sh,
-which starts the new installer. The cockpit restarts, to name the new release. The engine and the proxy keep running,
-as nothing they read changed.
-
-## v1.46.0 (2026-11-10): the installer's last line and the cockpit's Settings say what is new, and that a star helps
+## v1.46.0 (2026-11-10): the installer and the cockpit say that a star helps, and a 64 GB box's first install no longer says two false things
 
 **The one place the installer asks.** Alzeo is found by what its users say of it, and nothing in it said so. A run of
 the installer that ends whole now ends with one line: `If Alzeo serves you well, a star helps other owners find it:
@@ -63,6 +26,57 @@ no test read: put back, with a test. SECURITY.md said the cockpit says nothing a
 off, which the new link made inexact. And the full CI's touch check, which taps where a finger lands, found the second
 link broken over two lines on three phones, its middle outside its own text: each link is short and one box now.
 
+**A 64 GB box's first install said two false things.** A new 64 GB DGX Spark ends its first install on Nemotron 3.5
+Bolt (since v1.40.0): the installer loads it the way the cockpit's Load does, and then ran `oc-fit-limits.py` against
+it. That tool fits opencode's limits to the KV pool of an SGLang engine, which it reads from `/server_info`. Bolt is
+served by vLLM, which has neither `/server_info` nor `/get_server_info`. So on a box with opencode on, the default, the
+fit failed on every such run, and the end of the install said two false things. `no engine to read at
+http://127.0.0.1:30000 (HTTPError): start one first, the pool is only known once it has booted` was printed under a
+Bolt that served. Then `NOTE: opencode's limits were not fitted to Bolt; the cockpit's button fits them` named a button
+that answers, while Bolt serves, that Nemotron's opencode limits are its own and that there is nothing to fit to its
+pool. A 64 GB box that boots the 27B and is given `--recommended`, which loads Bolt the same way, got the same two
+lines. A box installed with `--no-opencode` did not: there the tool says that the integration is off, and stops.
+
+Nothing else was wrong on those boxes. Bolt's opencode limits are its own pair, 205,000 and 32,000, written with its
+provider before its engine starts, by the installer's opencode step or by the switch of the load. That switch points
+opencode at Bolt and restarts the Agent tab's server, if it runs, when the configs it reads changed. The fit had
+nothing to add, and never got past its read of the engine.
+
+Found by reading the code, not on a box: no 64 GB box was at hand, and the test of that ending replaced the tool with
+a stand-in that always succeeded. The tool was then run against a server that answers 404 to both routes, as vLLM
+does: return code 1, and that first line.
+
+The installer no longer runs the fit after Bolt's first load. After its summary the run says
+`Nemotron 3.5 Bolt serves now, and at boot; the 27B is a Load away in the cockpit`, then its record line and the line
+that says a star helps.
+
+**Three lanes by their official names in the installer's messages.** The line that says which lane stays a box's
+serving lane, and the notes of a side lane that did not install, said `Kolibri`, `Nemotron` and `Nemotron Super`
+beside `Qwen3.8 Flash-Next FP4-Local` and `Ornith 1.5 122B` in the same blocks. They say `Kolibri-1`, `Nemotron 3.5
+Bolt` and `Nemotron 3.5 Super VL`, the names the cockpit and the installer's own `lane_title` give those lanes.
+
+**The tests' guard watches the video and speech lanes' ports.** This repo's tests run on boxes that serve, so
+the CI fails a run whose tests connect to a port the box serves on. Its list had seven ports, and neither the video
+lane's (30022) nor the speech lane's two (30024 and 30025). One test did connect to the video lane's: the cockpit's
+collectors test closed the engine, the proxy and the image lane, not the video lane, and its systemctl fixture says
+every unit is active, so the collector asked the box's own video lane for `/health`. Found under a probe that refuses
+every serving port before the call: one contact before, none now that the test closes that port too. The guard lists
+the three ports.
+
+CONTRIBUTING.md and TESTING.md said that a full run of the CI takes 12 minutes on the reference box, the measure
+of 2026-10-28. It took 30 on 2026-11-10, and they say so.
+
+**One table of the lanes.** Adding Ornith 1.5 122B touched 98 files over ten commits, and the lists
+written by hand drift apart: the short names and the unwatched ports above were found on 2026-11-10 by listing every
+place that writes a lane. `lane_registry.py` now says once what each of the ten lanes is: its unit, installer and
+flags, what it serves and on which engine, its switch targets and the ones a 64 GB box does not take, the name it
+serves under, its opencode provider, its ports and its official name. `tests/test_lane_registry.py` holds to it the
+lists and tables written by hand in the installer, the switch, the other scripts, the unit templates, the proxy,
+opencode's scripts, the cockpit and its page, the sudoers, the CI and the other tests. Nothing reads the table at run
+time yet, so it changes nothing a box does. One drift it found is left for the next release, and excused in the test
+by its exact value: the cockpit's messages about the lanes on b12x say `the Nemotron lane` for both Nemotron lanes,
+and `the Ornith lane`.
+
 **Tests.** `tests/test_install_star_line.py` runs the installer's own function (one line that names the repository,
 nothing for a run started for another lane, nothing that reads, sleeps or calls out) and reads in `install.sh` that
 the line is called four times, each between a run's record and its exit. `dashboard/tests/test_page_details.py` loads
@@ -71,11 +85,24 @@ until then or when a version cannot be read, the same two nodes from one frame t
 cockpit's own panel. Both fail on the code before. Two checks of `tests/test_install_records_release.py`, which read
 the line before each exit, now read the record one line higher and refuse an exit that follows a record directly.
 
-**What changes on a box.** `install.sh` (one function and its four calls) and the cockpit's page (`index.html`,
-`ops.js` and two rules of `cockpit.css`). No unit, template or image changes.
+`tests/test_spark_64.py` runs the installer's own ending for a 64 GB box, and its stand-in for the tool now answers as
+the tool does to a vLLM engine, one line and a return code of 1. A new check reads that nothing runs after the probe
+that finds Bolt answering and that the ending carries no NOTE. It fails on the code before.
 
-**What an update does.** The update runs get.sh, which starts the new installer, and ends with the new line. The
-cockpit restarts and serves the new page. The engine and the proxy keep running, as nothing they read changed.
+`tests/test_lane_registry.py` finds each place by its name, never by a line number, and fails on a
+place it cannot find or reads empty. It fails on the code before, on the three ports and on the three short names,
+and 176 mutations of a copy of the tree (a lane dropped from a list, a target renamed, a port moved, a served name
+changed, a lane added in one place only) all fail it.
+
+**What changes on a box.** `install.sh` (the star line's function and its four calls, two lines out and a
+comment in after Bolt's first load, nine messages that name a lane), the cockpit's page (`index.html`, `ops.js` and
+two rules of `cockpit.css`), and one new file nothing reads yet, `lane_registry.py`. No unit, template or image
+changes.
+
+**What an update does.** The update runs get.sh, which starts the new installer, and ends with the new
+line. The cockpit restarts and serves the new page. The engine and the proxy keep running, as nothing they read
+changed. Nothing else is new on a 128 GB box, nor on a 64 GB box whose first install already ended whole: the two
+false lines were those of a first install, and of `--recommended` on a box that boots the 27B.
 
 ## v1.45.4 (2026-11-10): an update that raises opencode's limits leaves the Agent tab running, and eighteen more pages say what the code does
 
