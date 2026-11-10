@@ -18,7 +18,8 @@ out. Once it has an answer it asks again six hours later; a check that fails is 
 after one minute, then two, four, eight and so on up to six hours. It sends nothing but the
 cockpit's version in a `User-Agent`, it reads a public URL that needs no credential, and
 `COCKPIT_UPDATE_CHECK=0` turns it off, after which the cockpit says nothing about
-releases at all. That includes the typed
+newer releases at all (its Settings view keeps a link to the release notes on GitHub, which the page never
+fetches: the user opens it or not). That includes the typed
 decisions route (`POST /v1/systemone`, v6.19): it speaks the wire contract of a hosted
 service, and it is answered by the engine on this box and nothing else; the proxy
 calls no address but its upstream.

@@ -144,7 +144,7 @@ marks and scripts are all served by the box: the page fetches nothing from elsew
   from the page), the opencode integration state (limits per lane, default
   model, launcher) with the one action that writes there, fitting those limits
   to the pool the engine actually booted with, and the repo itself (version,
-  branch, head, a dirty working tree, and whether a newer release is out). There
+  branch, head, a dirty working tree, whether a newer release is out, and a link to the release notes). There
   is no panel for the API key, which is what you log in with; the diagnostics
   bundle masks it.
 - **Checkpoints.** Library lists every lane's checkpoints, the text lanes', the image

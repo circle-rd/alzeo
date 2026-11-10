@@ -45,7 +45,7 @@ Nothing shells out free-form; every action is a fixed argv template.
 | API key | `~/.config/qwen38/api-key` | It is the login. No panel shows or regenerates it; the diagnostics bundle masks it |
 | opencode | `~/.config/qwen38/opencode.off` marker, `~/.config/opencode/opencode.json`, `~/.local/bin/oc` | State-aware panel in Settings: on/off (the installer's --no-opencode choice), default model, the 27B's and the flash lane's limits, launcher, whether the limits fit the served pool, and Fit the limits to this engine |
 | Chat templates | patch-template.py outputs | None: `install.sh` and `switch-model.sh` write them |
-| Repo state | git status/log/tags | Settings view, Repo: version, branch, head, working tree, the running proxy's version, and whether a newer release is out (a banner too) |
+| Repo state | git status/log/tags | Settings view, Repo: version, branch, head, working tree, the running proxy's version, whether a newer release is out (a banner too), and a link to the release notes |
 
 ## Agent view (v1.7.0)
 | capability | shell today | UI |

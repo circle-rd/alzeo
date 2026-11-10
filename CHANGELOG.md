@@ -1,5 +1,45 @@
 # Changelog
 
+## v1.46.0 (2026-11-10): the installer's last line and the cockpit's Settings say what is new, and that a star helps
+
+**The one place the installer asks.** Alzeo is found by what its users say of it, and nothing in it said so. A run of
+the installer that ends whole now ends with one line: `If Alzeo serves you well, a star helps other owners find it:
+https://github.com/hasso5703/alzeo`. It is the run's last line, after the summary, at each of its four endings: an
+install or an update that serves, a box that boots another lane, `--no-start` and `--no-service`. It asks nothing and
+waits for nothing: no prompt, no reminder, no window. The installer started again for another lane does not print it.
+
+**What is new, from the cockpit.** The Repo panel of the Settings view has a new row, What's new: a link to the release
+notes on GitHub, and one sentence, that a star on GitHub helps other owners find the project, with a second link. The
+first link names the notes of the version
+this box runs once the latest release GitHub gave the cockpit's check is that version or a later one, and every
+release until then (a release is published after its code, a box can be offline, and the check can be off). They are
+two links in the page, which the user opens or not. The page itself asks GitHub nothing, and nothing pops up or comes
+back.
+
+Two review passes of the branch found faults in its first versions, corrected before the release. The page rebuilt
+the two links at every frame of its stream, about once a second, so a link lost the keyboard's focus and a click that
+straddled a frame: they now stay in the page and change only when their value does. The link named this version's
+notes before GitHub had them, between a push and its release, then relied on the check's "behind", which compares
+with the last install the box recorded: the two versions are now compared number by number. The correction of the
+first fault had dropped the two lines that fill the Mode and Usable pool share rows of the cockpit's own panel, which
+no test read: put back, with a test. SECURITY.md said the cockpit says nothing about releases once the check is
+off, which the new link made inexact. And the full CI's touch check, which taps where a finger lands, found the second
+link broken over two lines on three phones, its middle outside its own text: each link is short and one box now.
+
+**Tests.** `tests/test_install_star_line.py` runs the installer's own function (one line that names the repository,
+nothing for a run started for another lane, nothing that reads, sleeps or calls out) and reads in `install.sh` that
+the line is called four times, each between a run's record and its exit. `dashboard/tests/test_page_details.py` loads
+the page and reads the row: the notes of the version that runs once a release at least as new is out, every release
+until then or when a version cannot be read, the same two nodes from one frame to the next, and the two rows of the
+cockpit's own panel. Both fail on the code before. Two checks of `tests/test_install_records_release.py`, which read
+the line before each exit, now read the record one line higher and refuse an exit that follows a record directly.
+
+**What changes on a box.** `install.sh` (one function and its four calls) and the cockpit's page (`index.html`,
+`ops.js` and two rules of `cockpit.css`). No unit, template or image changes.
+
+**What an update does.** The update runs get.sh, which starts the new installer, and ends with the new line. The
+cockpit restarts and serves the new page. The engine and the proxy keep running, as nothing they read changed.
+
 ## v1.45.4 (2026-11-10): an update that raises opencode's limits leaves the Agent tab running, and eighteen more pages say what the code does
 
 **An update that raises opencode's limits leaves the Agent tab running.** Since v1.45.1 the installer's fit restarts
