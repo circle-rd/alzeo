@@ -25,7 +25,8 @@ of HEAD, so `ci-local.sh` refuses a tree with changes nobody committed: commit f
 checkout as it is with `CI_LOCAL_SERIAL=1`. A fragment runs in the checkout as it is, one step
 after the other. A full run took 12 minutes on the reference box on 2026-10-28 (741 and 744 s,
 the length of `single`), against 63 one step after the other the same day (v1.40.4), and 72 on
-GitHub when the steps ran as one job (v1.40.3). On one machine the jobs share its ports, as they
+GitHub when the steps ran as one job (v1.40.3). On 2026-11-10 a full run took 30 minutes there
+(`single`, some 3,000 tests in one process, 1,808 s). On one machine the jobs share its ports, as they
 do not on GitHub, where each job has a runner of its own: a test takes the port of a server it starts
 from `tests/localports.py`, which keeps that port the test's beside the other jobs and any program of
 the machine, and `test_localports.py` fails on a test file that takes a port number out of a socket

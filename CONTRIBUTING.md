@@ -41,7 +41,7 @@ and `ruff`, `shellcheck` and the GitHub CLI `gh` on `PATH`: without them
 Run the gates the way GitHub runs them:
 
 ```bash
-./ci-local.sh                # everything, about 12 minutes on the reference box
+./ci-local.sh                # everything, about 30 minutes on the reference box
 ./ci-local.sh Coverage       # one gate by name fragment
 ```
 
