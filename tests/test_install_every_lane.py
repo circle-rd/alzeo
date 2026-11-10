@@ -289,7 +289,7 @@ class ABoxBootingKolibri(unittest.TestCase):
 
     def test_it_stays_the_boot_lane_and_the_flash_before_it_is_brought_up_to_date(self):
         out = self.resolve("qwen38-flash.service")
-        self.assertIn("The Kolibri lane is this box's boot lane", out)
+        self.assertIn("The Kolibri-1 lane is this box's boot lane", out)
         self.assertIn("INSTALLED=flash", out)
 
     def test_a_27b_before_it_stays_the_27b(self):
@@ -297,8 +297,8 @@ class ABoxBootingKolibri(unittest.TestCase):
 
     def test_an_explicit_target_takes_the_boot_back(self):
         out = self.resolve("qwen38-flash.service", env={"MODEL_CHOICE": "flash"})
-        self.assertIn("MODEL_CHOICE=flash given on a box booting the Kolibri lane", out)
-        self.assertNotIn("The Kolibri lane is this box's boot lane", out)
+        self.assertIn("MODEL_CHOICE=flash given on a box booting the Kolibri-1 lane", out)
+        self.assertNotIn("The Kolibri-1 lane is this box's boot lane", out)
 
     def test_the_run_that_takes_the_boot_back_disables_it(self):
         # install.sh's own lines, run: they were only looked for, and the review of 2026-10-14
@@ -348,7 +348,7 @@ class ABoxBootingNemotron(unittest.TestCase):
 
     def test_it_stays_the_boot_lane_and_the_flash_before_it_is_brought_up_to_date(self):
         out = self.resolve("qwen38-flash.service")
-        self.assertIn("The Nemotron lane is this box's boot lane", out)
+        self.assertIn("The Nemotron 3.5 Bolt lane is this box's boot lane", out)
         self.assertIn("INSTALLED=flash", out)
 
     def test_a_27b_before_it_stays_the_27b(self):
@@ -356,8 +356,8 @@ class ABoxBootingNemotron(unittest.TestCase):
 
     def test_an_explicit_target_takes_the_boot_back(self):
         out = self.resolve("qwen38-flash.service", env={"MODEL_CHOICE": "flash"})
-        self.assertIn("MODEL_CHOICE=flash given on a box booting the Nemotron lane", out)
-        self.assertNotIn("The Nemotron lane is this box's boot lane", out)
+        self.assertIn("MODEL_CHOICE=flash given on a box booting the Nemotron 3.5 Bolt lane", out)
+        self.assertNotIn("The Nemotron 3.5 Bolt lane is this box's boot lane", out)
 
     def test_the_run_that_takes_the_boot_back_disables_it(self):
         self.assertEqual(vllm_lane_disabled(self, "nemotron", "", 0), ["sudo systemctl disable qwen38-nemotron.service"])
@@ -382,8 +382,8 @@ class ABoxBootingNemotronSuper(unittest.TestCase):
 
     def test_it_stays_the_boot_lane_and_the_flash_before_it_is_brought_up_to_date(self):
         out = self.resolve("qwen38-flash.service")
-        self.assertIn("The Nemotron Super lane is this box's boot lane", out)
-        self.assertNotIn("The Nemotron lane is this box's boot lane", out)
+        self.assertIn("The Nemotron 3.5 Super VL lane is this box's boot lane", out)
+        self.assertNotIn("The Nemotron 3.5 Bolt lane is this box's boot lane", out)
         self.assertIn("INSTALLED=flash", out)
 
     def test_a_27b_before_it_stays_the_27b(self):
@@ -391,8 +391,8 @@ class ABoxBootingNemotronSuper(unittest.TestCase):
 
     def test_an_explicit_target_takes_the_boot_back(self):
         out = self.resolve("qwen38-flash.service", env={"MODEL_CHOICE": "flash"})
-        self.assertIn("MODEL_CHOICE=flash given on a box booting the Nemotron Super lane", out)
-        self.assertNotIn("The Nemotron Super lane is this box's boot lane", out)
+        self.assertIn("MODEL_CHOICE=flash given on a box booting the Nemotron 3.5 Super VL lane", out)
+        self.assertNotIn("The Nemotron 3.5 Super VL lane is this box's boot lane", out)
 
     def test_the_run_that_takes_the_boot_back_disables_it(self):
         self.assertEqual(vllm_lane_disabled(self, "nemotron-super", "", 0),
@@ -420,7 +420,7 @@ class ABoxBootingFlashLocal(unittest.TestCase):
     def test_it_stays_the_boot_lane_and_the_flash_before_it_is_brought_up_to_date(self):
         out = self.resolve("qwen38-flash.service")
         self.assertIn("The Qwen3.8 Flash-Next FP4-Local lane is this box's boot lane", out)
-        self.assertNotIn("The Nemotron Super lane is this box's boot lane", out)
+        self.assertNotIn("The Nemotron 3.5 Super VL lane is this box's boot lane", out)
         self.assertIn("INSTALLED=flash", out)
 
     def test_a_27b_before_it_stays_the_27b(self):

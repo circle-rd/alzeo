@@ -258,7 +258,7 @@ class ANew64GBBoxServesBolt(unittest.TestCase):
         (d / "systemctl").write_text('#!/bin/sh\ncase "$*" in *qwen38-nemotron.service*) exit 0 ;; esac\nexit 1\n')
         (d / "systemctl").chmod(0o755)
         block = between(INSTALL, "# The Nemotron lane is one too", "# And the Nemotron Super lane")
-        for cls, boot, said in (("64", "1", "The Nemotron lane is this box's boot lane"),
+        for cls, boot, said in (("64", "1", "The Nemotron 3.5 Bolt lane is this box's boot lane"),
                                 ("128", "0", "the 27B lane becomes the boot lane again")):
             with self.subTest(cls=cls):
                 script = (f'set -euo pipefail\nPATH="{d}:$PATH"\nSECONDARY=""; SGL_ENABLED=0; FLASH_ENABLED=0\n'

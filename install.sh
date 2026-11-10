@@ -882,12 +882,12 @@ KOLIBRI_BOOT=0
 if [ -z "$SECONDARY" ] && systemctl is-enabled --quiet qwen38-kolibri.service 2>/dev/null \
    && [ "$SGL_ENABLED" -eq 0 ] && [ "$FLASH_ENABLED" -eq 0 ]; then
   if [ -n "$_ENV_MODEL_CHOICE" ]; then
-    echo "MODEL_CHOICE=$_ENV_MODEL_CHOICE given on a box booting the Kolibri lane: making that text lane the boot lane again."
+    echo "MODEL_CHOICE=$_ENV_MODEL_CHOICE given on a box booting the Kolibri-1 lane: making that text lane the boot lane again."
   elif [ "$RECOMMENDED" -eq 1 ]; then
-    echo "--recommended on a box booting the Kolibri lane: the 27B lane becomes the boot lane again, as on a new box."
+    echo "--recommended on a box booting the Kolibri-1 lane: the 27B lane becomes the boot lane again, as on a new box."
   else
     KOLIBRI_BOOT=1
-    echo "The Kolibri lane is this box's boot lane: this run brings the other lanes up to date"
+    echo "The Kolibri-1 lane is this box's boot lane: this run brings the other lanes up to date"
     echo "without making one of them the boot lane again. Switch from the cockpit when you want another."
   fi
 fi
@@ -896,13 +896,13 @@ NEMOTRON_BOOT=0
 if [ -z "$SECONDARY" ] && systemctl is-enabled --quiet qwen38-nemotron.service 2>/dev/null \
    && [ "$SGL_ENABLED" -eq 0 ] && [ "$FLASH_ENABLED" -eq 0 ]; then
   if [ -n "$_ENV_MODEL_CHOICE" ]; then
-    echo "MODEL_CHOICE=$_ENV_MODEL_CHOICE given on a box booting the Nemotron lane: making that text lane the boot lane again."
+    echo "MODEL_CHOICE=$_ENV_MODEL_CHOICE given on a box booting the Nemotron 3.5 Bolt lane: making that text lane the boot lane again."
   elif [ "$RECOMMENDED" -eq 1 ] && [ "$MEM_CLASS" != 64 ]; then
-    echo "--recommended on a box booting the Nemotron lane: the 27B lane becomes the boot lane again, as on a new box."
+    echo "--recommended on a box booting the Nemotron 3.5 Bolt lane: the 27B lane becomes the boot lane again, as on a new box."
   else
     # (a new 64 GB box serves Bolt itself, so --recommended keeps it there)
     NEMOTRON_BOOT=1
-    echo "The Nemotron lane is this box's boot lane: this run brings the other lanes up to date"
+    echo "The Nemotron 3.5 Bolt lane is this box's boot lane: this run brings the other lanes up to date"
     echo "without making one of them the boot lane again. Switch from the cockpit when you want another."
   fi
 fi
@@ -911,12 +911,12 @@ NEMOTRON_SUPER_BOOT=0
 if [ -z "$SECONDARY" ] && systemctl is-enabled --quiet qwen38-nemotron-super.service 2>/dev/null \
    && [ "$SGL_ENABLED" -eq 0 ] && [ "$FLASH_ENABLED" -eq 0 ]; then
   if [ -n "$_ENV_MODEL_CHOICE" ]; then
-    echo "MODEL_CHOICE=$_ENV_MODEL_CHOICE given on a box booting the Nemotron Super lane: making that text lane the boot lane again."
+    echo "MODEL_CHOICE=$_ENV_MODEL_CHOICE given on a box booting the Nemotron 3.5 Super VL lane: making that text lane the boot lane again."
   elif [ "$RECOMMENDED" -eq 1 ]; then
-    echo "--recommended on a box booting the Nemotron Super lane: the 27B lane becomes the boot lane again, as on a new box."
+    echo "--recommended on a box booting the Nemotron 3.5 Super VL lane: the 27B lane becomes the boot lane again, as on a new box."
   else
     NEMOTRON_SUPER_BOOT=1
-    echo "The Nemotron Super lane is this box's boot lane: this run brings the other lanes up to date"
+    echo "The Nemotron 3.5 Super VL lane is this box's boot lane: this run brings the other lanes up to date"
     echo "without making one of them the boot lane again. Switch from the cockpit when you want another."
   fi
 fi
@@ -1790,11 +1790,11 @@ if [ -z "$SECONDARY" ] && ss -tlnH 2>/dev/null | awk '{print $4}' | grep -q ":$P
        || docker inspect qwen38-flash --format '{{json .HostConfig.PortBindings}}' 2>/dev/null | grep -q "\"${PORT}\""; then
     echo "Note: qwen38-flash is already running on :$PORT, installing over it ($([ "$LANE" = 27b ] && echo 'lane switch at the final step' || echo 'converging config'))."
   elif docker inspect qwen38-kolibri --format '{{join .Args " "}}' 2>/dev/null | grep -qE -- "--port ${PORT}(\s|$)"; then
-    echo "Note: the Kolibri lane is serving on :$PORT; this run updates the lanes beside it."
+    echo "Note: the Kolibri-1 lane is serving on :$PORT; this run updates the lanes beside it."
   elif docker inspect qwen38-nemotron --format '{{join .Args " "}}' 2>/dev/null | grep -qE -- "--port ${PORT}(\s|$)"; then
-    echo "Note: the Nemotron lane is serving on :$PORT; this run updates the lanes beside it."
+    echo "Note: the Nemotron 3.5 Bolt lane is serving on :$PORT; this run updates the lanes beside it."
   elif docker inspect qwen38-nemotron-super --format '{{join .Args " "}}' 2>/dev/null | grep -qE -- "--port ${PORT}(\s|$)"; then
-    echo "Note: the Nemotron Super lane is serving on :$PORT; this run updates the lanes beside it."
+    echo "Note: the Nemotron 3.5 Super VL lane is serving on :$PORT; this run updates the lanes beside it."
   elif docker inspect qwen38-flash-local --format '{{join .Args " "}}' 2>/dev/null | grep -qE -- "--port ${PORT}(\s|$)"; then
     echo "Note: the Qwen3.8 Flash-Next FP4-Local lane is serving on :$PORT; this run updates the lanes beside it."
   elif docker inspect qwen38-ornith-122b --format '{{join .Args " "}}' 2>/dev/null | grep -qE -- "--port ${PORT}(\s|$)"; then
@@ -3155,16 +3155,16 @@ if [ -z "$SECONDARY" ] && [ "$VIDEO_BOOT" -eq 0 ] && systemctl is-enabled --quie
 fi
 # The Kolibri lane is the fifth, under the same rule.
 if [ -z "$SECONDARY" ] && [ "$KOLIBRI_BOOT" -eq 0 ] && systemctl is-enabled --quiet qwen38-kolibri.service 2>/dev/null; then
-  echo "disabling the Kolibri lane at boot (unit kept, switch back anytime from the cockpit)"
+  echo "disabling the Kolibri-1 lane at boot (unit kept, switch back anytime from the cockpit)"
   sudo systemctl disable qwen38-kolibri.service
 fi
 # The Nemotron lanes are the sixth and the seventh, under the same rule.
 if [ -z "$SECONDARY" ] && [ "$NEMOTRON_BOOT" -eq 0 ] && systemctl is-enabled --quiet qwen38-nemotron.service 2>/dev/null; then
-  echo "disabling the Nemotron lane at boot (unit kept, switch back anytime from the cockpit)"
+  echo "disabling the Nemotron 3.5 Bolt lane at boot (unit kept, switch back anytime from the cockpit)"
   sudo systemctl disable qwen38-nemotron.service
 fi
 if [ -z "$SECONDARY" ] && [ "$NEMOTRON_SUPER_BOOT" -eq 0 ] && systemctl is-enabled --quiet qwen38-nemotron-super.service 2>/dev/null; then
-  echo "disabling the Nemotron Super lane at boot (unit kept, switch back anytime from the cockpit)"
+  echo "disabling the Nemotron 3.5 Super VL lane at boot (unit kept, switch back anytime from the cockpit)"
   sudo systemctl disable qwen38-nemotron-super.service
 fi
 # The Qwen3.8 Flash-Next FP4-Local lane is the eighth, under the same rule.

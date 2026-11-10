@@ -120,9 +120,9 @@ class ARecommendedRunKeepsNoChoice(Base):
 
     def test_a_side_lane_booting_gives_the_boot_back_to_the_27b_lane(self):
         rc, out, cfg = self.run_install("--recommended", enabled=("qwen38-nemotron.service",))
-        self.assertIn("--recommended on a box booting the Nemotron lane: the 27B lane becomes the boot lane "
+        self.assertIn("--recommended on a box booting the Nemotron 3.5 Bolt lane: the 27B lane becomes the boot lane "
                       "again, as on a new box.", out)
-        self.assertNotIn("The Nemotron lane is this box's boot lane", out)
+        self.assertNotIn("The Nemotron 3.5 Bolt lane is this box's boot lane", out)
 
     def test_qwen38_recommended_takes_0_or_1(self):
         rc, out, cfg = self.run_install(env={"QWEN38_RECOMMENDED": "yes"})
