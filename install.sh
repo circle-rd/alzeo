@@ -3916,6 +3916,20 @@ except Exception as e:
       else
         echo "NOTE: Bolt did not come up (see above), so the 27B serves this box (if it was stopped, it starts"
         echo "      again and answers in a few minutes). Load Bolt from the cockpit to try again."
+        # Once Bolt's switch ran, the switch back to the 27B wrote its nominal opencode pair (173,000 + 64,000 at its
+        # native window) over the one fitted above to its pool, some 59,625 tokens on this class. A cockpit that runs
+        # fits them again once the 27B answers (its autofit); with none, nothing did, and opencode asked for nearly
+        # four times the pool until the next update (found in review, 2026-11-10). So the 27B is waited for and
+        # fitted, as after the other lanes' proofs; after a preparation that failed nothing moved, and the fit finds
+        # its pair in place.
+        if [ "$OPENCODE" -eq 1 ] && ! systemctl is-active --quiet qwen38-dashboard.service 2>/dev/null; then
+          if prove_text_lane "$UNIT_NAME" "$SMOKE_MODEL"; then
+            python3 "$REPO_DIR/oc-fit-limits.py" --engine "http://127.0.0.1:$PORT" --restart-agent \
+              || echo "  NOTE: could not fit them; run python3 oc-fit-limits.py yourself"
+          else
+            echo "  NOTE: opencode keeps the 27B's nominal limits, above its pool here: once it serves, run python3 oc-fit-limits.py"
+          fi
+        fi
       fi
     fi
     record_install full
