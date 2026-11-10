@@ -353,6 +353,56 @@ def main() -> None:
     assert worst(ctx, out) <= W, (ctx, out, worst(ctx, out))
     assert (ctx, out) == tbl[("flash", "context")], (ctx, out)
 
+    # 11. An engine that answers 404 to both routes is not SGLang, as vLLM is not: the tool said "no engine to
+    #     read ... start one first" under a vLLM lane that served (found 2026-11-10). It says so now, with the
+    #     same return code, which the installer and the cockpit's job read; a port nobody answers on is said
+    #     as before. Both ports are this test's own (tests/localports.py), never one the box serves on.
+    import contextlib
+    import io
+    import unittest
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import localports
+
+    class NotSGLang(http.server.BaseHTTPRequestHandler):
+        def log_message(self, *a):
+            pass
+
+        def do_GET(self):
+            asked.append(self.path)
+            self.send_response(404); self.send_header("Content-Length", "0"); self.end_headers()
+
+    keeper = unittest.TestCase()          # what holds the ports, closed by its cleanups at the end
+    try:
+        for kind in ("vllm", "nobody"):
+            asked, port = [], localports.held(keeper)
+            srv = None
+            if kind == "vllm":
+                srv = localports.serve(port, http.server.ThreadingHTTPServer, NotSGLang)
+                threading.Thread(target=srv.serve_forever, daemon=True).start()
+            fresh = load()
+            said = io.StringIO()
+            try:
+                with tempfile.TemporaryDirectory() as d, contextlib.redirect_stdout(said):
+                    fresh.CONFIG_DIR = P(d)
+                    (P(d) / "api-key").write_text("k\n")
+                    rc = fresh.main(["--engine", f"http://127.0.0.1:{port}"])
+            finally:
+                if srv:
+                    srv.shutdown(); srv.server_close()
+            said = said.getvalue()
+            assert rc == 1, (kind, rc, said)
+            assert len(said.splitlines()) == 1, (kind, said)
+            if kind == "vllm":
+                assert asked == ["/server_info", "/get_server_info"], asked
+                assert said.startswith(f"the engine at http://127.0.0.1:{port} is not SGLang (404 on /server_info and "
+                                       "/get_server_info"), said
+                assert "nothing to fit" in said and "start one first" not in said, said
+            else:
+                assert said == (f"no engine to read at http://127.0.0.1:{port} (URLError): start one first, "
+                                "the pool is only known once it has booted\n"), said
+    finally:
+        keeper.doCleanups()
+
     print("test_oc_fit_limits: OK")
 
 

@@ -170,8 +170,9 @@ class ANew64GBBoxServesBolt(unittest.TestCase):
                                   f'[ "$*" = nemotron ] && exit {rc}\nexit 0\n')
         (d / "oc-fit-limits.py").write_text(
             f'open("{calls}", "a").write("oc-fit-limits.py\\n")\n'
-            'print("no engine to read at http://127.0.0.1:30000 (HTTPError): start one first, "\n'
-            '      "the pool is only known once it has booted")\nraise SystemExit(1)\n')
+            'print("the engine at http://127.0.0.1:30000 is not SGLang (404 on /server_info and /get_server_info, "\n'
+            '      "as on vLLM): a vLLM lane\'s opencode limits are its own, set when it is loaded, and there is "\n'
+            '      "nothing to fit to its pool")\nraise SystemExit(1)\n')
         start_rc = 1 if "start" in fail else 0
         stub("sudo", f'echo "sudo $*" >> "{calls}"\n[ "$2" = start ] && [ "$3" = qwen38-nemotron.service ] && exit {start_rc}\nexit 0\n')
         stub("systemctl", 'echo "active"\n' if health != "failed" else 'case "$*" in *nemotron*) echo failed ;; *) echo active ;; esac\n')
@@ -211,7 +212,7 @@ class ANew64GBBoxServesBolt(unittest.TestCase):
         out, calls = self.epilogue()
         self.assertEqual(calls[:4], self.LOAD)
         self.assertEqual(calls[5:], [], "nothing runs after the probe that found Bolt answering")
-        self.assertNotIn("no engine to read", out)
+        self.assertNotIn("is not SGLang", out)
         self.assertNotIn("NOTE", out)
         self.assertNotIn("not fitted", out)
         self.assertTrue(out.rstrip().endswith("the 27B is a Load away in the cockpit"), out)
