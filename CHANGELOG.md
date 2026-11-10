@@ -58,6 +58,17 @@ and `CONTRIBUTING.md`. No script of the installer, no unit, no template, no file
 **What an update does.** The update runs get.sh, which starts the installer, as at every update. Nothing it installs
 changed in this version.
 
+**After the push.** The pull request ran GitHub's CI on its runners before `main` moved: 95 steps, none skipped, in 10
+min 26 s, where the last runs of `main` took 32 minutes (`suite` 610 s, `cockpit` 573, `single` 547, `coverage` 514,
+`coverage-cockpit` 397, `fuzz` 378, `static` 76). Merged as a fast-forward, `main` passed the same way on 5f2aa81: 95
+steps, none skipped, 10 min 27 s. On the reference box the final tree passed the CI in 559 s and, beside it, the pass
+in one process in 1,819 s. On GitHub that pass, started once by hand without waiting for the night, passed in 32 min 13
+s. The reference box updated in 1 min 35 s by the README's command (get.alzeo.ai): the 27B and the proxy kept running,
+the cockpit restarted and serves v1.46.2, no unit changed, and of the configuration only the record of what is
+installed. On the 27B the production checks passed, and so did the eight real clients: Claude Code, opencode, Hermes,
+pi, the OpenAI and Anthropic SDKs, fetch under Node and under Bun, and LiteLLM. The cockpit showed no banner on any of
+its views, and no JavaScript error. Nothing that serves changed, so the client matrix was not run again.
+
 ## v1.46.1 (2026-11-10): the cockpit and the lane installers name each lane by its official name, a size is one figure in its unit, and a 64 GB box with no cockpit keeps opencode's limits fitted
 
 **Each lane by its official name, in the cockpit too.** The cockpit said `the Nemotron lane` for Nemotron 3.5 Bolt and
