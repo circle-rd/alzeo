@@ -229,8 +229,26 @@ try:
 except Exception:
     print("")' 2>/dev/null || true)"
 ON_DISK="${OC_VERSION##* }"
-if [ "$AGENT_CHANGED" -eq 1 ] || stale_since "$UNIT" "$OPENCODE_BIN" "$ENV_FILE" \
-     "$HOME/.config/qwen38/opencode.json" "$HOME/.config/opencode/opencode.json" \
+# The two configs the server reads at its start. One that the limits fit rewrote with nothing the running server
+# has to read (limits it raised still fit as the server runs: oc-fit-limits.py --restart-agent-if-lowered) is no
+# reason to restart it, and it was: the file being newer than the server, the fit left the Agent tab alone and
+# this script ended its turn three seconds later, at every update whose boot had a larger pool than the one
+# before (the reference box, updates to v1.45.2 and v1.45.3, 2026-11-09). The fit lists such a config in
+# opencode-web.kept: which of the two it is, the sha256 it left it with and the start of the server that may keep
+# running. Any other content, the other file with the same bytes, and any other server are judged by the dates
+# as before.
+KEPT_FILE="$HOME/.config/qwen38/opencode-web.kept"
+STARTED="$(systemctl show -p ExecMainStartTimestamp --value --timestamp=unix "$UNIT" 2>/dev/null | tr -dc '0-9' || true)"
+READ_CONFIGS=()
+for which in artifact user; do
+  case "$which" in artifact) f="$HOME/.config/qwen38/opencode.json" ;; *) f="$HOME/.config/opencode/opencode.json" ;; esac
+  if [ -n "$STARTED" ] && [ -f "$f" ] && [ -f "$KEPT_FILE" ] \
+     && grep -qxF "$which $(sha256sum < "$f" | cut -d' ' -f1) $STARTED" "$KEPT_FILE"; then
+    continue
+  fi
+  READ_CONFIGS+=("$f")
+done
+if [ "$AGENT_CHANGED" -eq 1 ] || stale_since "$UNIT" "$OPENCODE_BIN" "$ENV_FILE" ${READ_CONFIGS[@]+"${READ_CONFIGS[@]}"} \
    || { [ -n "$SERVED_VERSION" ] && [ -n "$ON_DISK" ] && [ "${SERVED_VERSION#v}" != "${ON_DISK#v}" ]; }; then
   sudo systemctl try-restart "$UNIT"
 fi

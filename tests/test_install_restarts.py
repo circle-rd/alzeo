@@ -12,6 +12,8 @@ Each service is now restarted when it is not running, when this run changed what
 or when it started before the last change of a file it reads; and those files are written
 only when their content changes, so their date means something.
 """
+import hashlib
+import importlib.util
 import json
 import os
 import pathlib
@@ -166,6 +168,192 @@ class ABoxBootingAnotherLaneGetsTheAgentTab(unittest.TestCase):
     def test_a_server_that_does_not_answer_is_judged_by_dates_as_before(self):
         self.assertFalse(self.restarted(binary_after_start=False, served=None))
         self.assertTrue(self.restarted(binary_after_start=True, served=None))
+
+
+class ARaisedLimitLeavesTheAgentTabRunning(unittest.TestCase):
+    """The installer's fit leaves opencode-web alone when it only raises opencode's limits (v1.45.1), and
+    install-agent.sh, which runs after it, restarted the server all the same: the two configs the fit had just
+    rewritten were newer than the server's start (the reference box, update to v1.45.3, 2026-11-09: limits raised
+    at 21:34:06, opencode-web restarted at 21:34:09). The fit now lists what it only raised in opencode-web.kept,
+    by file, by content and for the server that runs, and the script's guard, run here as written, skips those."""
+    WHICH = ("artifact", "user")        # the repo's own config, and the one under ~/.config/opencode
+    TEXT = SCRIPTS["dashboard/install-agent.sh"]
+    START = 1_800_000_000
+
+    def setUp(self):
+        self.t = pathlib.Path(tempfile.mkdtemp(prefix="agent-kept-"))
+        self.addCleanup(shutil.rmtree, self.t, True)
+        self.home = self.t / "home"
+        (self.t / "bin").mkdir()
+        (self.home / ".config/qwen38").mkdir(parents=True)
+        (self.home / ".config/opencode").mkdir()
+        self.configs = [self.home / ".config/qwen38/opencode.json", self.home / ".config/opencode/opencode.json"]
+        self.kept = self.home / ".config/qwen38/opencode-web.kept"
+        self.oc = self.t / "opencode"
+        for f in (self.oc, self.t / "opencode-web.env", *self.configs):
+            self.write(f, f"read at the start: {f}\n", -100)
+        self.log = self.t / "calls"
+        (self.t / "bin/systemctl").write_text(
+            f'#!/bin/sh\ncase "$*" in *ActiveState*) echo active ;; *ExecMainStartTimestamp*) echo @{self.START} ;; esac\n')
+        (self.t / "bin/sudo").write_text(f'#!/bin/sh\necho "$*" >> "{self.log}"\n')
+        for f in ("systemctl", "sudo"):
+            (self.t / "bin" / f).chmod(0o755)
+
+    def write(self, f, text, after_start):
+        f.write_text(text)
+        os.utime(f, (self.START + after_start, self.START + after_start))
+
+    def sha(self, f):
+        return hashlib.sha256(f.read_bytes()).hexdigest()
+
+    def restarted(self):
+        func = self.TEXT[self.TEXT.index("stale_since(){"):self.TEXT.index("\n}\n", self.TEXT.index("stale_since(){")) + 3]
+        guard = self.TEXT[self.TEXT.index('SERVED_VERSION="$(health'):]
+        guard = guard[:guard.index("\nfi\n") + 4]
+        script = (f'set -euo pipefail\nUNIT=opencode-web.service; AGENT_CHANGED=0\n'
+                  f'OPENCODE_BIN="{self.oc}"; ENV_FILE="{self.t}/opencode-web.env"; OC_VERSION="1.19.4"\n'
+                  "health(){ printf '%s' '{\"healthy\":true,\"version\":\"1.19.4\"}'; }\n" + func + "\n" + guard)
+        self.log.unlink(missing_ok=True)
+        r = subprocess.run(["bash", "-c", script], capture_output=True, text=True, timeout=30,
+                           env={"PATH": f"{self.t}/bin:/usr/bin:/bin", "HOME": str(self.home)})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        return self.log.exists() and "try-restart opencode-web.service" in self.log.read_text()
+
+    def raise_both(self, start=None):
+        """What the fit leaves after it only raised the limits: both files rewritten, each listed for the server."""
+        for f in self.configs:
+            self.write(f, f"limits raised: {f}\n", 3)
+        self.kept.write_text("".join(f"{w} {self.sha(f)} {self.START if start is None else start}\n"
+                                     for w, f in zip(self.WHICH, self.configs)))
+
+    def test_nothing_newer_than_the_server_keeps_it(self):
+        self.assertFalse(self.restarted())
+
+    def test_a_config_changed_since_its_start_restarts_it_as_before(self):
+        self.write(self.configs[0], "edited by hand\n", 60)
+        self.assertTrue(self.restarted())
+
+    def test_configs_the_fit_only_raised_do_not(self):
+        self.raise_both()
+        self.assertFalse(self.restarted(), "the Agent tab's turn ended at every update that raised its limits")
+
+    def test_listed_for_another_server_restarts_it(self):
+        self.raise_both(start=self.START - 3600)
+        self.assertTrue(self.restarted())
+
+    def test_a_listed_config_changed_again_restarts_it(self):
+        self.raise_both()
+        self.write(self.configs[1], "edited by hand after the fit\n", 60)
+        self.assertTrue(self.restarted())
+
+    def test_one_config_listed_and_the_other_not_restarts_it(self):
+        self.raise_both()
+        self.kept.write_text(f"artifact {self.sha(self.configs[0])} {self.START}\n")
+        self.assertTrue(self.restarted())
+
+    def test_the_same_bytes_in_the_other_file_are_not_listed_for_it(self):
+        """The installer creates the user's config as a copy of the artifact, so the two are often the same bytes: a
+        line for one named no file and vouched for the other (found in review, 2026-11-10)."""
+        for f in self.configs:
+            self.write(f, "the same bytes in both\n", 3)
+        self.kept.write_text(f"artifact {self.sha(self.configs[0])} {self.START}\n")
+        self.assertEqual(self.sha(self.configs[0]), self.sha(self.configs[1]))
+        self.assertTrue(self.restarted())
+
+    def test_the_other_reasons_still_count(self):
+        self.raise_both()
+        os.utime(self.oc, (self.START + 100, self.START + 100))
+        self.assertTrue(self.restarted(), "a newer opencode binary")
+
+    def test_a_server_whose_start_is_unknown_is_judged_by_dates(self):
+        self.raise_both(start="")
+        self.assertTrue(self.restarted())
+
+    def fit(self):
+        spec = importlib.util.spec_from_file_location("oc_fit_limits_kept", REPO / "oc-fit-limits.py")
+        m = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(m)
+        m.CONFIG_DIR = self.home / ".config/qwen38"
+        return m
+
+    def before(self):
+        """What the fit notes of each config before it writes: which, its path, its date, its sha256."""
+        return [(w, f, int(f.stat().st_mtime), self.sha(f)) for w, f in zip(self.WHICH, self.configs)]
+
+    def test_what_the_fit_writes_is_what_the_script_reads(self):
+        """The two halves of the contract, each as shipped: oc-fit-limits.py's own record, read by the script's
+        own guard."""
+        m = self.fit()
+        before = self.before()
+        for f in self.configs:
+            self.write(f, f"limits raised: {f}\n", 3)
+        m.keep_agent(before, str(self.START))
+        self.assertFalse(self.restarted())
+        # a second raise before any restart: the files are newer than the server, and listed for it
+        before = self.before()
+        for f in self.configs:
+            self.write(f, f"limits raised again: {f}\n", 600)
+        m.keep_agent(before, str(self.START))
+        self.assertFalse(self.restarted())
+
+    def test_the_fit_does_not_vouch_for_a_change_it_did_not_make(self):
+        """A config edited since the server started, then raised by the fit: the server never read the edit, so
+        the fit lists nothing for that file and the script restarts the server."""
+        m = self.fit()
+        self.write(self.configs[0], "edited by hand\n", 60)
+        before = self.before()
+        for f in self.configs:
+            self.write(f, f"limits raised: {f}\n", 120)
+        m.keep_agent(before, str(self.START))
+        self.assertEqual(self.kept.read_text().split(), ["user", self.sha(self.configs[1]), str(self.START)])
+        self.assertTrue(self.restarted())
+
+    def test_the_fit_does_not_vouch_for_a_copy_of_the_artifact_made_since_the_start(self):
+        """The server read the user's own config at its start. The user then copied the artifact over it, as the
+        cockpit suggests, and the fit raised both: the two files are the same bytes again, the artifact's line is
+        written, and the user's file, which the server never read, still restarts it."""
+        m = self.fit()
+        self.write(self.configs[1], self.configs[0].read_text(), 60)
+        before = self.before()
+        for f in self.configs:
+            self.write(f, "limits raised, the same bytes in both\n", 120)
+        m.keep_agent(before, str(self.START))
+        self.assertEqual(self.kept.read_text().split(), ["artifact", self.sha(self.configs[0]), str(self.START)])
+        self.assertTrue(self.restarted())
+
+    def test_a_config_dated_the_second_the_server_started_counts_as_read(self):
+        """To the whole second, as the script's own check compares them: a file dated the server's start is not
+        newer than it there, so the fit vouches for it too."""
+        m = self.fit()
+        for f in self.configs:
+            os.utime(f, (self.START, self.START))
+        before = self.before()
+        for f in self.configs:
+            self.write(f, f"limits raised: {f}\n", 3)
+        m.keep_agent(before, str(self.START))
+        self.assertFalse(self.restarted())
+
+    def test_a_record_that_cannot_be_read_or_written_does_not_stop_the_fit(self):
+        """The limits are written by the time the record is: a broken record costs a restart, never the fit."""
+        m = self.fit()
+        self.kept.write_bytes(b"\xff\xfe not text\n")
+        before = self.before()
+        for f in self.configs:
+            self.write(f, f"limits raised: {f}\n", 3)
+        m.keep_agent(before, str(self.START))
+        self.assertFalse(self.restarted(), "the unreadable record is replaced by a good one")
+        self.kept.unlink()
+        self.kept.mkdir()                       # nothing can replace a directory
+        m.keep_agent(self.before(), str(self.START))
+        self.kept.rmdir()
+        self.assertTrue(self.restarted())
+
+    def test_the_fit_lists_nothing_for_a_server_that_does_not_run(self):
+        m = self.fit()
+        self.raise_both()
+        before = [(w, f, self.START - 100, "x") for w, f in zip(self.WHICH, self.configs)]
+        m.keep_agent(before, "")
+        self.assertFalse(self.kept.exists(), "the lines of a server that is gone go with it")
 
 
 class TheCockpitFollowsTheReleaseItNames(unittest.TestCase):

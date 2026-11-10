@@ -6,6 +6,7 @@ computation. No engine, no network, no config touched.
 The invariant that matters: opencode declares context+output as one worst-case
 request, so context+output must stay under the same usable share of the pool the
 proxy refuses above. Anything else fails mid-conversation rather than early."""
+import hashlib
 import importlib.util
 import os
 import sys
@@ -142,6 +143,57 @@ def main() -> None:
             (P(d) / "opencode.json").write_text("{}")
             assert m.main(["--restart-agent-if-lowered"]) == 0
         assert len(restarts) == want, (merge_said, restarts)
+
+    # 6a2. What the installer's fit only raised, it lists for install-agent.sh, which runs after it and restarted the
+    #      server it had left alone: the two configs were newer than the server's start (the reference box, update to
+    #      v1.45.3, 2026-11-09). One line per config the server was up to date with: which of the two it is, its
+    #      sha256 as the fit left it, and the server's start. Nothing is listed for a file changed since that start by anything else, nor when a
+    #      limit came down (the server is restarted), nor without the installer's flag.
+    started = 1_800_000_000
+    raised = "qwen38/qwen3.8-27b limits: 498000/166000 -> 555000/185000 (backup x)"
+    lowered_ = "qwen38/qwen3.8-27b limits: 700000/200000 -> 567000/189000 (backup x)"
+    home_before = os.environ.get("HOME")
+    for flag, merge_said, age, want_lines, want_restarts in (
+            ("--restart-agent-if-lowered", raised, -500, 2, 0),
+            ("--restart-agent-if-lowered", raised, +500, 0, 0),
+            ("--restart-agent-if-lowered", lowered_, -500, 0, 1),
+            ("--restart-agent", raised, -500, 0, 1),
+            ("--no-flag", raised, -500, 0, 0)):
+        restarts.clear()
+        with tempfile.TemporaryDirectory() as d:
+            os.environ["HOME"] = d                      # the second config is the user's own, under Path.home()
+            m.CONFIG_DIR = P(d) / ".config/qwen38"
+            configs = [m.CONFIG_DIR / "opencode.json", P(d) / ".config/opencode/opencode.json"]
+            for f in configs:
+                f.parent.mkdir(parents=True)
+                f.write_text(f"as the server read it: {f}")
+                os.utime(f, (started + age, started + age))
+
+            def fake(argv, **kw):
+                argv = [str(a) for a in argv]
+                if "is-active" in argv:
+                    return sp.CompletedProcess(argv, 0, stdout="", stderr="")
+                if "ExecMainStartTimestamp" in argv:
+                    return sp.CompletedProcess(argv, 0, stdout=f"@{started}\n", stderr="")
+                if any(a.endswith("oc-merge-limits.py") for a in argv):
+                    target = P(argv[2])
+                    assert str(target).startswith(d), f"the fit wrote outside the test's home: {target}"
+                    target.write_text(target.read_text() + " + raised limits")
+                    return sp.CompletedProcess(argv, 0, stdout=merge_said, stderr="")
+                return sp.CompletedProcess(argv, 0, stdout="", stderr="")
+            m.subprocess.run = fake
+            assert m.main([flag] if flag != "--no-flag" else []) == 0
+            kept = m.CONFIG_DIR / "opencode-web.kept"
+            lines = kept.read_text().split("\n")[:-1] if kept.exists() else []
+            assert len(lines) == want_lines, (flag, merge_said, age, lines)
+            assert sorted(lines) == sorted(f"{w} {hashlib.sha256(f.read_bytes()).hexdigest()} {started}"
+                                           for w, f in list(zip(("artifact", "user"), configs))[:want_lines]), \
+                (flag, age, lines)
+            assert len(restarts) == want_restarts, (flag, merge_said, age, restarts)
+    if home_before is None:
+        os.environ.pop("HOME", None)
+    else:
+        os.environ["HOME"] = home_before
     m.subprocess.run = real_run
 
     # 6b. A fit that changed the limits regenerates the pi and omp files (docs/pi.md), and

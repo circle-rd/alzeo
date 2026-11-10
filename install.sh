@@ -2809,7 +2809,7 @@ if [ -d "$CONFIG_DIR/pi" ] || [ -d "$CONFIG_DIR/omp" ]; then
     || echo "NOTE: could not regenerate the pi/omp artifacts; run ./pi-gen.py by hand"
 fi
 # Every opencode.json this install touches has been written by now, except the limits
-# a 1m install fits to the pool once the engine is up (step 9, which restarts it again),
+# a 1m install fits to the pool once the engine is up (step 9, which restarts it again when a limit comes down),
 # so the server that reads them can be restarted. It parses opencode.json ONCE at startup and
 # never again (measured 2026-09-13: the file said 225,000 while the running
 # server still answered 175,000 on /config), so without this the Agent tab keeps

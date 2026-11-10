@@ -20,6 +20,7 @@ It edits only the `limit` object of the served lane's model, in both the
 generated artifact and the config opencode really reads, through
 oc-merge-limits.py, and does nothing at all when the integration is off.
 """
+import hashlib
 import json
 import re
 import os
@@ -130,6 +131,71 @@ def restart_agent() -> str:
         return f"{AGENT_UNIT} restarted: the Agent view now runs the new limits"
     return (f"NOTE: could not restart {AGENT_UNIT} ({(r.stderr or '').strip()[:120]}); "
             f"restart it by hand, or the Agent view keeps the old limits")
+
+
+def agent_started() -> str:
+    """The second the Agent tab's server started, as systemd gives it and as install-agent.sh reads it; "" when it
+    does not run."""
+    if subprocess.run(["systemctl", "is-active", "--quiet", AGENT_UNIT]).returncode != 0:
+        return ""
+    out = subprocess.run(["systemctl", "show", "-p", "ExecMainStartTimestamp", "--value", "--timestamp=unix",
+                          AGENT_UNIT], capture_output=True, text=True).stdout
+    return "".join(c for c in out if c.isdigit())
+
+
+def file_sha(path: Path) -> str:
+    try:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError:
+        return ""
+
+
+def keep_agent(rewritten: list, started: str) -> None:
+    """Tell install-agent.sh which configs the running Agent server does not have to read.
+
+    install-agent.sh, which the installer runs after this fit, restarts opencode-web when one of the two configs it
+    reads is newer than its start. A fit that only raised the limits had just rewritten them, so the server this
+    fit left alone was restarted three seconds later and the Agent tab's turn ended all the same (the reference box,
+    updates to v1.45.2 and v1.45.3, 2026-11-09: 421,000/140,000 -> 436,000/145,000 on the second).
+
+    opencode-web.kept holds one line per such config: which of the two it is ("artifact", this repo's own, or
+    "user", the one under ~/.config/opencode), the sha256 of the file as this fit left it, and the start of the
+    server that may keep running on what it read. install-agent.sh leaves out of its check a config listed for the
+    server that runs. A line is written only for a config that server was up to date with before this fit touched
+    it (the file was no newer than its start, to the second as install-agent.sh compares them, or was already
+    listed for it): a change made by anything else since its start still restarts it, and so does any later change
+    of the file. The line names the file because the two are often the same bytes (the installer creates the user's
+    as a copy of the artifact): one vouched for must not vouch for the other (found in review, 2026-11-10). A server
+    started since has read the files, and its start no longer matches the lines.
+
+    `rewritten` is (which, path, its mtime before, its sha256 before) per config this fit changed. Nothing here may
+    stop the fit, whose limits are written by now: at worst the record is dropped and the server restarts."""
+    path = CONFIG_DIR / "opencode-web.kept"       # read here, not at import: the tests point CONFIG_DIR elsewhere
+    tmp = path.with_name(path.name + ".tmp")
+    try:
+        try:
+            kept = {tuple(ln.split()) for ln in path.read_text().splitlines() if len(ln.split()) == 3}
+        except (OSError, ValueError):
+            kept = set()
+        lines = {ln for ln in kept if started and ln[2] == started}
+        for which, target, mtime, sha in rewritten:
+            if started and (mtime <= int(started) or (which, sha, started) in kept):
+                after = file_sha(target)
+                if after:
+                    lines.add((which, after, started))
+        if lines:
+            tmp.write_text("".join(" ".join(ln) + "\n" for ln in sorted(lines)))
+            os.replace(tmp, path)
+        else:
+            path.unlink(missing_ok=True)
+    except (OSError, ValueError) as e:
+        print(f"  NOTE: could not record what the Agent server may keep ({type(e).__name__}): it restarts at the "
+              f"installer's next step")
+        for left in (tmp, path):
+            try:
+                left.unlink(missing_ok=True)
+            except OSError:
+                pass
 
 
 def engine_info(base: str) -> dict:
@@ -258,9 +324,12 @@ def main(argv: list[str]) -> int:
     keep = subprocess.run([str(REPO_DIR / "oc-limits.sh"), "--preserve", str(context)],
                           capture_output=True, text=True).stdout.strip()
     rc, changed, merged, lowered = 0, False, False, False
-    for target in (CONFIG_DIR / "opencode.json", Path.home() / ".config/opencode/opencode.json"):
+    started, rewritten = (agent_started() if restart_lowered else ""), []
+    for which, target in (("artifact", CONFIG_DIR / "opencode.json"),
+                          ("user", Path.home() / ".config/opencode/opencode.json")):
         if not target.exists():
             continue
+        before = (int(target.stat().st_mtime), file_sha(target))
         out = subprocess.run([sys.executable, str(REPO_DIR / "oc-merge-limits.py"), str(target),
                               provider, served, str(context), str(output)],
                              capture_output=True, text=True)
@@ -289,6 +358,8 @@ def main(argv: list[str]) -> int:
                 rc = out.returncode
             elif "unchanged" not in said:
                 changed = True
+        if file_sha(target) != before[1]:
+            rewritten.append((which, target, *before))
     if rc == 0 and not merged:
         # nothing was compared, so nothing can be said about what opencode asks for
         # (it used to say "already asks for no more" here, found in review, 2026-09-24)
@@ -299,6 +370,8 @@ def main(argv: list[str]) -> int:
         print("opencode now asks for no more than this engine can serve")
         print(restart_agent())
     elif rc == 0 and restart_lowered:
+        # install-agent.sh runs next and judges the server by the date of these files: it is told what was only raised
+        keep_agent(rewritten, started)
         # said as it is: the server may not run, and the change may be the compaction block alone (review of v1.45.1)
         print("opencode now asks for no more than this engine can serve; the Agent tab's server, if it runs, keeps "
               "what it read at its start, which still fits: it reads the new settings at its next start")
