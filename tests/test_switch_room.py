@@ -69,8 +69,9 @@ VID_END = TEXT.index('nothing was changed). Free some space first, or point HF_H
 VID_BLOCK = TEXT[VID_START:TEXT.index("\n", VID_END) + 1]
 
 
-def run_video(free_gb, cached_gib=0.0, caches_there=False, home_disk_gb=None):
-    """home_disk_gb: $HOME on another disk than the cache, with that free (df and stat stubs)."""
+def run_video(free_gb, cached_gib=0.0, caches_there=False, home_disk_gb=None, repo_dir=REPO):
+    """home_disk_gb: $HOME on another disk than the cache, with that free (df and stat stubs); repo_dir:
+    where the switch reads install-video.sh."""
     d = pathlib.Path(tempfile.mkdtemp(prefix="sw-room-"))
     blobs = d / "hf/hub/models--MiniMaxAI--MiniMax-H3/blobs"
     blobs.mkdir(parents=True)
@@ -91,7 +92,7 @@ def run_video(free_gb, cached_gib=0.0, caches_there=False, home_disk_gb=None):
         (d / "stat").chmod(0o755)
     (d / "df").chmod(0o755)
     script = ('set -euo pipefail\ndie(){ echo "DIE: $*"; exit 1; }\n'
-              f'REPO_DIR="{REPO}"; HF_CACHE="{d}/hf"; HOME="{d}/home"; VID_MODEL=MiniMaxAI/MiniMax-H3; '
+              f'REPO_DIR="{repo_dir}"; HF_CACHE="{d}/hf"; HOME="{d}/home"; VID_MODEL=MiniMaxAI/MiniMax-H3; '
               f'VID_MODEL_DIR="{d}/hf/hub/models--MiniMaxAI--MiniMax-H3"\n. "{REPO}/lanes.sh"\n'
               + DLFREE + VID_BLOCK + 'echo "NEED=$VID_WANT_GB"; echo ROOM-OK\n')
     r = subprocess.run(["bash", "-c", script], capture_output=True, text=True, timeout=30,
@@ -137,6 +138,16 @@ class TheVideoSwitchChecksForRoomToo(unittest.TestCase):
         self.assertIn("/home/.cache/sglang/diffusion/host_spill and ", out)
         self.assertIn("/home/.cache/sgl_diffusion/decode_dtype_store: 16 GB free", out)
         self.assertIn("NEED=135", run_video(free_gb=200, home_disk_gb=17))
+
+    def test_without_install_video_sh_it_asks_the_same_room(self):
+        # its fallback, when install-video.sh or its WEIGHTS_GB line cannot be read, is that number in
+        # GiB: it said 145, the GB install-video.sh counted before v1.20.0 (found 2026-11-10)
+        want = re.search(r"^WEIGHTS_GB=(\d+);", (REPO / "install-video.sh").read_text(), re.M).group(1)
+        with tempfile.TemporaryDirectory(prefix="sw-room-norepo-") as nowhere:
+            out = run_video(free_gb=200, caches_there=True, repo_dir=nowhere)
+        self.assertIn("install-video.sh: No such file", out, "the switch did not look where it was pointed")
+        self.assertIn(f"NEED={want}", out)
+        self.assertIn("ROOM-OK", out)
 
 
 class TheCockpitGivesItTheTime(unittest.TestCase):

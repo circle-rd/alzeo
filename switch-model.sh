@@ -930,7 +930,9 @@ if [ "$CHOICE" = "video" ]; then
   # comes off the need, so a complete cache (this box's normal state) needs only
   # the floor and downloads nothing; the number is install-video.sh's own.
   VID_WANT_GB="$(grep -m1 -oE '^WEIGHTS_GB=[0-9]+' "$REPO_DIR/install-video.sh" | cut -d= -f2 || true)"
-  VID_WANT_GB="${VID_WANT_GB:-145}"
+  # install-video.sh's number when its line cannot be read: GiB, as it counts them since v1.20.0 (this
+  # said 145, the GB it counted before)
+  VID_WANT_GB="${VID_WANT_GB:-135}"
   VID_HAVE_B="$({ du -s --apparent-size -B1 "$VID_MODEL_DIR/blobs" 2>/dev/null || true; } | cut -f1)"
   VID_WANT_GB=$((VID_WANT_GB - ${VID_HAVE_B:-0} / 1073741824)); [ "$VID_WANT_GB" -ge 10 ] || VID_WANT_GB=10
   # The two caches the runtime writes at its first start (lanes.sh), with the checkpoint on the
