@@ -12,9 +12,11 @@ pi-gen.py is stdlib-only, this CI step installs no PyYAML, and neither side
 of the parity check may import one. The spelling on disk is verified against
 omp itself (docs/pi.md); what these tests pin is the pair's values.
 """
+import importlib.util
 import json
 import os
 import pathlib
+import re
 import subprocess
 import tempfile
 import sys
@@ -339,6 +341,38 @@ class PiGen(unittest.TestCase):
         with open(os.path.join(self.out, "omp", "models.yml")) as f:
             self.assertIn('apiKey: "!cat /keys/api-key"', f.read())
 
+
+
+def load(name, path):
+    spec = importlib.util.spec_from_file_location(name, path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+class TheDocSaysWhatEachLaneIsSent(unittest.TestCase):
+    """docs/pi.md has a line for each lane pi sends its effort field to (EFFORT_FIELD), under its family's name
+    (Kolibri, Nemotron, Ornith), with the levels pi-gen.py maps and the one pi starts at: Ornith 1.5 122B had its
+    table in pi-gen.py and no line in the page (found 2026-11-10)."""
+
+    def test_every_lane_of_effort_field(self):
+        gen = load("pi_gen_for_its_doc", GEN)
+        reg = load("lane_registry_for_pi_doc", REPO / "lane_registry.py")
+        page = (REPO / "docs" / "pi.md").read_text()
+        section = page[page.index("## Reasoning effort"):]
+        section = section[:section.index("\n## ", 1)]
+        bullets = re.findall(r"^- \*\*([^*]+)\*\*(.*)$", section, re.M)
+        self.assertGreaterEqual(len(bullets), 3, section)
+        for prov, (level_map, start) in gen.EFFORT_FIELD.items():
+            with self.subTest(prov):
+                title = next(f["title"] for f in reg.LANES.values() if f["provider"] == prov)
+                family = re.sub(r"-\d+$", "", title.split()[0])
+                said = [rest for name, rest in bullets if name.startswith(family)]
+                self.assertEqual(len(said), 1, f"docs/pi.md has {len(said)} lines for {family} ({prov}), one expected")
+                for frm, to in level_map.items():
+                    self.assertIn(f"`{frm}` to `{to}`", said[0])
+                # pi's: omp's start, in the same line, is said "starts at" alone
+                self.assertIn(f"its level starts at `{start}`", said[0])
 
 
 class AnUpdateRegeneratesThemToo(unittest.TestCase):
