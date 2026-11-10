@@ -8,15 +8,16 @@ run on 2026-11-10, half of it the pair's tests, and the longest job of the run.
 
 This runs the same modules in groups, each group one process, the groups side by side:
 
-- each file of OWN, the longest ones, is a group of its own;
+- each file of OWN, the pair's four files, is a group of its own;
 - the others, in the order of their names, are dealt in turn into REST groups.
 
 Every module is in one group and one only, by construction. What a module does to a module of ANOTHER
 group is not seen by a run in groups: `--one-process` runs them all in one process, as CI did, and
 that pass is run every night (.github/workflows/nightly.yml) and before a release.
 
-Whatever the shape, a run fails when a group fails, when the tests that ran are not as many as the
-files declare, and when a test was skipped for a reason ALLOWED does not name.
+Whatever the shape, a run fails when a group fails, when a group says how many tests it ran more than
+once or not at all, when the tests that ran are not as many as the files declare, and when a test was
+skipped for a reason nobody listed (allowed, below).
 
 Usage: run_single.py [--jobs N] [--one-process] [--repo DIR --own M1,M2]   (exit 1 on any failure;
 --repo and --own point it at another tree, for its own tests)
@@ -32,8 +33,9 @@ from concurrent.futures import ThreadPoolExecutor
 
 REPO = pathlib.Path(__file__).resolve().parents[1]
 
-# The longest modules, each a process of its own, the longest first (seconds measured on the
-# reference box on 2026-11-10: 497, 164, 132, 99; no other module takes more than 166).
+# The pair's four files, each a process of its own, the longest first (seconds measured on the
+# reference box on 2026-11-10, as classes of the one file they were: 497, 164, 132, 99; the longest
+# of the other modules, tests.test_proxy_hold, takes 166).
 OWN = ["tests.test_proxy_pair_one_model_inprocess", "tests.test_proxy_pair_one_model", "tests.test_proxy_pair",
        "tests.test_proxy_pair_inprocess"]
 REST = 2
@@ -48,6 +50,36 @@ TEST_DEF = "def " + "test_"
 ALLOWED = ["needs the reference class of machine", "needs the pinned bytes cached", "no 27B unit installed here",
            "is not the enabled lane here", "no Qwen3.8 tokenizer.json", "needs a real opencode"]
 OFF_THE_RUNNER = ["typesafe-sdk is not installed"]
+# A case only the twin of its class can run, the one with the proxy in the test's own process, says so
+# where the proxy is a process of its own. In a twin (a class named ...InProcess) it is no reason.
+IN_PROCESS_ONLY = "in this test's process"
+# unittest writes a reason as its repr: between double quotes when it holds an apostrophe. The check
+# read `... skipped '` alone, in the step of ci.yml as here, and so never saw 85 of the 95 reasons
+# this directory gives, an apostrophe in each (found in review, 2026-11-10).
+SKIP_RE = re.compile(r"\.\.\. skipped (['\"])(.*)\1\s*$")
+TEST_ID_RE = re.compile(r"\((tests\.[\w.]+)\)")
+
+
+def skipped(out):
+    """(test, reason, line) of every test unittest -v says it skipped. The test is named on the line of its
+    verdict, or on the line before when its docstring is printed."""
+    found, test = [], ""
+    for line in out.splitlines():
+        named = TEST_ID_RE.search(line)
+        if named:
+            test = named.group(1)
+        m = SKIP_RE.search(line)
+        if m:
+            found.append((test, m.group(2), line))
+    return found
+
+
+def allowed(test, reason, on_runner):
+    """Whether this test may be skipped for this reason."""
+    if any(r in reason for r in ALLOWED + ([] if on_runner else OFF_THE_RUNNER)):
+        return True
+    # tests.<module>.<Class>.<test>: the class is the name before the last
+    return IN_PROCESS_ONLY in reason and not test.split(".")[-2:][0].endswith("InProcess")
 
 
 def modules(repo=REPO):
@@ -80,9 +112,8 @@ def run_group(mods, repo=REPO):
                        stdin=subprocess.DEVNULL)
     out = r.stdout + r.stderr
     ran = [int(n) for n in re.findall(r"^Ran (\d+) tests? in ", out, re.M)]
-    return {"mods": mods, "rc": r.returncode, "out": out, "seconds": time.monotonic() - t0,
-            "ran": ran[-1] if ran else 0, "declared": declared(mods, repo),
-            "skips": [ln for ln in out.splitlines() if "... skipped '" in ln]}
+    return {"mods": mods, "rc": r.returncode, "out": out, "seconds": time.monotonic() - t0, "rans": ran,
+            "ran": ran[-1] if ran else 0, "declared": declared(mods, repo), "skips": skipped(out)}
 
 
 def label(g):
@@ -117,6 +148,11 @@ def main(argv):
             print(f"the unittest suites failed ({label(g)}):")
             print("\n".join(ln for ln in g["out"].splitlines() if re.match(r"^(FAIL|ERROR):", ln)))
             bad += 1
+        elif len(g["rans"]) != 1:
+            # one process, one count: a second one is a test that ran the tests again (a fork whose child
+            # goes on, say), and the step of ci.yml failed on it, comparing both counts to the declared one
+            print(f"unittest said how many tests it ran {len(g['rans'])} times, not once ({label(g)}): {g['rans']}")
+            bad += 1
         elif g["ran"] != g["declared"]:
             print(f"unittest ran {g['ran']} of {g['declared']} declared tests ({label(g)})")
             bad += 1
@@ -128,10 +164,12 @@ def main(argv):
     if ran != want and not bad:
         print(f"unittest ran {ran} of {want} declared tests")
         bad += 1
-    allowed = ALLOWED + ([] if os.environ.get("GITHUB_ACTIONS") else OFF_THE_RUNNER)
-    skips = [ln for g in done for ln in g["skips"]]
-    unlisted = [ln for ln in skips if not any(reason in ln for reason in allowed)]
-    print(f"skipped for a listed reason: {len(skips) - len(unlisted)}")
+    on_runner = bool(os.environ.get("GITHUB_ACTIONS"))
+    skips = [s for g in done for s in g["skips"]]
+    unlisted = [line for test, reason, line in skips if not allowed(test, reason, on_runner)]
+    twins = sum(1 for test, reason, _ in skips if IN_PROCESS_ONLY in reason and allowed(test, reason, on_runner))
+    print(f"skipped for a listed reason: {len(skips) - len(unlisted)} ({twins} of them cases that only the "
+          f"in-process twin of their class runs)")
     if unlisted:
         print("tests skipped for a reason nobody listed:")
         print("\n".join(unlisted))

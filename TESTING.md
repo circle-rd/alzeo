@@ -38,7 +38,7 @@ pushing.
 
 What a test module leaves to the modules after it (a variable of the environment, the directory,
 `sys.path`, a thread, a signal handler) shows only where they share a process. `single` shares one
-within a group: each of the four longest modules alone, the others dealt in turn into two groups
+within a group: each of the pair's four files alone, the others dealt in turn into two groups
 (`tests/run_single.py`), four processes at a time. What a module does to a module of ANOTHER group
 is seen by the pass that runs them all in one process, `tests/run_single.py --one-process`, half an
 hour: GitHub runs it every night (`.github/workflows/nightly.yml`), and a release runs it on the box

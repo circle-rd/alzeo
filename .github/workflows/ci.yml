@@ -1396,7 +1396,10 @@ jobs:
           # the pair's tests. The run fails when a group fails, when fewer tests ran than the files
           # declare (a skip decorator on a whole class stayed green until that was counted,
           # 2026-09-24), and when a test was skipped for a reason its list does not name: what a
-          # runner cannot have (the reference box, its cache, its units, opencode).
+          # runner cannot have (the reference box, its cache, its units, opencode), or a case that
+          # only the in-process twin of its class runs. It reads a reason whatever quotes unittest
+          # writes it in: this step read single quotes alone, and saw none of the reasons that hold
+          # an apostrophe, 85 of the 95 that tests/ gives (found in review, 2026-11-10).
           python3 tests/run_single.py
           # Each one must also run its own tests when invoked directly: a file
           # without a __main__ block exits 0 having run nothing, and a SkipTest out
@@ -1421,9 +1424,10 @@ jobs:
           pip install 'coverage==7.16.0' 2>/dev/null || true
           PY="$(./tests/testpy.sh coverage)"
           rm -f .coverage*
-          # Four files at a time, the longest first: one after the other they took 1,283 s on
-          # 2026-11-10, 892 of them the pair's tests, which are four files since. --parallel-mode
-          # gives every run a data file of its own, which combine reads below.
+          # Four files at a time, the pair's four files first: one after the other the files took
+          # 1,283 s on 2026-11-10, when the pair's tests were one file, 892 s of the pass that ran
+          # every module in one process. --parallel-mode gives every run a data file of its own,
+          # which combine reads below.
           files="tests/test_proxy_pair_one_model_inprocess.py tests/test_proxy_pair_one_model.py \
                  tests/test_proxy_pair.py tests/test_proxy_pair_inprocess.py tests/test_proxy_hold.py \
                  tests/test_proxy_guard.py tests/test_proxy_abort.py tests/test_proxy_keepalive.py \

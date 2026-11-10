@@ -2,9 +2,10 @@
 """tests/run_single.py runs every unittest module of tests/ beside the others, in groups or in one process.
 
 Each fact its run stands for is proven here on a planted tree: a failing test, fewer tests run than declared,
-a skip nobody listed, a module that is in no group. And its known limit is shown as it is: what a module
-does to a module of another group is seen by the one-process pass only, which is why that pass still runs
-every night and before a release."""
+two counts from one process, a skip nobody listed, whatever quotes unittest writes its reason in. That every
+module is in a group is read on the real plan. And its known limit is shown as it is: what a module does to a
+module of another group is seen by the one-process pass only, which is why that pass still runs every night
+and before a release."""
 import contextlib
 import importlib.util
 import io
@@ -101,6 +102,46 @@ class OnPlantedTrees(unittest.TestCase):
         self.assertEqual(rc, 1, said)
         self.assertIn("tests skipped for a reason nobody listed", said)
         self.assertIn("not today", said)
+
+    def test_a_reason_with_an_apostrophe_is_read_too(self):
+        # unittest writes it between double quotes: the check read single ones alone and saw none of the 85
+        # reasons of tests/ that hold an apostrophe (found in review, 2026-11-10)
+        repo = self.tree({"test_a.py": OK, "test_skips.py": skipped("the runner's docker is absent")})
+        rc, said = self.run_it(repo)
+        self.assertEqual(rc, 1, said)
+        self.assertIn("tests skipped for a reason nobody listed", said)
+        self.assertIn("the runner's docker is absent", said)
+        listed = self.tree({"test_a.py": OK, "test_skips.py": skipped("needs the pinned bytes cached (the box's cache)")})
+        rc, said = self.run_it(listed)
+        self.assertEqual(rc, 0, said)
+        self.assertIn("skipped for a listed reason: 1 (0 of them", said)
+
+    def test_a_case_for_the_twin_alone_is_skipped_where_the_proxy_is_a_process_and_nowhere_else(self):
+        twin_only = ("import unittest\n\nclass ABox(unittest.TestCase):\n    def TEST_a(self):\n"
+                     "        self.skipTest(\"the stop is made in this test's process\")\n\n\n"
+                     "class ABoxInProcess(ABox):\n    def TEST_a(self):\n        pass\n")
+        repo = self.tree({"test_a.py": OK, "test_twins.py": twin_only})
+        rc, said = self.run_it(repo)
+        self.assertEqual(rc, 0, said)
+        self.assertIn("skipped for a listed reason: 1 (1 of them cases that only the in-process twin", said)
+        # a twin that skips the case too: nothing runs it any more
+        both = twin_only.replace("class ABoxInProcess(ABox):\n    def TEST_a(self):\n        pass\n",
+                                 "class ABoxInProcess(ABox):\n    def TEST_a(self):\n        super().test_a()\n")
+        repo = self.tree({"test_a.py": OK, "test_twins.py": both})
+        rc, said = self.run_it(repo)
+        self.assertEqual(rc, 1, said)
+        self.assertRegex(said, r"tests\.test_twins\.ABoxInProcess\.test_a\) \.\.\. skipped")
+        self.assertNotRegex(said.split("nobody listed:")[1], r"test_twins\.ABox\.test_a")
+
+    def test_two_counts_from_one_process_fail_the_run(self):
+        # a test that runs the tests again says "Ran" a second time (a fork whose child goes on, say): the last
+        # count alone is the declared one, and the run would pass
+        twice = "import sys\nsys.stderr.write('Ran 7 tests in 0.001s\\n')\n" + OK
+        repo = self.tree({"test_a.py": OK, "test_twice.py": twice})
+        for shape in ([], ["--one-process"]):
+            rc, said = self.run_it(repo, *shape)
+            self.assertEqual(rc, 1, said)
+            self.assertIn("unittest said how many tests it ran 2 times, not once", said)
 
     def test_the_sdk_may_be_missing_off_the_runner_only(self):
         repo = self.tree({"test_a.py": OK, "test_sdk.py": skipped("typesafe-sdk is not installed")})
