@@ -358,7 +358,7 @@ class EveryListNamesThemAll(unittest.TestCase):
                         if isinstance(t, ast.Name):
                             self.assertEqual(consts.setdefault(t.id, node.value.value), node.value.value, t.id)
         self.assertLessEqual({"IMAGE_UNIT", "VIDEO_UNIT", "KOLIBRI_UNIT", "NEMOTRON_UNIT", "NEMOTRON_SUPER_UNIT",
-                              "FLASH_LOCAL_UNIT"}, set(consts), consts)
+                              "FLASH_LOCAL_UNIT", "ORNITH_UNIT"}, set(consts), consts)
 
         def unit_of(e):
             if isinstance(e, ast.Constant):
