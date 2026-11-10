@@ -2942,8 +2942,17 @@ bolt_answers() {  # $1 seconds: Bolt's engine answers on its port before then, i
   done
   return 1
 }
+text_lane_answers() {  # $1 seconds: an engine answers on the text port before then; nothing is started or stopped
+  local end=$((SECONDS + $1)) n=0
+  while [ "$SECONDS" -lt "$end" ] && [ "$n" -lt $(( $1 / 10 )) ]; do
+    curl -sf -m 5 -o /dev/null "http://127.0.0.1:$PORT/health" && return 0
+    sleep 10; n=$((n + 1))
+  done
+  return 1
+}
 bolt_first_load() {  # Bolt loaded as the cockpit's Load does it; 0 when it answers, the box back on the 27B else
   bash "$REPO_DIR/prepare-lane.sh" nemotron || return 1
+  BOLT_SWITCHED=1   # from here opencode's pair is rewritten: by Bolt's switch, then by the switch back
   if ! bash "$REPO_DIR/switch-model.sh" nemotron; then
     bash "$REPO_DIR/switch-model.sh" "$MODEL_CHOICE" || true
     return 1
@@ -3918,16 +3927,21 @@ except Exception as e:
         echo "      again and answers in a few minutes). Load Bolt from the cockpit to try again."
         # Once Bolt's switch ran, the switch back to the 27B wrote its nominal opencode pair (173,000 + 64,000 at its
         # native window) over the one fitted above to its pool, some 59,625 tokens on this class. A cockpit that runs
-        # fits them again once the 27B answers (its autofit); with none, nothing did, and opencode asked for nearly
-        # four times the pool until the next update (found in review, 2026-11-10). So the 27B is waited for and
-        # fitted, as after the other lanes' proofs; after a preparation that failed nothing moved, and the fit finds
-        # its pair in place.
-        if [ "$OPENCODE" -eq 1 ] && ! systemctl is-active --quiet qwen38-dashboard.service 2>/dev/null; then
-          if prove_text_lane "$UNIT_NAME" "$SMOKE_MODEL"; then
+        # fits them again once the 27B answers (its autofit, unless it was turned off); with none, nothing did, and
+        # opencode asked for nearly four times the pool until the next update (found in review, 2026-11-10). So the
+        # 27B is waited for, then fitted. It is only waited for: nothing here starts or stops its unit, and no sudo
+        # is asked at the end of a run. systemd starts the 27B again by itself when its first try finds the GPU's
+        # memory not given back yet (engine-preflight.sh), and the proof of the other lanes, which stops a unit it
+        # sees restarting, would have left this box with no engine (found in review the same day). After a
+        # preparation that failed the switch never ran: nothing moved, and nothing is done.
+        if [ "$OPENCODE" -eq 1 ] && [ "${BOLT_SWITCHED:-0}" -eq 1 ] \
+           && ! systemctl is-active --quiet qwen38-dashboard.service 2>/dev/null; then
+          echo "  opencode's limits are fitted to the 27B's pool again once it answers (20 min at most)"
+          if text_lane_answers 1200; then
             python3 "$REPO_DIR/oc-fit-limits.py" --engine "http://127.0.0.1:$PORT" --restart-agent \
               || echo "  NOTE: could not fit them; run python3 oc-fit-limits.py yourself"
           else
-            echo "  NOTE: opencode keeps the 27B's nominal limits, above its pool here: once it serves, run python3 oc-fit-limits.py"
+            echo "  NOTE: the 27B does not answer yet, and opencode keeps its nominal limits, above its pool here: once it serves, run python3 oc-fit-limits.py"
           fi
         fi
       fi
