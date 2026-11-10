@@ -373,26 +373,59 @@ LANE_NAMED = re.compile(r"\b(?:[Tt]he|[Aa]n?) ((?:\d[\w.]* )*[A-Z][\w.-]*(?: [A-
 SH_HEREDOC = re.compile(r"(?<!<)<<(?!<)(-?)\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\2")
 
 
+# an engine's or a maker's lanes ("the SGLang lanes", "a Qwen lane"): a family of them, no lane's own name
+FAMILIES = {"SGLang", "vLLM", "Qwen"}
+
+
+def lanes_named(text, start=0):
+    """[(the words as written, the name)] of each lane a text names by a proper name, the families aside."""
+    return [(m.group(0), m.group(1)) for m in LANE_NAMED.finditer(text, start) if m.group(1) not in FAMILIES]
+
+
+def sh_code(line):
+    """A shell line without its comment: a # that starts a word, outside quotes."""
+    quote, i = None, 0
+    while i < len(line):
+        c = line[i]
+        if quote:
+            if c == "\\" and quote == '"':
+                i += 1
+            elif c == quote:
+                quote = None
+        elif c in "'\"":
+            quote = c
+        elif c == "\\":
+            i += 1
+        elif c == "#" and (i == 0 or line[i - 1] in " \t;"):
+            return line[:i]
+        i += 1
+    return line
+
+
 def sh_messages(text):
     """[(line, name)] of each lane a script's messages name by a proper name, in the lines that print. Its
-    comments and its here-documents are not read (install.sh's help is one, and the Python the scripts run
-    are others); a here-document that never meets its word raises ValueError: nothing after it is skipped
-    unread."""
-    out, lines, i = [], text.splitlines(), 0
+    comments are not read, at the end of a line either, nor its here-documents (install.sh's help is one, and
+    the Python the scripts run are others). A here-document's body starts after the last line of its command: a
+    line that ends with a backslash goes on, and is read (install-video.sh's "<<'PY' \\" then "|| echo ..." was
+    taken for the body: found in review, 2026-11-10). A << inside $(( )) is a shift. A here-document that never
+    meets its word raises ValueError: nothing after it is skipped unread."""
+    out, lines, i, opened = [], text.splitlines(), 0, []
     while i < len(lines):
-        line, n = lines[i], i + 1
+        n, code = i + 1, sh_code(lines[i])
         i += 1
-        if line.lstrip().startswith("#"):
-            continue
-        cmd = SH_MESSAGE.search(line)
+        cmd = SH_MESSAGE.search(code)
         if cmd:
-            out += [(n, m.group(1)) for m in LANE_NAMED.finditer(line, cmd.end())]
-        for h in SH_HEREDOC.finditer(line):
-            while i < len(lines) and (lines[i].lstrip("\t") if h.group(1) else lines[i]) != h.group(3):
+            out += [(n, name) for _, name in lanes_named(code, cmd.end())]
+        opened += [(n, h) for h in SH_HEREDOC.finditer(code)
+                   if code.count("$((", 0, h.start()) <= code.count("))", 0, h.start())]
+        if opened and not code.rstrip().endswith("\\"):
+            for at, h in opened:
+                while i < len(lines) and (lines[i].lstrip("\t") if h.group(1) else lines[i]) != h.group(3):
+                    i += 1
+                if i == len(lines):
+                    raise ValueError(f"line {at}: a here-document never meets its {h.group(3)}")
                 i += 1
-            if i == len(lines):
-                raise ValueError(f"line {n}: a here-document never meets its {h.group(3)}")
-            i += 1
+            opened = []
     return out
 
 
@@ -1625,10 +1658,10 @@ class TheNamesAreTheOfficialOnes(unittest.TestCase):
             for path in floor(files, f"the cockpit's {kind} files", 2):
                 rel = path.relative_to(REPO).as_posix()
                 for n, s in floor(py_said(rel) if kind == "Python" else js_strings(text_of(rel)), f"{rel} its strings"):
-                    for m in LANE_NAMED.finditer(s):
-                        named.setdefault(kind, set()).add(m.group(1))
-                        if m.group(1) not in titles:
-                            p.append(f"{rel}:{n} says {m.group(0)!r}, which is no lane's official name")
+                    for said, name in lanes_named(s):
+                        named.setdefault(kind, set()).add(name)
+                        if name not in titles:
+                            p.append(f"{rel}:{n} says {said!r}, which is no lane's official name")
             lacks = [LANES[x]["title"] for x in VLLM if LANES[x]["title"] not in named.get(kind, ())]
             if lacks:
                 p.append(f"no string of the cockpit's {kind} names \"the <name> lane\" of {lacks}")
@@ -1675,6 +1708,15 @@ class TheReadersReadWhatTheyClaim(unittest.TestCase):
         self.assertEqual(sh_messages(sh), [(1, "Alpha"), (7, "Epsilon 1.5"), (10, "Theta"), (10, "176B Iota")])
         with self.assertRaises(ValueError):
             sh_messages('cat <<EOF\necho "the Eta lane"\n')
+
+    def test_a_script_is_read_past_what_hid_a_message_and_what_was_none(self):
+        sh = ("python3 - <<'PY' \\\n  || echo \"the Alpha lane serves without it\"\nprint('the Beta lane, in the body')\nPY\n"
+              'die "x"   # the Gamma lane, in a comment at the end of the line\n'
+              'BIT=$((1<<SHIFT)); echo "the Delta lane"\n'
+              'echo "on the SGLang lanes, a Qwen lane, an SGLang lane and the vLLM lanes"\n'
+              'echo "a # in a string, then the Epsilon lane"   # and a comment\n')
+        self.assertEqual(sh_messages(sh), [(2, "Alpha"), (6, "Delta"), (8, "Epsilon")])
+        self.assertEqual(lanes_named("The SGLang lanes, the Zeta lane"), [("the Zeta lane", "Zeta")])
 
     def test_the_cockpits_strings_are_read_as_its_code_holds_them(self):
         TREES["<said>"] = ast.parse('"""the Alpha lane, a docstring"""\n'
