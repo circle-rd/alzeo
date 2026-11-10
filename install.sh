@@ -3305,15 +3305,15 @@ else
   fi
   if [ "$WANT_KOLIBRI" -eq 1 ]; then
     "$REPO_DIR/install-kolibri.sh" "$(side_mode kolibri "$WITH_KOLIBRI")" \
-      || echo "NOTE: the Kolibri lane did not install or update; retry with ./install-kolibri.sh --no-smoke"
+      || echo "NOTE: the Kolibri-1 lane did not install or update; retry with ./install-kolibri.sh --no-smoke"
   fi
   if [ "$WANT_NEMOTRON" -eq 1 ]; then
     "$REPO_DIR/install-nemotron.sh" "$(side_mode nemotron "$WITH_NEMOTRON")" \
-      || echo "NOTE: the Nemotron lane did not install or update; retry with ./install-nemotron.sh --no-smoke"
+      || echo "NOTE: the Nemotron 3.5 Bolt lane did not install or update; retry with ./install-nemotron.sh --no-smoke"
   fi
   if [ "$WANT_NEMOTRON_SUPER" -eq 1 ]; then
     "$REPO_DIR/install-nemotron-super.sh" "$(side_mode nemotron-super "$WITH_NEMOTRON_SUPER")" \
-      || echo "NOTE: the Nemotron Super lane did not install or update; retry with ./install-nemotron-super.sh --no-smoke"
+      || echo "NOTE: the Nemotron 3.5 Super VL lane did not install or update; retry with ./install-nemotron-super.sh --no-smoke"
   fi
   if [ "$WANT_FLASH_LOCAL" -eq 1 ]; then
     "$REPO_DIR/install-flash-local.sh" "$(side_mode flash-local "$WITH_FLASH_LOCAL")" \
@@ -3326,9 +3326,9 @@ else
   SERVING_LANE=""
   [ "$IMAGE_BOOT" -eq 1 ] && SERVING_LANE="image"
   [ "$VIDEO_BOOT" -eq 1 ] && SERVING_LANE="video"
-  [ "$KOLIBRI_BOOT" -eq 1 ] && SERVING_LANE="Kolibri"
-  [ "$NEMOTRON_BOOT" -eq 1 ] && SERVING_LANE="Nemotron"
-  [ "$NEMOTRON_SUPER_BOOT" -eq 1 ] && SERVING_LANE="Nemotron Super"
+  [ "$KOLIBRI_BOOT" -eq 1 ] && SERVING_LANE="Kolibri-1"
+  [ "$NEMOTRON_BOOT" -eq 1 ] && SERVING_LANE="Nemotron 3.5 Bolt"
+  [ "$NEMOTRON_SUPER_BOOT" -eq 1 ] && SERVING_LANE="Nemotron 3.5 Super VL"
   [ "$FLASH_LOCAL_BOOT" -eq 1 ] && SERVING_LANE="Qwen3.8 Flash-Next FP4-Local"
   [ "$ORNITH_122B_BOOT" -eq 1 ] && SERVING_LANE="Ornith 1.5 122B"
   if [ -n "$ATS_CANNOT" ]; then
@@ -3694,7 +3694,7 @@ except Exception as e:
       KOLIBRI_MODE="$(side_mode kolibri "$WITH_KOLIBRI")"
       if "$REPO_DIR/install-kolibri.sh" "$KOLIBRI_MODE"; then KOLIBRI_STATE=installed; [ "$KOLIBRI_MODE" = --units-only ] && KOLIBRI_STATE=units; else
         KOLIBRI_STATE=failed
-        echo "NOTE: the Kolibri lane did not install (the lines above say why); the rest goes on."
+        echo "NOTE: the Kolibri-1 lane did not install (the lines above say why); the rest goes on."
       fi
     fi
     if [ "$WANT_NEMOTRON" -eq 1 ]; then
@@ -3702,7 +3702,7 @@ except Exception as e:
       NEMOTRON_MODE="$(side_mode nemotron "$WITH_NEMOTRON")"
       if "$REPO_DIR/install-nemotron.sh" "$NEMOTRON_MODE"; then NEMOTRON_STATE=installed; [ "$NEMOTRON_MODE" = --units-only ] && NEMOTRON_STATE=units; else
         NEMOTRON_STATE=failed
-        echo "NOTE: the Nemotron lane did not install (the lines above say why); the rest goes on."
+        echo "NOTE: the Nemotron 3.5 Bolt lane did not install (the lines above say why); the rest goes on."
       fi
     fi
     if [ "$WANT_NEMOTRON_SUPER" -eq 1 ]; then
@@ -3710,7 +3710,7 @@ except Exception as e:
       NEMOTRON_SUPER_MODE="$(side_mode nemotron-super "$WITH_NEMOTRON_SUPER")"
       if "$REPO_DIR/install-nemotron-super.sh" "$NEMOTRON_SUPER_MODE"; then NEMOTRON_SUPER_STATE=installed; [ "$NEMOTRON_SUPER_MODE" = --units-only ] && NEMOTRON_SUPER_STATE=units; else
         NEMOTRON_SUPER_STATE=failed
-        echo "NOTE: the Nemotron Super lane did not install (the lines above say why); the rest goes on."
+        echo "NOTE: the Nemotron 3.5 Super VL lane did not install (the lines above say why); the rest goes on."
       fi
     fi
     if [ "$WANT_FLASH_LOCAL" -eq 1 ]; then
