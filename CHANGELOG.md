@@ -68,6 +68,17 @@ changes.
 **What an update does.** The update runs get.sh, which starts the new installer. The cockpit restarts and serves the
 new page. The engine and the proxy keep running, as nothing they read changed.
 
+**After the push.** GitHub's CI passed on 619d2f3, 89 steps, none skipped. The reference box updated in 1 min 34 s by
+the README's command (get.alzeo.ai): the 27B and the proxy kept running, the cockpit restarted and serves v1.46.1, and
+no lane's unit changed. The installer's fit raised opencode's limits to the pool the 27B has had since its restart of
+the afternoon, 902,659 tokens: a context of 560,000 tokens where the file said 492,000. The Agent tab's server kept
+running, as v1.45.4 has it. On the 27B the production checks passed, and so did the eight real clients: Claude Code,
+opencode, Hermes, pi, the OpenAI and Anthropic SDKs, fetch under Node and under Bun, and LiteLLM. The cockpit showed no
+banner on any of its views, and no JavaScript error. No engine, proxy, template or unit file changed, so the client
+matrix was not run again. Two things of this version are still held by its tests only: the cockpit's phrases for a vLLM
+lane, which no vLLM lane was loaded to show in a browser, and the ending of a 64 GB box with no cockpit, proved with
+stand-ins.
+
 ## v1.46.0 (2026-11-10): the installer and the cockpit say that a star helps, and a 64 GB box's first install no longer says two false things
 
 **The one place the installer asks.** Alzeo is found by what its users say of it, and nothing in it said so. A run of
