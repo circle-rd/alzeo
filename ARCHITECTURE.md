@@ -74,7 +74,8 @@ launcher in `~/.local/bin`, and the two weight trees (HF cache, PLE dir).
 4. The opencode limits chain: compaction threshold + one worst step <= the
    proxy ceiling, table and ceiling from `oc-limits.sh` only, no caller may
    own a copy of a number.
-5. Every SGLang lane carries `--sleep-on-idle`; speculative tiers run
+5. Every SGLang text lane carries `--sleep-on-idle` (the gate reads the 27B's two 128 GB templates, the flash
+   launcher and `run.sh`); speculative tiers run
    3/1/4 steps; the FP8 path keeps its KV flag and the NVFP4 path does not
    gain one; flash recipes keep the radix cache and the api-key.
 6. The proxy's outcome vocabulary is a closed set: adding an outcome fails

@@ -2,8 +2,8 @@
 
 What a plain 27B install serves since v1.12.1: a 1,010,000-token window, what it costs, and how the limits are fitted to the pool your own boot got.
 
-Since v1.12.1 this is what a plain 27B install serves on a 128 GB box (a 64 GB DGX Spark serves
-the 27B at its native window and refuses `CONTEXT_MODE=1m`: README, [On a 64 GB DGX Spark](../README.md#on-a-64-gb-dgx-spark)). It was opt-in behind an
+Since v1.12.1 this is what a plain 27B install serves on a 128 GB box (on a 64 GB DGX Spark the 27B
+serves at its native window and `CONTEXT_MODE=1m` is refused: README, [On a 64 GB DGX Spark](../README.md#on-a-64-gb-dgx-spark)). It was opt-in behind an
 env var until then, which meant the window this whole stack is built around was
 off for anybody who had not read this page.
 

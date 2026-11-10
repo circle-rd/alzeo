@@ -71,7 +71,8 @@ pushing.
   `switch-model.sh` actually makes and carry no wildcard, the pin blocks in
   `run.sh` and `switch-model.sh` must still select every name they use, the
   opencode limits table must satisfy the ceiling arithmetic, every SGLang
-  lane must carry `--sleep-on-idle`, and the proxy's outcome vocabulary is
+  text lane must carry `--sleep-on-idle` (the gate reads the 27B's two 128 GB templates, the flash launcher
+  and `run.sh`), and the proxy's outcome vocabulary is
   closed (adding an outcome fails CI until someone says what it means).
 - House typography: no em or en dashes anywhere tracked. Use a comma, or
   restructure the sentence.

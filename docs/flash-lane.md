@@ -2,7 +2,8 @@
 
 How a 176B hybrid MoE serves on a single GB10, the three serving tiers, and what each one measured on this box.
 
-Since v1.20 every plain install puts this lane on the box beside the 27B, installed and not
+Since v1.20 every plain install on a 128 GB box puts this lane on the box beside the 27B (a 64 GB DGX
+Spark leaves it out: README, [On a 64 GB DGX Spark](../README.md#on-a-64-gb-dgx-spark)), installed and not
 enabled at boot, by the same installer started again for this lane (its target and tier are
 kept across updates), and now on demand: a plain run writes its unit and launcher, and its
 first Load from the cockpit pulls its image, fetches its checkpoint and builds its draft

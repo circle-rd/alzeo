@@ -243,7 +243,8 @@ It is not the default: its makers ship 262,144, and the 1M window is measured he
 
 ## Installing, loading, removing
 
-A plain install puts its unit in, and its first Load from the cockpit pulls its image (18.2 GB on
+A plain install on a 128 GB box puts its unit in (a 64 GB DGX Spark leaves it out: README, [On a 64 GB DGX Spark](../README.md#on-a-64-gb-dgx-spark)),
+and its first Load from the cockpit pulls its image (18.2 GB on
 disk, 9.7 GB to download, by digest), fetches its checkpoint at its pinned revision, makes the
 table's copies when they are needed, and starts it: 17 to 19 minutes for the first boot, b12x tuning its
 kernels for this GPU, about 5 min 30 s after. From a terminal: `./prepare-lane.sh flash-local` the
