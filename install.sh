@@ -3906,8 +3906,12 @@ except Exception as e:
        && [ "$WANT_NEMOTRON" -eq 1 ] && { [ "$RECOMMENDED" -eq 1 ] || ! ran_whole_before; }; then
       step "A 64 GB DGX Spark serves Nemotron 3.5 Bolt: loading it as the cockpit does (the 27B stays installed)"
       if bolt_first_load; then
-        python3 "$REPO_DIR/oc-fit-limits.py" --engine "http://127.0.0.1:$PORT" --restart-agent \
-          || echo "  NOTE: opencode's limits were not fitted to Bolt; the cockpit's button fits them"
+        # Nothing is fitted here. Bolt's opencode limits are its own pair (oc-limits.sh nemotron), written with its
+        # provider at step 7 or by the switch above, which points opencode at Bolt and restarts the Agent tab's server
+        # when its configs changed. The fit that stood here reads SGLang's /server_info, which vLLM does not have: on
+        # a box with opencode on it failed each time, and the run's ending said "no engine to read ... start one
+        # first" under a Bolt that served, then gave a NOTE naming a cockpit button which, on this lane, answers that
+        # there is nothing to fit (read in the code, then run against a server that answers 404 as vLLM, 2026-11-10)
         echo "  Nemotron 3.5 Bolt serves now, and at boot; the 27B is a Load away in the cockpit"
       else
         echo "NOTE: Bolt did not come up (see above), so the 27B serves this box (if it was stopped, it starts"

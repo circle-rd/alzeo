@@ -152,7 +152,9 @@ class ANew64GBBoxServesBolt(unittest.TestCase):
     27B stopped, Bolt started and answering; anything that fails puts the box back on the 27B.
     install.sh's own lines run here, with prepare-lane.sh, switch-model.sh, sudo, systemctl, curl
     and oc-fit-limits.py replaced by stubs that write down their calls (found in review, 2026-10-24:
-    the first epilogue stopped at the switch and said Bolt served while the 27B did)."""
+    the first epilogue stopped at the switch and said Bolt served while the 27B did). The stand-in
+    for oc-fit-limits.py answers as the tool does to a vLLM engine, which has neither /server_info
+    nor /get_server_info (keepalive-proxy.py, v6.37): one line and a return code of 1."""
 
     def epilogue(self, cls="64", side_boot="0", secondary="", env_choice="", want="1", recommended="0",
                  ran_before=None, fail=(), health="ok"):
@@ -166,7 +168,10 @@ class ANew64GBBoxServesBolt(unittest.TestCase):
             rc = 1 if any(f == name or f == f"{name} nemotron" for f in fail) else 0
             (d / name).write_text(f'echo "{name} $*" >> "{calls}"\n'
                                   f'[ "$*" = nemotron ] && exit {rc}\nexit 0\n')
-        (d / "oc-fit-limits.py").write_text(f'open("{calls}", "a").write("oc-fit-limits.py\\n")\n')
+        (d / "oc-fit-limits.py").write_text(
+            f'open("{calls}", "a").write("oc-fit-limits.py\\n")\n'
+            'print("no engine to read at http://127.0.0.1:30000 (HTTPError): start one first, "\n'
+            '      "the pool is only known once it has booted")\nraise SystemExit(1)\n')
         start_rc = 1 if "start" in fail else 0
         stub("sudo", f'echo "sudo $*" >> "{calls}"\n[ "$2" = start ] && [ "$3" = qwen38-nemotron.service ] && exit {start_rc}\nexit 0\n')
         stub("systemctl", 'echo "active"\n' if health != "failed" else 'case "$*" in *nemotron*) echo failed ;; *) echo active ;; esac\n')
@@ -195,8 +200,21 @@ class ANew64GBBoxServesBolt(unittest.TestCase):
         out, calls = self.epilogue()
         self.assertEqual(calls[:4], self.LOAD)
         self.assertTrue(calls[4].startswith("curl ") and "/health" in calls[4], calls)
-        self.assertEqual(calls[5:], ["oc-fit-limits.py"])
         self.assertIn("Nemotron 3.5 Bolt serves now, and at boot", out)
+
+    def test_a_bolt_that_serves_is_not_asked_for_a_pool_it_does_not_have(self):
+        """Bolt's opencode limits are its own pair, written before its engine starts: nothing is
+        fitted after its first load. The fit that stood there reads SGLang's /server_info, which vLLM
+        does not have, so on a box with opencode on the ending of every such install said "no engine
+        to read ... start one first" under a Bolt that served, then gave a NOTE naming a cockpit
+        button which refuses on this lane (read in the code, 2026-11-10)."""
+        out, calls = self.epilogue()
+        self.assertEqual(calls[:4], self.LOAD)
+        self.assertEqual(calls[5:], [], "nothing runs after the probe that found Bolt answering")
+        self.assertNotIn("no engine to read", out)
+        self.assertNotIn("NOTE", out)
+        self.assertNotIn("not fitted", out)
+        self.assertTrue(out.rstrip().endswith("the 27B is a Load away in the cockpit"), out)
 
     def test_a_bolt_that_does_not_answer_puts_the_box_back_on_the_27b(self):
         for fail, health in (((), "failed"), (("start",), "ok")):
