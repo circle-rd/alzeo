@@ -46,14 +46,15 @@ Found by reading the code, not on a box: no 64 GB box was at hand, and the test 
 a stand-in that always succeeded. The tool was then run against a server that answers 404 to both routes, as vLLM
 does: return code 1, and that first line.
 
-The installer no longer runs the fit after Bolt's first load. After its summary the run says
-`Nemotron 3.5 Bolt serves now, and at boot; the 27B is a Load away in the cockpit`, then its record line and the line
-that says a star helps.
+The installer no longer runs the fit after Bolt's first load. After its summary the run says `Nemotron 3.5 Bolt serves
+now, and at boot; the 27B is a Load away in the cockpit`, then the line that says a star helps.
 
-**Three lanes by their official names in the installer's messages.** The line that says which lane stays a box's
-serving lane, and the notes of a side lane that did not install, said `Kolibri`, `Nemotron` and `Nemotron Super`
-beside `Qwen3.8 Flash-Next FP4-Local` and `Ornith 1.5 122B` in the same blocks. They say `Kolibri-1`, `Nemotron 3.5
-Bolt` and `Nemotron 3.5 Super VL`, the names the cockpit and the installer's own `lane_title` give those lanes.
+**Three lanes by their official names in the installer's messages.** The messages of `install.sh` that name a lane (the
+lane a box boots, the lane that serves, a lane disabled at boot, a side lane that did not install) said `Kolibri`,
+`Nemotron` and `Nemotron Super` beside `Qwen3.8 Flash-Next FP4-Local` and `Ornith 1.5 122B` in the same blocks. They
+say `Kolibri-1`, `Nemotron 3.5 Bolt` and `Nemotron 3.5 Super VL`, the names the cockpit and the installer's own
+`lane_title` give those lanes. Its help keeps the short names, each followed by its model's full name, and the lane
+installers' own messages and the switch's keep them until the next release.
 
 **The tests' guard watches the video and speech lanes' ports.** This repo's tests run on boxes that serve, so
 the CI fails a run whose tests connect to a port the box serves on. Its list had seven ports, and neither the video
@@ -63,19 +64,19 @@ every unit is active, so the collector asked the box's own video lane for `/heal
 every serving port before the call: one contact before, none now that the test closes that port too. The guard lists
 the three ports.
 
-CONTRIBUTING.md and TESTING.md said that a full run of the CI takes 12 minutes on the reference box, the measure
-of 2026-10-28. It took 30 on 2026-11-10, and they say so.
+CONTRIBUTING.md said that a full run of the CI takes about 12 minutes on the reference box, the measure of 2026-10-28
+that TESTING.md gives with its date. It took 30 on 2026-11-10, and both say so.
 
-**One table of the lanes.** Adding Ornith 1.5 122B touched 98 files over ten commits, and the lists
-written by hand drift apart: the short names and the unwatched ports above were found on 2026-11-10 by listing every
-place that writes a lane. `lane_registry.py` now says once what each of the ten lanes is: its unit, installer and
-flags, what it serves and on which engine, its switch targets and the ones a 64 GB box does not take, the name it
-serves under, its opencode provider, its ports and its official name. `tests/test_lane_registry.py` holds to it the
-lists and tables written by hand in the installer, the switch, the other scripts, the unit templates, the proxy,
+**One table of the lanes.** Ornith 1.5 122B, the last lane added, touched 76 files in the six commits of its own, and
+the lists written by hand drift apart: the short names and the unwatched ports above were found on 2026-11-10 by
+listing every place that writes a lane. `lane_registry.py` now says once what each of the ten lanes is: its unit,
+installer and flags, what it serves and on which engine, its switch targets and the ones a 64 GB box does not take, the
+name it serves under, its opencode provider, its ports and its official name. `tests/test_lane_registry.py` holds to it
+the lists and tables written by hand in the installer, the switch, the other scripts, the unit templates, the proxy,
 opencode's scripts, the cockpit and its page, the sudoers, the CI and the other tests. Nothing reads the table at run
-time yet, so it changes nothing a box does. One drift it found is left for the next release, and excused in the test
-by its exact value: the cockpit's messages about the lanes on b12x say `the Nemotron lane` for both Nemotron lanes,
-and `the Ornith lane`.
+time yet, so it changes nothing a box does. One drift it found is left for the next release, and excused in the test by
+its exact value: the cockpit's messages about the lanes on b12x say `the Nemotron lane` for both Nemotron lanes, and
+`the Ornith lane`.
 
 **Tests.** `tests/test_install_star_line.py` runs the installer's own function (one line that names the repository,
 nothing for a run started for another lane, nothing that reads, sleeps or calls out) and reads in `install.sh` that
@@ -94,15 +95,15 @@ place it cannot find or reads empty. It fails on the code before, on the three p
 and 176 mutations of a copy of the tree (a lane dropped from a list, a target renamed, a port moved, a served name
 changed, a lane added in one place only) all fail it.
 
-**What changes on a box.** `install.sh` (the star line's function and its four calls, two lines out and a
-comment in after Bolt's first load, nine messages that name a lane), the cockpit's page (`index.html`, `ops.js` and
-two rules of `cockpit.css`), and one new file nothing reads yet, `lane_registry.py`. No unit, template or image
-changes.
+**What changes on a box.** `install.sh` (the star line's function and its four calls, two lines out and a comment in
+after Bolt's first load, 24 messages that name a lane), the cockpit's page (`index.html`, `ops.js` and two rules of
+`cockpit.css`), and one new file nothing reads yet, `lane_registry.py`. No unit, template or image changes.
 
-**What an update does.** The update runs get.sh, which starts the new installer, and ends with the new
-line. The cockpit restarts and serves the new page. The engine and the proxy keep running, as nothing they read
-changed. Nothing else is new on a 128 GB box, nor on a 64 GB box whose first install already ended whole: the two
-false lines were those of a first install, and of `--recommended` on a box that boots the 27B.
+**What an update does.** The update runs get.sh, which starts the new installer, and ends with the new line. The
+cockpit restarts and serves the new page. The engine and the proxy keep running, as nothing they read changed. A box
+that boots or serves Kolibri-1, Nemotron 3.5 Bolt or Nemotron 3.5 Super VL reads those names in the update's messages.
+The 64 GB fix brings nothing to a 128 GB box, nor to a 64 GB box whose first install already ended whole: the two false
+lines were those of a first install, and of `--recommended` on a box that boots the 27B.
 
 ## v1.45.4 (2026-11-10): an update that raises opencode's limits leaves the Agent tab running, and eighteen more pages say what the code does
 
