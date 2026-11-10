@@ -55,7 +55,7 @@ const CLOSED = 'http://127.0.0.1:1';
 server = spawn('python3', [COCKPIT], {
   env: { ...process.env, COCKPIT_DRY_RUN: '1', COCKPIT_PORT: '0', COCKPIT_CONFIG_DIR: cfgDir,
          COCKPIT_BIND: '127.0.0.1', COCKPIT_AGENT_PORT: '0', COCKPIT_AUTOHEAL: '0', COCKPIT_AUTOFIT: '0',
-         COCKPIT_UPDATE_CHECK: '0', COCKPIT_ENGINE: CLOSED, COCKPIT_PROXY: CLOSED, COCKPIT_IMAGE: CLOSED,
+         COCKPIT_UPDATE_CHECK: '0', COCKPIT_ENGINE: CLOSED, COCKPIT_PROXY: CLOSED, COCKPIT_IMAGE: CLOSED, COCKPIT_VIDEO: CLOSED,
          HOME: root, PATH: `${fence}:${process.env.PATH}` },
   stdio: ['ignore', 'ignore', 'ignore'], detached: true,
 });

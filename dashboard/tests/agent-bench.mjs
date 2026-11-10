@@ -212,7 +212,7 @@ for (let attempt = 1; ; attempt++) {
            COCKPIT_AGENT_PORT: String(RELAY_PORT), COCKPIT_AGENT_BIND: HOST, COCKPIT_AGENT_UPSTREAM: `http://127.0.0.1:${OC_PORT}`,
            COCKPIT_AGENT_UNIT_PATH: unitPath,
            COCKPIT_AUTOHEAL: '0', COCKPIT_AUTOFIT: '0', COCKPIT_UPDATE_CHECK: '0',
-           COCKPIT_ENGINE: CLOSED, COCKPIT_PROXY: CLOSED, COCKPIT_IMAGE: CLOSED, HOME: root, TMPDIR: scratch, PATH: `${fence}:${process.env.PATH}` },
+           COCKPIT_ENGINE: CLOSED, COCKPIT_PROXY: CLOSED, COCKPIT_IMAGE: CLOSED, COCKPIT_VIDEO: CLOSED, HOME: root, TMPDIR: scratch, PATH: `${fence}:${process.env.PATH}` },
     stdio: ['ignore', 'ignore', 'ignore'], detached: true,
   });
   // both listening, or another try: a cockpit whose port was taken ends, one whose relay's was taken goes on without it
