@@ -201,6 +201,11 @@ class AWeightIsOneFigureInItsUnit(unittest.TestCase):
         self.assertEqual(int(note.group(1)), round(measured))
         self.assertEqual(float(row.group(2)), round(measured, 1))
         self.assertEqual(int(row.group(1)), math.ceil(float(row.group(2)) + float(row.group(3))))
+        # and the Quickstart's sum of every lane gives the same three figures (it kept 103 and 18: found in review)
+        quick = re.search(r"the Qwen3\.8 Flash-Next FP4-Local lane (\d+) \((\d+\.\d) checkpoint, (\d+\.\d) image\b",
+                          (REPO / "README.md").read_text())
+        self.assertIsNotNone(quick, "README.md's Quickstart no longer says the checkpoint's size where this reads it")
+        self.assertEqual(quick.groups(), row.groups())
 
     def test_the_image_lanes_weights_in_the_unit_it_counts(self):
         # install-image.sh counts its checkpoint in GiB, as df -BG does (WEIGHTS_GB, rounded up): the cockpit's note,
