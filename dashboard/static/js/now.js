@@ -312,7 +312,7 @@ function renderActivity(){
   }
   if (unit === IMAGE_UNIT){
     setText('act-title', 'Images'); setText('act-v', IMG_NOW.label ? 'Busy' : 'Idle'); setText('act-k', IMG_NOW.label || 'one image at a time on this lane');
-    facts(fx, [['Up', e.elapsed ? fmtDur(e.elapsed) : null], ['Listens on', '127.0.0.1:30020, behind this cockpit']]);
+    facts(fx, [['Up', e.elapsed ? fmtDur(e.elapsed) : null], ['Listens on', `127.0.0.1:${IMG_NOW.port || 30020}, behind this cockpit`]]);
     return;
   }
   // a text lane
@@ -458,7 +458,7 @@ function renderPair(){
 
 // the facts the spine and the video/image studios share, filled by their own views
 const VID_NOW = {label: '', run: null, port: 30022};
-const IMG_NOW = {label: ''};
+const IMG_NOW = {label: '', port: 30020};
 
 afterApply(() => {
   renderServing(); renderPool(); renderRack(); renderActivity(); renderVitals(); renderPair();

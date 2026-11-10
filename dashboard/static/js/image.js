@@ -242,6 +242,7 @@ async function imgLane(){
     const r = await fetch('/api/image'); if (r.status === 401) return;
     const d = await r.json();
     IS.port = d.port || 30020; IS.host = d.host || '127.0.0.1';
+    IMG_NOW.port = IS.port;
     const p = d.progress || {};
     // someone else generating counts: this lane serves one at a time, and a second request
     // holds another 60 GB of the box

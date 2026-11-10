@@ -1184,5 +1184,28 @@ class ALaneSaysTheWindowItsUnitRuns(unittest.TestCase):
         self.assertEqual(r["restaged"], "Text and images, 262K tokens of context")
         self.assertEqual(r["wide"], "Text and images, 1M tokens of context")
 
+
+class TheNowViewSaysThePortTheImageLaneListensOn(unittest.TestCase):
+    """The Now view wrote 127.0.0.1:30020 of the image lane whatever port its unit gives it (IMAGE_PORT), where the
+    video lane's line beside it says the port the cockpit reads in its unit (found 2026-11-10). It says the port the
+    Image view was told, as the video's says the Video view's."""
+
+    def test_the_port_the_cockpit_reads_in_the_unit(self):
+        r = run(self, r"""
+        __fetch = async url => url === '/api/image' ? __response(200, {installed: true, available: true, state: 'ready',
+            port: 30120, host: '127.0.0.1', progress: {}}) : new Promise(() => {});
+        const U = JSON.parse(JSON.stringify(UNITS));
+        U.units['qwen38-sglang.service'] = {active: 'inactive', enabled: 'disabled'};
+        U.units['qwen38-image.service'] = {active: 'active', enabled: 'enabled'};
+        feed({config: CONFIG, units: U, lifecycle: life({'qwen38-sglang.service': eng('stopped'),
+                                                         'qwen38-image.service': eng('ready', {target: 'image'})})});
+        const before = txt('act-facts');
+        await imgLane();
+        renderActivity();
+        report({before, after: txt('act-facts')});
+        """)
+        self.assertIn("127.0.0.1:30020, behind this cockpit", r["before"], "until the cockpit says it, the default")
+        self.assertIn("127.0.0.1:30120, behind this cockpit", r["after"])
+
 if __name__ == "__main__":
     unittest.main()

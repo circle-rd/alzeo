@@ -1118,7 +1118,8 @@ class TheOtherScriptsSayTheSame(unittest.TestCase):
                                    ("dashboard/static/js/video.js", r"\bVS\.port = d\.port \|\| (\d+);", "video"),
                                    ("dashboard/static/js/now.js", r"\bconst VID_NOW = \{[^;]*?\bport: (\d+)", "video"),
                                    ("dashboard/static/js/now.js", r"\bVID_NOW\.port \|\| (\d+)", "video"),
-                                   ("dashboard/static/js/now.js", r"'Listens on', '127\.0\.0\.1:(\d+), behind this cockpit'", "image")):
+                                   ("dashboard/static/js/now.js", r"\bconst IMG_NOW = \{[^;]*?\bport: (\d+)", "image"),
+                                   ("dashboard/static/js/now.js", r"\bIMG_NOW\.port \|\| (\d+)", "image")):
             m, where = one(rel, text_of(rel), pattern)
             p.same(f"{where} {pattern}", [int(m.group(1))], LANES[family(kind=kind)[0]]["ports"][:1])
         # the offline suite's guard: no test may connect to a port the box serves on
