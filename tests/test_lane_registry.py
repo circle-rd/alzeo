@@ -373,30 +373,46 @@ LANE_NAMED = re.compile(r"\b(?:[Tt]he|[Aa]n?) ((?:\d[\w.]* )*[A-Z][\w.-]*(?: [A-
 SH_HEREDOC = re.compile(r"(?<!<)<<(?!<)(-?)\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\2")
 
 
-# an engine's or a maker's lanes ("the SGLang lanes", "a Qwen lane"): a family of them, no lane's own name
+# an engine's or a maker's lanes, said as a family ("the SGLang lanes", "a Qwen lane"): no lane's own name. "The
+# Qwen lane", one lane, is a short name like another (found in review, 2026-11-10).
 FAMILIES = {"SGLang", "vLLM", "Qwen"}
 
 
 def lanes_named(text, start=0):
-    """[(the words as written, the name)] of each lane a text names by a proper name, the families aside."""
-    return [(m.group(0), m.group(1)) for m in LANE_NAMED.finditer(text, start) if m.group(1) not in FAMILIES]
+    """[(the words as written, the name)] of each lane a text names by a proper name, the families aside: in the
+    plural, or after "a" or "an"."""
+    out = []
+    for m in LANE_NAMED.finditer(text, start):
+        family = m.group(1) in FAMILIES and (m.group(0).endswith("lanes") or m.group(0).split()[0].lower() in ("a", "an"))
+        if not family:
+            out.append((m.group(0), m.group(1)))
+    return out
 
 
 def sh_code(line):
-    """A shell line without its comment: a # that starts a word, outside quotes."""
+    """A shell line without its comment: a # that starts a word, outside quotes ('...', "...", $'...') and outside a
+    $(...), whose own quotes are its own. A line this cannot follow is kept whole."""
     quote, i = None, 0
     while i < len(line):
         c = line[i]
+        if line.startswith("$(", i) and quote != "'":
+            try:
+                i = _skip_substitution(line, i + 2)
+            except ValueError:
+                return line
+            continue
         if quote:
-            if c == "\\" and quote == '"':
+            if c == "\\" and quote != "'":
                 i += 1
-            elif c == quote:
+            elif c == quote[-1]:
                 quote = None
+        elif line.startswith("$'", i):
+            quote, i = "$'", i + 1
         elif c in "'\"":
             quote = c
         elif c == "\\":
             i += 1
-        elif c == "#" and (i == 0 or line[i - 1] in " \t;"):
+        elif c == "#" and (i == 0 or line[i - 1] in " \t;|&()<>"):
             return line[:i]
         i += 1
     return line
@@ -407,7 +423,7 @@ def sh_messages(text):
     comments are not read, at the end of a line either, nor its here-documents (install.sh's help is one, and
     the Python the scripts run are others). A here-document's body starts after the last line of its command: a
     line that ends with a backslash goes on, and is read (install-video.sh's "<<'PY' \\" then "|| echo ..." was
-    taken for the body: found in review, 2026-11-10). A << inside $(( )) is a shift. A here-document that never
+    taken for the body: found in review, 2026-11-10). A << inside (( )) is a shift. A here-document that never
     meets its word raises ValueError: nothing after it is skipped unread."""
     out, lines, i, opened = [], text.splitlines(), 0, []
     while i < len(lines):
@@ -417,7 +433,7 @@ def sh_messages(text):
         if cmd:
             out += [(n, name) for _, name in lanes_named(code, cmd.end())]
         opened += [(n, h) for h in SH_HEREDOC.finditer(code)
-                   if code.count("$((", 0, h.start()) <= code.count("))", 0, h.start())]
+                   if code.count("((", 0, h.start()) <= code.count("))", 0, h.start())]
         if opened and not code.rstrip().endswith("\\"):
             for at, h in opened:
                 while i < len(lines) and (lines[i].lstrip("\t") if h.group(1) else lines[i]) != h.group(3):
@@ -1716,7 +1732,14 @@ class TheReadersReadWhatTheyClaim(unittest.TestCase):
               'echo "on the SGLang lanes, a Qwen lane, an SGLang lane and the vLLM lanes"\n'
               'echo "a # in a string, then the Epsilon lane"   # and a comment\n')
         self.assertEqual(sh_messages(sh), [(2, "Alpha"), (6, "Delta"), (8, "Epsilon")])
-        self.assertEqual(lanes_named("The SGLang lanes, the Zeta lane"), [("the Zeta lane", "Zeta")])
+        self.assertEqual(lanes_named("The SGLang lanes, an SGLang lane, a Qwen lane, the Zeta lane, the Qwen lane's image"),
+                         [("the Zeta lane", "Zeta"), ("the Qwen lane", "Qwen")])
+        more = ('(( MASK = 1 << BIT )); echo "the Eta lane"\n'
+                'echo "$(printf \'%s\' " #") the Theta lane"\n'
+                'true &# the Iota lane, a comment\n'
+                "echo $'it\\'s' # the Kappa lane, a comment\n"
+                'echo "${#NAMES[@]} and $# of the Lambda lane"\n')
+        self.assertEqual(sh_messages(more), [(1, "Eta"), (2, "Theta"), (5, "Lambda")])
 
     def test_the_cockpits_strings_are_read_as_its_code_holds_them(self):
         TREES["<said>"] = ast.parse('"""the Alpha lane, a docstring"""\n'
