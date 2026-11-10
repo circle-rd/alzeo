@@ -17,21 +17,36 @@ CI_LOCAL_SERIAL=1 ./ci-local.sh     # one step after the other, in this checkout
 
 The workflow's jobs run side by side, on GitHub and in `ci-local.sh`, each in a checkout of its
 own: `static` (the tree, lint, templates, fixtures, pins), `suite` (each test file once, under the
-offline guard), `single` (every unittest module in one process), `coverage`, `cockpit` (its unit
-tests and the headless browser) and `fuzz` (fuzz, mutation, properties). `checks` ends the run:
-it passes when the six others have passed, and fails on GitHub when one of them failed
+offline guard), `single` (every unittest module of `tests/` beside the others, in groups, each group
+one process), `coverage` (the floors of the root modules), `coverage-cockpit` (the cockpit's),
+`cockpit` (its unit tests and the headless browser) and `fuzz` (fuzz, mutation, properties). `checks`
+ends the run: it passes when the seven others have passed, and fails on GitHub when one of them failed
 (`ci-local.sh` does not run it then). Here each checkout of a full run is a detached worktree
 of HEAD, so `ci-local.sh` refuses a tree with changes nobody committed: commit first, or test the
 checkout as it is with `CI_LOCAL_SERIAL=1`. A fragment runs in the checkout as it is, one step
 after the other. A full run took 12 minutes on the reference box on 2026-10-28 (741 and 744 s,
 the length of `single`), against 63 one step after the other the same day (v1.40.4), and 72 on
 GitHub when the steps ran as one job (v1.40.3). On 2026-11-10 a full run took 30 minutes there
-(`single`, some 3,000 tests in one process, 1,808 s). On one machine the jobs share its ports, as they
+(`single`, some 3,000 tests in one process, 1,808 s), and a little over 9 since `single` runs its
+modules in groups (557, 559, 558 and 558 s that evening, four runs, the length of `suite`). On one
+machine the jobs share its ports, as they
 do not on GitHub, where each job has a runner of its own: a test takes the port of a server it starts
 from `tests/localports.py`, which keeps that port the test's beside the other jobs and any program of
 the machine, and `test_localports.py` fails on a test file that takes a port number out of a socket
 it closes. While working, run the gate you care about by name fragment, and the whole thing before
 pushing.
+
+What a test module leaves to the modules after it (a variable of the environment, the directory,
+`sys.path`, a thread, a signal handler) shows only where they share a process. `single` shares one
+within a group: each of the four longest modules alone, the others dealt in turn into two groups
+(`tests/run_single.py`), four processes at a time. What a module does to a module of ANOTHER group
+is seen by the pass that runs them all in one process, `tests/run_single.py --one-process`, half an
+hour: GitHub runs it every night (`.github/workflows/nightly.yml`), and a release runs it on the box
+before it is pushed.
+
+```bash
+CI_LOCAL_WORKFLOW=.github/workflows/nightly.yml ./ci-local.sh   # every module of tests/ in one process
+```
 
 The runtime is **stdlib only** and stays that way. Four measuring gates need pip
 packages (`coverage`, `hypothesis`); they ask `tests/testpy.sh` for an
