@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """The lanes of this box, one entry each, with what every script, unit and page writes about them by hand.
 
-Adding a lane touched some 98 files (Ornith 1.5 122B and its ten commits, counted on 2026-11-10), and the
-lists written by hand drifted apart: the offline suite's guard never learnt the video and speech lanes'
+Adding a lane touched some 76 files (Ornith 1.5 122B, in the six commits of its own, counted on 2026-11-10),
+and the lists written by hand drifted apart: the offline suite's guard never learnt the video and speech lanes'
 ports, and install.sh named three lanes by short names beside the official ones its lane_title gives.
 This is the one place that says what each lane is. Nothing reads it at run time yet (step 1 of the lane
-factory, 2026-11-10): tests/test_lane_registry.py holds every list and table written by hand to it, so a
-lane added, renamed or moved in one place and not in the others fails there, with the file and the line.
+factory, 2026-11-10): tests/test_lane_registry.py holds the lists and tables written by hand to it, so a
+lane added, renamed or moved in one of them and not in the others fails there, with the file and the line.
 
 Each value is read where the repo declares it, named beside it. A field is here because that test reads
 it. Standard library only, and nothing happens at import.

@@ -3,21 +3,24 @@
 
 A lane is written by hand in some hundred places: install.sh's flags, cases and messages, the
 switch's targets, the units, the proxy's names, opencode's providers, the cockpit's Python and its
-page, the sudoers, the CI and the tests' own lists. Ornith 1.5 122B touched 98 files over ten
-commits (counted on 2026-11-10), and lists nobody compared drifted: the offline suite's guard never
-learnt the video and speech lanes' ports, and install.sh said "Kolibri", "Nemotron" and "Nemotron
-Super" a few lines from the official names its lane_title gives (both found on 2026-11-10).
+page, the sudoers, the CI and the tests' own lists. Ornith 1.5 122B, the last lane added, touched
+76 files in the six commits of its own (counted on 2026-11-10), and lists nobody compared drifted:
+the offline suite's guard never learnt the video and speech lanes' ports, and install.sh said
+"Kolibri", "Nemotron" and "Nemotron Super" a few lines from the official names its lane_title
+gives (both found on 2026-11-10).
 lane_registry.py says once what each lane is; this holds every place that writes it to that.
 
 Each place is found by what it is called (a variable, a function, a case on a named variable, a
 step of the CI), never by a line number, and one that cannot be found or reads empty fails: an
 empty result proves nothing. A list that leaves lanes out on purpose is bound to the family it
 keeps, with the reason its own code gives. A drift found here and not corrected yet is excused by
-its exact value in TO_DECIDE, so that it fails again the day it changes, and an excuse with nothing
-left to excuse fails too. Nothing here starts a process, opens a port or reads the network: the
-files are read as text, and the few functions read for what they compute run in this process from
-their own source (the cockpit's target_lane and target_unit, the main of each oc-<lane>.py, which
-prints the provider block opencode gets)."""
+its exact value in TO_DECIDE, so that it fails again the day it changes, and the check that reads
+an excuse fails once it excuses nothing. Nothing here starts a process, opens a port or reads the
+network: the files are read as text, four modules are loaded for the tables they hold
+(lane_registry.py, boxmem.py, dashboard/engines.py, tests/test_lane_lists_whole.py), and the few
+functions read for what they compute run in this process from their own source (the cockpit's
+target_lane and target_unit, the main of each oc-<lane>.py, which prints the provider block
+opencode gets)."""
 import __future__
 import ast
 import contextlib
@@ -700,6 +703,8 @@ class ThePartialSourcesSayTheSame(unittest.TestCase):
         if tuple(boxmem.LANES) != tuple(LANES):
             p.append(f"{py_line(rel, 'LANES')} LANES in the order {boxmem.LANES}, the registry's is {tuple(LANES)}")
         p.table(f"{py_line(rel, 'TARGETS')} TARGETS", boxmem.TARGETS, TARGET_LANE)
+        if list(boxmem.TARGETS) != list(TARGET_LANE):
+            p.append(f"{py_line(rel, 'TARGETS')} TARGETS in the order {list(boxmem.TARGETS)}, the registry's is {list(TARGET_LANE)}")
         p.same(f"{py_line(rel, 'FITS_64')} FITS_64", boxmem.FITS_64, family(fits_64=True))
         p.same(f"{py_line(rel, 'HEAVY_64')} HEAVY_64", boxmem.HEAVY_64, [t for f in LANES.values() for t in f["heavy_64"]])
         p.check(self)
@@ -987,27 +992,33 @@ class TheOtherScriptsSayTheSame(unittest.TestCase):
         p.same(f"{where} After=", [u for u in m.group(1).split() if u.startswith("qwen38-")], units_of(TEXT))
         m, where = one(rel, ka, r'^Environment="PROXY_HOLD_UNITS=([^"]*)"$')
         p.same(f"{where} PROXY_HOLD_UNITS", m.group(1).split(), units_of(TEXT))
-        # each text lane serves under its name, on the engine port, in every unit or launcher that says them
-        said = {}
-        for t in sorted(REPO.glob("qwen38-*.template")):
+        # each text lane serves under its name, on the engine port, and EACH of its templates says both once (the
+        # 27B has three, and two of them hid a third that had lost its name: found in review, 2026-11-10). A unit
+        # that runs its lane's launcher says neither: the launcher does.
+        launched = {t.name.replace("-launch.sh.template", ".service.template") for t in REPO.glob("qwen38-*-launch.sh.template")}
+        says = []
+        for t in floor(sorted(REPO.glob("qwen38-*.template")), "the templates qwen38-*.template", len(LANES)):
             unit = ("qwen38-flash.service" if t.name == "qwen38-flash-launch.sh.template" else
                     t.name[:-len(".template")].replace("qwen38-sglang-1m.", "qwen38-sglang.").replace("qwen38-sglang-64.", "qwen38-sglang."))
-            if unit in LANE_OF_UNIT:
-                body = t.read_text()
-                s = said.setdefault(LANE_OF_UNIT[unit], {"served": [], "ports": [], "at": []})
-                for what, rx in (("served", r"--served-model-name (\S+)"), ("ports", r"--port ([^\s'\"]+)")):
-                    got, at = finds(t.name, body, rx)
-                    s[what] += got
-                    s["at"] += [at] if got else []
-        for lane, f in LANES.items():
-            s = said.get(lane, {"served": [], "ports": [], "at": []})
-            if f["kind"] == "text":
-                if not s["served"] or set(s["served"]) != {f["served"]}:
-                    p.append(f"{s['at']} --served-model-name {s['served']}, the registry says {f['served']}")
-                if not s["ports"] or set(s["ports"]) != {"__PORT__"}:
-                    p.append(f"{s['at']} --port {s['ports']}: a text lane listens on the engine port, __PORT__")
-            elif s["served"] or "__PORT__" in s["ports"]:
-                p.append(f"{s['at']}: {lane} serves no text, and says {s['served']} {s['ports']}")
+            if unit not in LANE_OF_UNIT:
+                continue
+            lane, body = LANE_OF_UNIT[unit], t.read_text()
+            f = LANES[lane]
+            served, at = finds(t.name, body, r"--served-model-name (\S+)")
+            ports, at_port = finds(t.name, body, r"--port ([^\s'\"]+)")
+            if f["kind"] != "text":
+                if served or "__PORT__" in ports:
+                    p.append(f"{t.name}: {lane} serves no text, and says {served} {ports}")
+            elif t.name in launched:
+                if served or ports:
+                    p.append(f"{t.name}: its launcher says the name and the port, and this unit says {served} {ports} too")
+            else:
+                says.append(lane)
+                if served != [f["served"]]:
+                    p.append(f"{at} --served-model-name {served}, the registry says {f['served']}, once")
+                if ports != ["__PORT__"]:
+                    p.append(f"{at_port} --port {ports}: a text lane listens on the engine port, __PORT__, said once")
+        p.same("the text lanes with a template that says a name and a port", sorted(set(says)), sorted(TEXT))
         m, where = one("run.sh", text_of("run.sh"), r"--served-model-name (\S+)")
         p.same(f"{where} --served-model-name (the 27B in the foreground)", [m.group(1)], [LANES["27b"]["served"]])
         for lane in VLLM:
@@ -1341,8 +1352,11 @@ class TheCiAndTheTestsSayTheSame(unittest.TestCase):
 
 
 class TheNamesAreTheOfficialOnes(unittest.TestCase):
-    """A lane's name in install.sh's sentences is its official one (decision 1180), or for the image and
-    video lanes their kind, the way install.sh names them ("the image lane"), their model after it."""
+    """A lane's name in install.sh's messages is its official one (decision 1180), or for the image and
+    video lanes their kind, the way install.sh names them ("the image lane"), their model after it: in
+    lane_title, SERVING_LANE, the notes and the steps of the side lanes' installs, the 64 GB guards, and
+    in every message that names a lane by a proper name. The help, the comments, and the other scripts'
+    messages are not read here."""
 
     SH = "install.sh"
 
@@ -1388,6 +1402,17 @@ class TheNamesAreTheOfficialOnes(unittest.TestCase):
                 p.drift((rel, "NOTE: the <name> lane did not install", lane), names,
                         f"{rel}:{','.join(str(n) for _, n in said)} NOTE: the <name> lane did not install, {lane}: {names}, "
                         f"the registry says {LANES[lane]['title']!r}")
+        # and every message of install.sh that names a lane by a proper name ("the Kolibri-1 lane") names it by
+        # its official one: fifteen of them still said the short names (found in review, 2026-11-10). The 27B and
+        # the image and video lanes are named by what they are, in lower case or by a figure, which this leaves.
+        titles = {f["title"] for f in LANES.values() if f["title"]}
+        named = []
+        for m in re.finditer(r'^[ \t]*(?:\|\| )?(?:echo|step|die|printf)\b.*$', sh, re.M):
+            for n in re.finditer(r"\b[Tt]he ([A-Z][\w.-]*(?: [A-Z0-9][\w.-]*)*) lanes?\b", m.group(0)):
+                named.append(n.group(1))
+                if n.group(1) not in titles:
+                    p.append(f"{rel}:{line_at(sh, m.start())} says \"the {n.group(1)} lane\", which is no lane's official name")
+        floor(named, f"{rel} its messages that name a lane by a proper name", 2 * len(SIDE))
         # the 64 GB guard of each installer of its own names its lane
         for lane, f in LANES.items():
             if f["installer"] == rel or f["fits_64"]:
