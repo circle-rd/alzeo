@@ -73,6 +73,17 @@ beside opencode's config when it only raises the limits. No unit, template or im
 the proxy keep running, as nothing they read changed. The Agent tab's opencode server restarts if its limits come
 down, and keeps running if they go up or stay.
 
+**After the push.** GitHub's CI passed on b70dbdf, 89 steps, none skipped. The reference box updated in 1 min 32 s by
+the README's command (get.alzeo.ai): the 27B and the proxy kept running, the cockpit restarted and serves v1.45.4, and
+no lane's unit changed. To meet the case this release corrects, opencode's limits were first lowered on the box with
+the fit's own boot margin (`OC_BOOT_MARGIN=0.15`: 492,000 and 164,000 to 465,000 and 155,000), which restarted
+opencode-web at 03:38:34, as a limit that comes down does. The update's fit then raised them back to 492,000 and
+164,000 at 04:10:41 and listed both configs in `opencode-web.kept`, and the Agent tab's server kept running: its start
+is 03:38:34 in the snapshots taken before and after the update, and its journal shows no restart. On the 27B the
+production checks passed, and so did the eight real clients: Claude Code, opencode, Hermes, pi, the OpenAI and
+Anthropic SDKs, fetch under Node and under Bun, and LiteLLM. The cockpit showed no banner on any of its views, and no
+JavaScript error. No lane, proxy, engine or unit file changed, so the client matrix was not run again.
+
 ## v1.45.3 (2026-11-09): the documentation says what the code does, and the site lives at alzeo.ai
 
 **What the pages said and the code did not, corrected.** An audit read the eight most-read pages (README.md,
