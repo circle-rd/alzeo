@@ -20,20 +20,22 @@ still use short names.
 
 **A size is one figure in its unit.** Three sizes were said two ways. The 27B's NVFP4 weights were 22.0 GB in
 `boxmem.py` and 21 GB in the cockpit, the README and `install.sh`, for 21.945 GB measured: 21.9 everywhere, beside
-FP8's 30.9. The README's install table gave the Qwen3.8 Flash-Next FP4-Local checkpoint 103 GB, the room its fetch
-asks, where the installer and the cockpit said 102 (102.26 measured): the table says 102.3 and 18.2, rounded up to its
-121, and the installer says that its 103 is that measure rounded up. The cockpit, the README and the image lane's page
-gave that lane's 31 GiB of weights as GB (33.1 GB measured, which is 30.9 GiB). The cockpit's note on the FP8 target
-also said `around 200,000 fewer tokens of context`, an extrapolation `install.sh` dropped on 2026-09-02 for the
-measure: 771,139 tokens against 863,398 on the same 1M unit.
+FP8's 30.9. The README's install table and its Quickstart gave the Qwen3.8 Flash-Next FP4-Local checkpoint 103 GB, the
+room its fetch asks, where the installer and the cockpit said 102 (102.26 measured): both say 102.3 and 18.2, rounded
+up to their 121, and the installer says that its 103 is that measure rounded up. The cockpit, the README and the image
+lane's page gave that lane's 31 GiB of weights as GB (33.1 GB measured, which is 30.9 GiB). The cockpit's note on the
+FP8 target also said `around 200,000 fewer tokens of context`, an extrapolation `install.sh` dropped on 2026-09-02 for
+the measure: 771,139 tokens against 863,398 on the same 1M unit.
 
 **A 64 GB box with no cockpit whose Bolt does not come up.** When Bolt's first load fails, the installer switches back
 to the 27B, and that switch writes the 27B's nominal opencode limits (173,000 and 64,000 at its native window) over the
 pair fitted earlier to its pool, some 59,625 tokens on a 64 GB box. A cockpit that runs fits them again once the 27B
-answers. With none (`--no-cockpit`, or a cockpit that is stopped), nothing did, and opencode asked for nearly four
-times the pool until the next update. The installer now waits for the 27B and fits them, and says so when the 27B does
-not come back. Found by reading the code: no 64 GB box was at hand, and the correction was proved on the installer's
-own ending with stand-ins, not on such a box.
+answers, unless its autofit was turned off. With none (`--no-cockpit`, or a cockpit that is stopped), nothing did, and
+opencode asked for nearly four times the pool until the next update. The installer now waits for the 27B, 20 minutes at
+most, and fits them, and says so when the 27B does not answer in time. It only waits: it starts and stops nothing and
+asks no sudo, so a 27B that systemd starts again is left to come up. After a preparation of Bolt that failed nothing
+had moved, and nothing is done. Found by reading the code: no 64 GB box was at hand, and the correction was proved on
+the installer's own ending with stand-ins, not on such a box.
 
 **Smaller things.** The switch to the video lane asked 145 of free room when it could not read `install-video.sh`, the
 GB that installer counted before v1.20.0: it asks the 135 GiB the installer asks. The Now view wrote `127.0.0.1:30020`
@@ -43,12 +45,13 @@ for Ornith 1.5 122B, whose effort table `pi-gen.py` writes: it has one. Run whil
 is nothing to fit to its pool, with the same return code. And `.github/FUNDING.yml` gives the repository a Sponsor
 button that leads to https://alzeo.ai/support/, the page that says what helps: there is no donation link today.
 
-**Tests.** `tests/test_lane_registry.py` now reads every script of the repo's root and every string of the cockpit's
-Python and of its page, comments and docstrings aside: a lane named by a proper name is named by its official one, the
-refusals are the same sentences in the server and in the page, and each lane installer names its own lane. Its six
-excuses for the cockpit's names are gone. `tests/test_docs_facts.py` holds each of the three sizes to one figure in its
-unit. `tests/test_spark_64.py` runs the 64 GB ending with no cockpit: Bolt's start fails, the 27B never comes back, the
-preparation fails. A page test answers `/api/image` with another port, another loads each vLLM lane and reads its own
+**Tests.** `tests/test_lane_registry.py` now reads the messages of every shell script of the repo's root and every
+string of the cockpit's Python and of its page, comments and docstrings aside: a message that says `the <Name> lane`
+names an official one, the refusals are the same sentences in the server and in the page, and each lane installer names
+its own lane. Its six excuses for the cockpit's names are gone. `tests/test_docs_facts.py` holds each of the three
+sizes to one figure in its unit. `tests/test_spark_64.py` runs the 64 GB ending with no cockpit: Bolt's start fails,
+its switch fails, the 27B does not answer in time, the preparation fails, and a 27B that systemd starts again meanwhile
+is never stopped. A page test answers `/api/image` with another port, another loads each vLLM lane and reads its own
 name, `tests/test_switch_room.py` runs the switch with no `install-video.sh` to read, `tests/test_pi_gen.py` holds a
 line of `docs/pi.md` to each lane of the generator's table, and `tests/test_oc_fit_limits.py` starts a server of its
 own that answers 404. Each fails on the code before. The five browser checks that start a cockpit of their own now
@@ -57,8 +60,9 @@ check made one contact with 127.0.0.1:30022 before, and none after.
 
 **What changes on a box.** The cockpit (`cockpit.py`, five files of its page, `conformity.py`), messages of the three
 lane installers and of `switch-model.sh`, the 64 GB ending of `install.sh`, the video switch's fallback, and what
-`oc-fit-limits.py` prints under a vLLM engine. Comments only in `boxmem.py`, `lifecycle.py`, `install-flash-local.sh`
-and `install-image.sh`. No unit, template or image changes.
+`oc-fit-limits.py` prints under a vLLM engine. Comments only in `boxmem.py`, `lifecycle.py` and
+`install-flash-local.sh`, and the header of `install-image.sh`, which is also its help. No unit, template or image
+changes.
 
 **What an update does.** The update runs get.sh, which starts the new installer. The cockpit restarts and serves the
 new page. The engine and the proxy keep running, as nothing they read changed.
