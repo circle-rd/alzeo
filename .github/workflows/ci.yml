@@ -1407,7 +1407,7 @@ jobs:
           # here until 2026-10-18.
 
   coverage:
-    # The coverage floors, root modules and per module.
+    # The coverage floors of the root modules (the cockpit's are the next job's).
     runs-on: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v5
@@ -1480,6 +1480,16 @@ jobs:
               print("\n".join("  FAIL " + b for b in bad))
               sys.exit(1)
           PYEOF
+
+  coverage-cockpit:
+    # The coverage floors of the cockpit's modules: a job of its own since 2026-11-10, beside the
+    # root modules' and not after them (338 s after 1,283 s that day, in one job).
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v7   # Node 24, the reference box's (static says why)
+        with:
+          node-version: '24'
 
       - name: Coverage floors (measured, per module)
         run: |
@@ -1697,7 +1707,7 @@ jobs:
     # Every job above passed: the status of the run, under the name it always had. It runs when one
     # of them failed too, and fails then: a job skipped because a job it needs failed reads as
     # passed to a rule that requires it (code review, 2026-10-28).
-    needs: [static, suite, single, coverage, cockpit, fuzz]
+    needs: [static, suite, single, coverage, coverage-cockpit, cockpit, fuzz]
     if: always()
     runs-on: ubuntu-24.04-arm
     steps:
@@ -1705,6 +1715,6 @@ jobs:
         env:
           RESULTS: ${{ join(needs.*.result, ' ') }}
         run: |
-          # ci-local.sh runs this job once the six have passed, and only then, with no RESULTS
-          echo "static, suite, single, coverage, cockpit and fuzz: ${RESULTS:-passed}"
+          # ci-local.sh runs this job once the seven have passed, and only then, with no RESULTS
+          echo "static, suite, single, coverage, coverage-cockpit, cockpit and fuzz: ${RESULTS:-passed}"
           for r in $RESULTS; do [ "$r" = success ] || exit 1; done

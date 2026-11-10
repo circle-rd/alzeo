@@ -36,7 +36,9 @@ from concurrent.futures import ThreadPoolExecutor
 REPO = pathlib.Path(__file__).resolve().parents[1]
 
 # The longest files start first, so that they do not end alone at the tail of the run.
-FIRST = ["tests/test_text_lane.py", "tests/test_check_pins.py"]
+FIRST = ["tests/test_proxy_pair_one_model_inprocess.py", "tests/test_proxy_hold.py",
+         "tests/test_proxy_pair_one_model.py", "tests/test_proxy_pair.py", "tests/test_text_lane.py",
+         "tests/test_proxy_pair_inprocess.py", "tests/test_pair_tool.py", "tests/test_check_pins.py"]
 
 # spelled in two parts: the CI counts that string to know how many tests a file declares
 TEST_DEF = "def " + "test_"
