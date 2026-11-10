@@ -67,7 +67,9 @@ class TheJobThatNeedsTheOthers(unittest.TestCase):
         return repo, tmp
 
     def env(self, tmp, serial=False, **extra):
-        env = {k: v for k, v in os.environ.items() if k not in ("CI_LOCAL_SERIAL", "QWEN38_TEST_PYTHON")}
+        # CI_LOCAL_WORKFLOW too: a case asks for another workflow file by naming it, never by inheriting it
+        env = {k: v for k, v in os.environ.items()
+               if k not in ("CI_LOCAL_SERIAL", "QWEN38_TEST_PYTHON", "CI_LOCAL_WORKFLOW")}
         env.update(TMPDIR=str(tmp), **extra)
         if serial:
             env["CI_LOCAL_SERIAL"] = "1"
@@ -168,10 +170,12 @@ class TheJobThatNeedsTheOthers(unittest.TestCase):
     def test_another_workflow_file_is_run_the_same_way_when_named(self):
         # the night's pass (.github/workflows/nightly.yml), which a release runs here before it is pushed
         night = ("name: nightly\non:\n  schedule:\n    - cron: '43 2 * * *'\njobs:\n  one-process:\n"
-                 "    runs-on: ubuntu-24.04-arm\n    steps:\n      - name: The night's one\n        run: \"true\"\n")
+                 "    runs-on: ubuntu-24.04-arm\n    steps:\n      - name: The night's one\n"
+                 "        run: 'test -z \"${CI_LOCAL_WORKFLOW:-}\"'\n")
         repo, tmp = self.make_repo(WORKFLOW.format(slow="false"), files={".github/workflows/nightly.yml": night})
         r = subprocess.run(["bash", str(SCRIPT)], cwd=repo, capture_output=True, text=True, timeout=120,
                            env=self.env(tmp, CI_LOCAL_WORKFLOW=".github/workflows/nightly.yml"))
+        # its step passes only without the variable: the name of the workflow is this run's, not its steps'
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertIn("[one-process] ok   The night's one", r.stdout)
         self.assertIn("CI local: 1 ok, 0 echecs, 0 sautes", r.stdout)
@@ -180,6 +184,21 @@ class TheJobThatNeedsTheOthers(unittest.TestCase):
                            env=self.env(tmp, CI_LOCAL_WORKFLOW=""))
         self.assertEqual(r.returncode, 1, "without the name, ci.yml, whose slow job fails here")
         self.assertIn("FAIL The slow one", r.stdout)
+
+    def test_these_cases_run_the_same_inside_the_nights_pass(self):
+        # this file is a step of that pass, which runs with the variable set: each case here plants a repository
+        # with a ci.yml alone, and ran its ci-local.sh on a nightly.yml that is not there (13 failures, 2026-11-10)
+        old = os.environ.get("CI_LOCAL_WORKFLOW")
+        os.environ["CI_LOCAL_WORKFLOW"] = ".github/workflows/nightly.yml"
+        try:
+            r, _ = self.run_ci()
+        finally:
+            if old is None:
+                del os.environ["CI_LOCAL_WORKFLOW"]
+            else:
+                os.environ["CI_LOCAL_WORKFLOW"] = old
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("CI local: 3 ok, 0 echecs, 0 sautes", r.stdout)
 
     def test_a_fragment_runs_in_the_checkout_as_it_is(self):
         # what one runs while editing: the worktrees of HEAD made it refuse every tree with a change

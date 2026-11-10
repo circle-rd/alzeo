@@ -122,7 +122,12 @@ def run_job(job, steps, cwd):
         # by whatever ran next
         tmp = os.path.join(home, "tmp")
         os.mkdir(tmp)
-        env = {**os.environ, **test_python, "HOME": home, "TMPDIR": tmp, "CI_LOCAL_CALLED": called,
+        # CI_LOCAL_WORKFLOW names the workflow to this run and is no part of a step's environment, as a
+        # runner has no such variable: tests/test_ci_local.py, a step of the night's pass, handed it to the
+        # ci-local.sh of each repository it plants, which looked there for a nightly.yml they do not have
+        # (13 failures, found in review on 2026-11-10 before that pass had run once)
+        env = {**{k: v for k, v in os.environ.items() if k != "CI_LOCAL_WORKFLOW"}, **test_python,
+               "HOME": home, "TMPDIR": tmp, "CI_LOCAL_CALLED": called,
                "PATH": stubs + os.pathsep + os.environ.get("PATH", "")}
         r, tools, dt = None, [], 0.0
         try:
