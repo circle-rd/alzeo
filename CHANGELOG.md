@@ -1,5 +1,63 @@
 # Changelog
 
+## v1.46.2 (2026-11-10): the CI of a push takes a little over nine minutes where it took thirty, and the pass it no longer makes runs every night and before a release
+
+**Thirty minutes, and where they went.** A full run of the CI took 30 minutes on the reference box and 32 on GitHub,
+against 12 on 2026-10-28. Measured on 2026-11-10 with every unittest module of `tests/` in one process: 3,034 tests in
+1,792 s, of which `tests/test_proxy_pair.py` took 892 s for its 498 tests, and 82% of the time went to tests of 2 s and
+more, which wait for real delays. Three jobs were bound by that one file: `single`, which ran every module in one
+process (1,808 s), `coverage`, which ran its 27 files one after the other and then the cockpit's floors (1,281 and 338
+s), and `suite`, where the file started when its turn came by name (1,177 s).
+
+**The pair's tests are four files.** `tests/test_proxy_pair.py` is cut by class, each class copied line for line: it
+keeps the two boxes that serve two models, the pair's pieces and the lane names; `tests/test_proxy_pair_inprocess.py`,
+`tests/test_proxy_pair_one_model.py` and `tests/test_proxy_pair_one_model_inprocess.py` take the three other classes,
+and `tests/pairbox.py` holds what the four share and no test. A twin names its base class by its module, as unittest
+runs every TestCase a module names and would run that class's cases a second time in the twin's file. The check that a
+twin declares every case of its class is one test in each twin's file where it was one test for both: 499 tests where
+there were 498.
+
+**The modules run in groups, side by side.** `single` runs `tests/run_single.py`: the same modules in groups, each
+group one process, four at a time. Each of the pair's four files is a group, and the others are dealt in turn into two.
+Every module is in one group and one only. `coverage` runs its files four at a time, the cockpit's floors are a job of
+their own, `coverage-cockpit`, beside it, and `suite` starts its longest files first.
+
+**What a push's CI no longer sees, and where it is seen.** What a test module leaves to the modules after it (a
+variable of the environment, the directory, `sys.path`, a thread, a signal handler) shows only where they share a
+process. A run in groups sees it within a group. Between two groups it is seen by the pass that runs every module in
+one process, `tests/run_single.py --one-process`, half an hour: `.github/workflows/nightly.yml` runs it every night,
+and a release runs it on the box before it is pushed, as `ci-local.sh` now runs the workflow file that
+`CI_LOCAL_WORKFLOW` names. `tests/test_run_single.py` shows that limit as it is: two modules of two groups, one leaving
+a variable the other refuses, pass in groups and fail in one process.
+
+**Two checks of that pass made true.** A test may be skipped for a listed reason only. unittest writes a reason between
+double quotes when it holds an apostrophe, and the check read single quotes alone: it never saw 85 of the 95 reasons
+`tests/` gives, 83 of them a case that only the in-process twin of its class runs. Both forms are read, and that reason
+is allowed in the class whose proxy is a process of its own and refused in a twin. And one process says once how many
+tests it ran: a second count, from a test that runs the tests again, fails the run, as it did in the step this
+replaces. Both were found by an independent review of the branch, which also found that the one-process pass could not
+pass as first written: every step inherited `CI_LOCAL_WORKFLOW`, and the cases of `tests/test_ci_local.py` ran their
+planted `ci-local.sh` on a workflow file that was not there. A step no longer gets the variable, as on a runner.
+
+**Measured.** Five full runs on the reference box before the review's corrections, each of 53 steps, none failed, none
+skipped: 590 s with the groups in their first order, then 557, 559, 558 and 558 s, the length of `suite` (`cockpit` 513
+to 516 s, `coverage` 503, `single` 503, `coverage-cockpit` 343 to 345, `fuzz` 233 to 236, `static` 57 to 58). `single`
+took 1,808 s before.
+
+**Tests.** `tests/test_run_single.py` proves each fact of a run on a planted tree, 16 tests: a failing test, a module
+that cannot be imported, fewer tests run than declared, two counts from one process, a skip for a reason nobody listed
+in either form of quotes, the twin's reason in a class and in its twin, the SDK missing on a runner and off it, and the
+limit above. Ten mutations of its first version are each caught; of seven of the review's lines, six are caught and the
+seventh changes nothing. Two new cases of `tests/test_ci_local.py` are red on the code before. The cut was compared by
+the syntax tree: every method of every class and every function and constant of the file is where it went with the body
+it had, but for the two base classes named by their module and the twin's check.
+
+**What changes on a box.** Nothing that serves or installs: `tests/`, `.github/workflows/`, `ci-local.sh`, `TESTING.md`
+and `CONTRIBUTING.md`. No script of the installer, no unit, no template, no file of the cockpit.
+
+**What an update does.** The update runs get.sh, which starts the installer, as at every update. Nothing it installs
+changed in this version.
+
 ## v1.46.1 (2026-11-10): the cockpit and the lane installers name each lane by its official name, a size is one figure in its unit, and a 64 GB box with no cockpit keeps opencode's limits fitted
 
 **Each lane by its official name, in the cockpit too.** The cockpit said `the Nemotron lane` for Nemotron 3.5 Bolt and
