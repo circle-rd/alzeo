@@ -9,9 +9,10 @@
 #   ./install-image.sh --prepare       the runtime alone, no sudo: the cockpit's first Load runs it
 #
 # install.sh runs this on every plain install since v1.20: a box gets every lane. The
-# checkpoint is 34 GB and the runtime another 12 with its build (WEIGHTS_GB and RUNTIME_GB
-# below count them in GiB, 31 and 11: the venv, the checkout and the wheel take 8.6 to 8.8 GiB
-# on the reference box, measured 2026-10-17, the rest is for the build); when the disk does not have the room, this refuses before
+# checkpoint takes 34 GB (33.1 measured, rounded up; 30.9 GiB) and the runtime another 12 with its
+# build (WEIGHTS_GB and RUNTIME_GB below count them in GiB, as df -BG does: 31, the checkpoint
+# rounded up, and 11: the venv, the checkout and the wheel take 8.6 to 8.8 GiB on the reference
+# box, measured 2026-10-17, the rest is for the build); when the disk does not have the room, this refuses before
 # downloading anything, install.sh says so and goes on, and ./install.sh --no-image
 # leaves the lane out of the run that passes it.
 #
@@ -22,7 +23,7 @@
 # first all the same, because it carries the prebuilt aarch64 native kernels that a source
 # tree does not build.
 #
-# ONE ENGINE AT A TIME. 31 GB of weights do not fit beside a serving LLM. The unit says
+# ONE ENGINE AT A TIME. 31 GiB of weights do not fit beside a serving LLM. The unit says
 # so with Conflicts=, so starting this stops the LLM lane and starting an LLM lane stops
 # this. Nothing here has to be remembered by the operator.
 set -euo pipefail
@@ -98,7 +99,7 @@ case "$MODEL" in
   *) MODEL_REV="${IMAGE_MODEL_REV:-main}" ;;
 esac
 # The installed unit's cache, then the one the text lane mounts, then the default: an
-# update that ignored the unit downloaded 31 GB again into ~/.cache and rewrote HF_HOME on
+# update that ignored the unit downloaded 33 GB again into ~/.cache and rewrote HF_HOME on
 # a box whose lane lived on another disk, and a first install beside a text lane on a
 # custom cache put the checkpoint on the system disk (found in review, 2026-09-24).
 installed_env(){ { grep -m1 -E "^Environment=$1=" "$INSTALLED" 2>/dev/null || true; } | cut -d= -f3-; }
@@ -491,7 +492,7 @@ systemctl is-active --quiet "$UNIT" 2>/dev/null && WAS_IMAGE=1
 [ -n "$WAS_LLM" ] && echo "note: $WAS_LLM is serving and will be stopped for this test, then started again."
 # From here on the serving lane is DOWN, so putting it back cannot live on the happy path:
 # every die() below would leave the box serving nothing, with the image unit holding
-# 31 GB, until somebody noticed. The trap runs on success and on every failure alike.
+# 31 GiB, until somebody noticed. The trap runs on success and on every failure alike.
 restore_text_lane() {
   [ "$WAS_IMAGE" -eq 1 ] || sudo systemctl stop "$UNIT" 2>/dev/null || true
   if [ -n "$WAS_LLM" ]; then

@@ -162,6 +162,60 @@ class TheDiskNeedsAreThePreflights(unittest.TestCase):
         self.assertEqual(said, flags)
 
 
+def target_notes():
+    """The body of the page's TARGET_NOTE, one note a line (base.js)."""
+    js = (REPO / "dashboard" / "static" / "js" / "base.js").read_text()
+    return re.search(r"^const TARGET_NOTE = \{\n(.*?)\};$", js, re.M | re.S).group(1)
+
+
+class AWeightIsOneFigureInItsUnit(unittest.TestCase):
+    """A size said in several places is one figure, to the nearest in the unit it is said in (GB of 10^9 bytes,
+    GiB of 2^30), and a room check that rounds it up says so beside it. Found on 2026-11-10: the 27B's NVFP4
+    weights were 22.0 GB in boxmem.py and 21 GB in the cockpit, the README and install.sh, for 21.945 measured;
+    the README's install table gave the Qwen3.8 Flash-Next FP4-Local checkpoint 103 GB, the room its fetch asks,
+    where the installer and the cockpit said 102; the cockpit gave the image lane's 31 GiB as GB."""
+
+    def test_the_27b_fp8_weights_against_the_nvfp4_ones(self):
+        said = {}
+        for p in tracked("*.py", "*.sh", "*.js", "*.md"):
+            if p.name == "CHANGELOG.md":
+                continue
+            for m in re.finditer(r"30\.9 GB\s+(?:#\s*)?against ([\d.]+) GB", p.read_text()):
+                said.setdefault(m.group(1), []).append(p.relative_to(REPO).as_posix())
+        self.assertGreaterEqual(sum(map(len, said.values())), 4, said)
+        self.assertEqual(len(said), 1, said)
+
+    def test_the_flash_local_checkpoint_and_the_room_it_asks(self):
+        sh = (REPO / "install-flash-local.sh").read_text()
+        m = re.search(r"^# the checkpoint at this revision, (\d+\.\d+) GB, rounded up\b.*\n(?:#.*\n)*FLASH_LOCAL_GB=\"(\d+)\"$", sh, re.M)
+        self.assertIsNotNone(m, "install-flash-local.sh: no measure of the checkpoint above FLASH_LOCAL_GB, said rounded up")
+        measured, pin = float(m.group(1)), int(m.group(2))
+        self.assertEqual(pin, math.ceil(measured), "the room its fetch asks is the measure, rounded up")
+        header = re.search(r"It takes a checkpoint of (\d+) GB", sh)
+        note = re.search(r"^  'flash-local': '[^']*The first switch downloads about (\d+) GB\.',?$", target_notes(), re.M)
+        row = re.search(r"^\| Qwen3\.8 Flash-Next FP4-Local lane \|.*?, (\d+) GB \((\d+\.\d) checkpoint, (\d+\.\d) image, rounded up\)",
+                        (REPO / "README.md").read_text(), re.M)
+        for what, found in (("install-flash-local.sh's header", header), ("base.js's note", note), ("README.md's row", row)):
+            self.assertIsNotNone(found, f"{what} no longer says the checkpoint's size where this reads it")
+        self.assertEqual(int(header.group(1)), round(measured))
+        self.assertEqual(int(note.group(1)), round(measured))
+        self.assertEqual(float(row.group(2)), round(measured, 1))
+        self.assertEqual(int(row.group(1)), math.ceil(float(row.group(2)) + float(row.group(3))))
+
+    def test_the_image_lanes_weights_in_the_unit_it_counts(self):
+        # install-image.sh counts its checkpoint in GiB, as df -BG does (WEIGHTS_GB, rounded up): the cockpit's note,
+        # and the sentence the installer, the README and the lane's page give of what does not fit beside a text lane
+        weights = int(re.search(r"^WEIGHTS_GB=(\d+);", (REPO / "install-image.sh").read_text(), re.M).group(1))
+        said = [("base.js's note", m) for m in re.finditer(r"\b(\d+) (GiB|GB) of weights\b",
+                                                         re.search(r"^  image: '([^']+)'", target_notes(), re.M).group(1))]
+        for rel in ("install-image.sh", "README.md", "docs/image-lane.md"):
+            said += [(rel, m) for m in re.finditer(r"\b(\d+) (GiB|GB) of weights do not fit beside", (REPO / rel).read_text())]
+        self.assertEqual(sorted({w for w, _ in said}), ["README.md", "base.js's note", "docs/image-lane.md", "install-image.sh"])
+        for where, m in said:
+            self.assertEqual(m.group(2), "GiB", f"{where}: {m.group(0)}")
+            self.assertIn(int(m.group(1)), (weights - 1, weights), f"{where}: to the nearest GiB, whose ceiling WEIGHTS_GB is")
+
+
 
 class TheGsm8kCountIsTheOneRunEvalAsks(unittest.TestCase):
     def test_our_scores_name_the_questions_they_were_asked(self):

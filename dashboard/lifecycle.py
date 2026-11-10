@@ -479,7 +479,7 @@ BUSY_STATES = {"starting", "loading-weights", "loading-draft", "allocating-kv",
 # holds a switch back, which only rewrites files; both stay busy for a second engine.
 TRANSITIONAL = BUSY_STATES - {"ready", "degraded", "orphan", "wedged"}
 # Every unit that holds the GPU pool while it runs. The image lane is one of them:
-# 31 GB of weights, and two engines at once on 121.6 GiB of unified memory is the
+# 31 GiB of weights, and two engines at once on 121.6 GiB of unified memory is the
 # livelock this whole module exists to prevent. The video lane is one of them too:
 # about 116 GiB of weights by measured components (48.09 + 61.73 + 0.56 + 5.2,
 # docs/video-lane.md), for the same reason. So is the Kolibri lane: 73.6 GiB of weights

@@ -175,7 +175,7 @@ IMAGE="${IMAGE:-lmsysorg/sglang@sha256:e3a4f06001a29542fc4a8638536d9ffc5eb9c9942
 STOCK_REPO="RadixArk/Qwen3.8-27B-NVFP4"
 STOCK_REV="52d1adc5f38aa5ebf099c29ed7025ba34cfbb854"
 # Qwen's own FP8 release: the quality reference of the 27B lane. Weights are 30.9 GB
-# against 21 GB for NVFP4, which SGLang takes out of the KV pool: measured on the
+# against 21.9 GB for NVFP4, which SGLang takes out of the KV pool: measured on the
 # reference box, the same 1m unit reports 863,398 tokens on NVFP4 and 771,139 on
 # FP8, so about 92,000 fewer (an earlier note here extrapolated 200,000 from
 # 20,000 tokens per GB; the measurement is the number to trust).

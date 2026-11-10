@@ -98,6 +98,8 @@ FLASH_LOCAL_REPO="nvidia/Qwen3.8-Flash-Next-FP4-Local"
 FLASH_LOCAL_REV="b9ce18a6887e18c089fdea8509a33e63429a3300"
 FLASH_LOCAL_IMAGE="eugr/spark-vllm-b12x@sha256:03a956544e9f9b4b7ba91690469fbe7848bdbef29a7d2e0f5788368467bb3595"
 FLASH_LOCAL_GMU="0.8"
+# the checkpoint at this revision, 102.26 GB, rounded up: the room its fetch asks, here (vlane_room)
+# and in switch-model.sh (ckpt-fetch.py --need-gb)
 FLASH_LOCAL_GB="103"
 FLASH_LOCAL_SEQS="8"
 # the seven files that hold the n-gram table at this revision, 32.31 GB, rounded up: what their copies

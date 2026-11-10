@@ -260,7 +260,7 @@ Everything below is optional and combinable. Variables ride on the `bash` side o
 | Kolibri lane | default, or `--no-kolibri` | on demand: its units, built at its first Load | Aleph Alpha's Kolibri-1 on vLLM, 102 GB (79 checkpoint, 23 image); `--with-kolibri` installs it whole now and proves it (about 10 min) |
 | Nemotron lane | default, or `--no-nemotron` | on demand: its units, built at its first Load | NVIDIA's Nemotron 3.5 Bolt on vLLM, 51 GB (26 checkpoint and drafter, 25 image); `--with-nemotron` installs it whole now and proves it |
 | Nemotron Super lane | default, or `--no-nemotron-super` | on demand: its units, built at its first Load | NVIDIA's Nemotron 3.5 Super VL on vLLM, in the Nemotron lane's image: 77 GB of checkpoint and drafter, 102 with the image when the Nemotron lane is not there; `--with-nemotron-super` installs it whole now and proves it |
-| Qwen3.8 Flash-Next FP4-Local lane | default, or `--no-flash-local` | on demand: its units, built at its first Load | NVIDIA's FP4-Local build of Qwen3.8-Flash-Next on vLLM, 121 GB (103 checkpoint, 18 image), 32 more for the copy of its n-gram table when the cache is on another disk. `--with-flash-local` installs it whole now and proves it |
+| Qwen3.8 Flash-Next FP4-Local lane | default, or `--no-flash-local` | on demand: its units, built at its first Load | NVIDIA's FP4-Local build of Qwen3.8-Flash-Next on vLLM, 121 GB (102.3 checkpoint, 18.2 image, rounded up), 32 more for the copy of its n-gram table when the cache is on another disk. `--with-flash-local` installs it whole now and proves it |
 | Ornith 122B lane | default, or `--no-ornith-122b` | on demand: its units, built at its first Load | Ornith AI's Ornith 1.5 122B on vLLM, in the Qwen3.8 Flash-Next FP4-Local lane's image: 78 GB of checkpoint, 96 with the image when the Qwen3.8 Flash-Next FP4-Local lane is not there; `--with-ornith-122b` installs it whole now and proves it |
 | opencode integration | default, or `--no-opencode` | on | on = ready config + `oc` launcher + default model following every switch; off = none of that, your own opencode config is never touched. `--with-opencode` turns it back on |
 | Ports | `PORT=`, `PROXY_PORT=` | 30000, 30001 | agent clients use the proxy port |
@@ -420,7 +420,7 @@ way (`./switch-model.sh image-turbo`, 32.5 GB on its first switch): about four a
 faster, close to the base on photographs, portraits, illustrations and short text
 ([docs/image-lane.md](docs/image-lane.md#the-turbo-checkpoint) shows where it is not).
 
-31 GB of weights do not fit beside a serving LLM, so the lanes take turns: the cockpit refuses
+31 GiB of weights do not fit beside a serving LLM, so the lanes take turns: the cockpit refuses
 to start any engine while another is busy, for the nine lanes alike, and the unit's `Conflicts=` is
 a second belt for a `systemctl start` typed at a terminal.
 
@@ -771,7 +771,7 @@ accuracy table, measured by NVIDIA on GB300 under vLLM, prices this recipe again
 against 80.07, MMMU-Pro 74.86 against 75.14**, with **AA-LCR 73.38 against 72.63** and
 **SciCode 48.41 against 47.93** landing the other way. That is the size of the NVFP4
 question on this model, from the people who quantized it. Adding an eighth target for a
-recipe-identical export would cost 21 GB and a validation cycle for, at best, a tie: say
+recipe-identical export would cost 22 GB and a validation cycle for, at best, a tie: say
 so in an issue if you want it, the switch surface has room.
 
 The FP8 pair is Qwen's own release and huihui-ai's abliteration of it in the
@@ -791,7 +791,7 @@ automatically." Qwen's FP8 release carries no such declaration, which is why it
 is the one target that has to ask. The cookbook also prices the difference at
 32.8 KB per token in fp8 against 65.5 KB in bf16, exactly the factor of two this
 box measures between a flagged and an unflagged FP8 pool. Take it when you want the quantization question off the table, and know
-what it costs: the weights are **30.9 GB against 21 GB** for NVFP4, SGLang takes
+what it costs: the weights are **30.9 GB against 21.9 GB** for NVFP4, SGLang takes
 that out of the KV pool: the same 1m unit measures **863,398 tokens on NVFP4 and
 771,139 on FP8**, about 92,000 fewer, and decode is bandwidth bound on GB10 so it
 is also slower (**108 tok/s aggregate at

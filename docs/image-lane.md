@@ -46,7 +46,7 @@ the same uses, and its first switch downloads 32.5 GB; switching between the two
 unit's `--model-path` and nothing else, then restarts the lane (about 80 s). See
 [The Turbo checkpoint](#the-turbo-checkpoint) below.
 
-**Never two engines at once.** 31 GB of weights do not fit beside a serving LLM, and a
+**Never two engines at once.** 31 GiB of weights do not fit beside a serving LLM, and a
 request takes the lane to 34.8 GiB at 1024x1024 (45.4 GiB at 2048x2048). The cockpit refuses to start any engine while
 another one is busy, and says which one to stop, for the nine lanes alike: starting the
 image lane while the 27B serves comes back `409 blocked`, and so does starting the 27B

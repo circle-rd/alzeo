@@ -39,7 +39,7 @@ TARGETS = {"stock": "27b", "uncensored": "27b", "fp8": "27b", "uncensored-fp8": 
            "kolibri": "kolibri", "kolibri-nvfp4": "kolibri", "nemotron": "nemotron",
            "nemotron-super": "nemotron-super", "flash-local": "flash-local", "ornith-122b": "ornith-122b"}
 # Targets of a lane that fits, which a 64 GB box still does not take: Qwen's FP8 weights of the 27B
-# (30.9 GB against 22.0 GB for NVFP4) leave its KV pool too little, and no 64 GB run measured them.
+# (30.9 GB against 21.9 GB for NVFP4) leave its KV pool too little, and no 64 GB run measured them.
 HEAVY_64 = ("fp8", "uncensored-fp8")
 # (sys_vendor, product_name) as a box's DMI gives them, each read on a real box and never
 # guessed, and the name its maker sells it under. Any other box is named by its DMI as it is.
