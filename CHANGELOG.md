@@ -47,7 +47,7 @@ a stand-in that always succeeded. The tool was then run against a server that an
 does: return code 1, and that first line.
 
 The installer no longer runs the fit after Bolt's first load. After its summary the run says `Nemotron 3.5 Bolt serves
-now, and at boot; the 27B is a Load away in the cockpit`, then the line that says a star helps.
+now, and at boot; the 27B is a Load away in the cockpit`, then its record line and the line that says a star helps.
 
 **Three lanes by their official names in the installer's messages.** The messages of `install.sh` that name a lane (the
 lane a box boots, the lane that serves, a lane disabled at boot, a side lane that did not install) said `Kolibri`,
@@ -104,6 +104,17 @@ cockpit restarts and serves the new page. The engine and the proxy keep running,
 that boots or serves Kolibri-1, Nemotron 3.5 Bolt or Nemotron 3.5 Super VL reads those names in the update's messages.
 The 64 GB fix brings nothing to a 128 GB box, nor to a 64 GB box whose first install already ended whole: the two false
 lines were those of a first install, and of `--recommended` on a box that boots the 27B.
+
+**After the push.** GitHub's CI passed on 5b736cc, 89 steps, none skipped. The reference box updated in 1 min 36 s by
+the README's command (get.alzeo.ai): the 27B and the proxy kept running, the cockpit restarted and serves v1.46.0, and
+no lane's unit changed. The run ended on its record line and on the new one, `If Alzeo serves you well, a star helps
+other owners find it: https://github.com/hasso5703/alzeo`. On that cockpit, a desktop and a phone read the What's new
+row of the Repo panel: `The release notes. If Alzeo serves you well, a star on GitHub helps other owners find it.`, its
+first link to every release as this one was not published yet. The 27B was then restarted once, on purpose and outside
+the update: its KV pool is 902,659 tokens. On the 27B the production checks passed, and so did the eight real clients:
+Claude Code, opencode, Hermes, pi, the OpenAI and Anthropic SDKs, fetch under Node and under Bun, and LiteLLM. The
+cockpit showed no banner on any of its views, and no JavaScript error. No lane, proxy, engine or unit file changed, so
+the client matrix was not run again.
 
 ## v1.45.4 (2026-11-10): an update that raises opencode's limits leaves the Agent tab running, and eighteen more pages say what the code does
 
