@@ -265,7 +265,7 @@ class WhatItDoesNotHave(Base):
         finally:
             self.serving(None)
         self.assertTrue(out["skipped"])
-        self.assertIn("the Nemotron lane is checked by vLLM's own /health", out["why"])
+        self.assertIn("the Nemotron 3.5 Bolt lane is checked by vLLM's own /health", out["why"])
 
     def test_a_flush_and_an_abort_say_it_has_none(self):
         self.serving("ready")
@@ -277,8 +277,8 @@ class WhatItDoesNotHave(Base):
             self.serving(None)
         self.assertFalse(ok)
         self.assertEqual(data["reason"], "unsupported")
-        self.assertIn("the Nemotron lane's vLLM has no cache flush route", lines[0])
-        self.assertIn("the Nemotron lane's vLLM has no route that aborts", str(e.exception))
+        self.assertIn("the Nemotron 3.5 Bolt lane's vLLM has no cache flush route", lines[0])
+        self.assertIn("the Nemotron 3.5 Bolt lane's vLLM has no route that aborts", str(e.exception))
 
     def test_system_one_points_at_the_qwen_lanes(self):
         self.serving("ready")
@@ -287,7 +287,7 @@ class WhatItDoesNotHave(Base):
         finally:
             self.serving(None)
         self.assertFalse(out["available"])
-        self.assertIn("a Nemotron lane is serving", out["reason"])
+        self.assertIn("the Nemotron 3.5 Bolt lane is serving", out["reason"])
 
     def test_its_served_name_is_its_own(self):
         with self.ck.STATE_LOCK:
@@ -316,7 +316,7 @@ class WhatItDoesNotHave(Base):
             self.assertEqual((code, body.get("error")), (409, "blocked"), name)
             reasons = " ".join(body.get("reasons") or [])
             self.assertIn(why, reasons, name)
-            self.assertIn("Nemotron", reasons, name)
+            self.assertTrue(reasons.startswith("The Nemotron 3.5 Bolt lane"), name)
 
 
 class ItsUnit(Base):

@@ -128,7 +128,7 @@ class RecommendedMovesEveryChoiceButTheSites(unittest.TestCase):
         lines = conformity.plan_lines(items, "v1.36.0")
         self.assertIn("  moves now    flash target flash-nvda, to flash: --recommended moves it, a choice of yours or not",
                       lines)
-        self.assertIn("  moves now    Kolibri checkpoint nvfp4, to fp8: --recommended moves it, a choice of yours or not",
+        self.assertIn("  moves now    Kolibri-1 checkpoint nvfp4, to fp8: --recommended moves it, a choice of yours or not",
                       lines)
         self.assertTrue(any(ln.startswith("  site setting PORT 30100") for ln in lines), lines)
 

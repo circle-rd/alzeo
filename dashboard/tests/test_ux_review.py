@@ -133,7 +133,7 @@ class TheRequestIdOverrideOnKolibri(unittest.TestCase):
         feed({reqguard: guard});
         report({kolibri, none: txt('zg-override')});
         """)
-        self.assertIn("not on the Kolibri lane", r["kolibri"])
+        self.assertIn("not on the Kolibri-1 lane", r["kolibri"])
         self.assertEqual(r["none"], "no engine")
 
 
@@ -175,7 +175,7 @@ class SystemOneNamesTheLanesThatServeIt(unittest.TestCase):
     def test_the_line_under_ask_names_them(self):
         r = run(self, r"""
         __fetch = async url => url === '/api/systemone' ? __response(200, {available: false, lane: '',
-          reason: 'The Kolibri lane is serving: System One is answered by the 27B or the flash lane'}) : new Promise(() => {});
+          reason: 'The Kolibri-1 lane is serving: System One is answered by the 27B or the flash lane'}) : new Promise(() => {});
         feed({config: CONFIG, units: UNITS, lifecycle: life({'qwen38-kolibri.service': eng('ready', {target: 'kolibri'})})});
         showView('decide'); await __settle();
         report(txt('s1-why'));

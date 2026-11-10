@@ -155,10 +155,8 @@ on('reqguard', d => {
   setText('zg-ver', g.version ? 'v' + g.version : 'no banner in the journal');
   // an SGLang setting, which the guard reads on the SGLang lanes only
   setText('zg-override', d.override === true ? 'yes' : d.override === false ? 'no' : d.lane ? 'unknown (docker did not answer)'
-    : (servingEngine() || [])[0] === KOLIBRI_UNIT ? 'not on the Kolibri lane (an SGLang setting)'
-    : isNemotron((servingEngine() || [])[0]) ? 'not on the Nemotron lanes (an SGLang setting)'
-    : (servingEngine() || [])[0] === FLASH_LOCAL_UNIT ? 'not on the Qwen3.8 Flash-Next FP4-Local lane (an SGLang setting)'
-    : (servingEngine() || [])[0] === ORNITH_UNIT ? 'not on the Ornith lane (an SGLang setting)' : 'no engine');
+    : (servingEngine() || [])[0] === KOLIBRI_UNIT ? 'not on the Kolibri-1 lane (an SGLang setting)'
+    : isB12x((servingEngine() || [])[0]) ? `not on ${b12xName((servingEngine() || [])[0])} (an SGLang setting)` : 'no engine');
   const acted = [];
   if (g.aborted) acted.push(`${g.aborted} aborted`);
   if (g.drained) acted.push(`${g.drained} drained${g.drain_max_s != null ? `, longest ${g.drain_max_s.toFixed(0)} s` : ''}`);
@@ -218,7 +216,7 @@ on('engine_fast', d => {
 });
 on('lifecycle', d => {
   const g = d.pool_guard; if (!g) return;
-  if (kolibriHolds()){ setText('mm-guard', 'not on the Kolibri lane: vLLM has no cache flush route, and evicts its prefix cache by itself'); return; }
+  if (kolibriHolds()){ setText('mm-guard', 'not on the Kolibri-1 lane: vLLM has no cache flush route, and evicts its prefix cache by itself'); return; }
   if (nemotronHolds()){ setText('mm-guard', `not on ${b12xName((servingEngine() || [])[0])}: vLLM has no cache flush route, and evicts its prefix cache by itself`); return; }
   setText('mm-guard', !g.enabled ? 'off (COCKPIT_POOL_GUARD=0)' : g.fails ? `cannot flush since ${clockTime(g.last_fail)}: ${g.last_err}`
     : g.flushes ? `${g.flushes} flush${g.flushes > 1 ? 'es' : ''}, last ${clockTime(g.last)}, above ${Math.round(g.threshold * 100)} % held` : `armed at ${Math.round(g.threshold * 100)} % held, never fired`);

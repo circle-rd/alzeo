@@ -171,7 +171,7 @@ class SystemOneIsAnsweredByATextLane(Base):
                 for reason in said:
                     self.assertIn("answered by the 27B", reason)
                     (self.assertNotIn if cls == "64" else self.assertIn)("flash", reason)
-                self.assertIn("a Nemotron lane is serving", said[0])
+                self.assertIn("the Nemotron 3.5 Bolt lane is serving", said[0])
                 self.assertIn("no text lane is serving", said[1])
 
     def test_nothing_serving(self):

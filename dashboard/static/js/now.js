@@ -331,7 +331,7 @@ on('canary', d => {
   let txt;
   if (d.skipped && !textReady()) txt = imageServing() ? 'no text engine (the image lane serves)' : videoServing() ? 'no text engine (the video lane serves)' : 'no text engine';
   // the Kolibri lane is not probed: the last Qwen lane's result read as its own (review, 2026-10-14)
-  else if (d.skipped && (servingEngine() || [])[0] === KOLIBRI_UNIT) txt = `not run: ${d.why || 'the Kolibri lane is checked by its own /health'}`;
+  else if (d.skipped && (servingEngine() || [])[0] === KOLIBRI_UNIT) txt = `not run: ${d.why || 'the Kolibri-1 lane is checked by its own /health'}`;
   else if (d.skipped && isB12x((servingEngine() || [])[0])) txt = `not run: ${d.why || b12xName((servingEngine() || [])[0]) + ' is checked by its own /health'}`;
   else if (d.skipped && d.last_ok == null) txt = 'not yet run';
   else if (d.fails > 0) txt = `${d.fails} failure${d.fails > 1 ? 's' : ''} in a row: ${d.last_err || ''}`;

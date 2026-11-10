@@ -156,7 +156,7 @@ class TheKolibriLaneIsSaidAsItIs(unittest.TestCase):
         for name, canary in (("ok", "{skipped: true, why: WHY, last_ok: 1700000000, latency: 0.4, fails: 0}"),
                              ("fail", "{skipped: true, why: WHY, last_ok: 1700000000, fails: 2, last_err: 'URLError'}")):
             out[name] = run(self, self.KOLIBRI + r"""
-            const WHY = "the Kolibri lane is checked by vLLM's own /health, not by a generation";
+            const WHY = "the Kolibri-1 lane is checked by vLLM's own /health, not by a generation";
             feed({canary: %s});
             report({line: txt('px-probe'), last: txt('px-last')});
             """ % canary)
@@ -165,7 +165,7 @@ class TheKolibriLaneIsSaidAsItIs(unittest.TestCase):
             self.assertIn("vLLM's own /health", r["line"])
             self.assertNotIn("ok, 0.4 s", r["line"])
             self.assertNotIn("failures in a row", r["line"])
-            self.assertEqual(r["last"], "none on the Kolibri lane")
+            self.assertEqual(r["last"], "none on the Kolibri-1 lane")
 
     def test_traffic_while_it_loads_says_it_serves_nothing_yet(self):
         r = run(self, r"""
@@ -190,7 +190,7 @@ class TheKolibriLaneIsSaidAsItIs(unittest.TestCase):
         """)
         self.assertEqual(r["floor"], "stops generations under 3 GiB through the proxy (on vLLM, by closing "
                                      "their connections), never fired")
-        self.assertIn("not on the Kolibri lane", r["guard"])
+        self.assertIn("not on the Kolibri-1 lane", r["guard"])
 
     def test_the_floor_banner_says_what_the_stop_did_no_more(self):
         # it said every generation stopped, clients cut and new requests held whatever the proxy did,
@@ -239,7 +239,7 @@ class TheKolibriLaneIsSaidAsItIs(unittest.TestCase):
         report({kol: EXPLAIN.switch({target: 'kolibri'}), q: EXPLAIN.switch({target: 'stock'})});
         """)
         self.assertNotIn("proxy ceiling", r["kol"], "the switch to Kolibri never touches it")
-        self.assertIn("opencode", r["kol"])
+        self.assertIn("makes Kolibri-1 opencode's default model", r["kol"])
         self.assertIn("proxy ceiling", r["q"])
 
     def test_on_a_qwen_lane_nothing_is_refused(self):
@@ -248,6 +248,46 @@ class TheKolibriLaneIsSaidAsItIs(unittest.TestCase):
         report({abort: cannotWhy('abort_all'), flush: cannotWhy('flush_cache')});
         """)
         self.assertEqual((r["abort"], r["flush"]), ("", ""))
+
+
+class EachVllmLaneIsSaidByItsOwnName(unittest.TestCase):
+    """The page said "the Nemotron lanes" and "The Nemotron lane" for Bolt and for Super VL, one sentence for the two,
+    and "the Kolibri lane" and "the Ornith lane" beside the official names of every other view: the probe's lines, the
+    request id override, the pool guard and the actions their vLLM has no route for (found 2026-11-10). Each says the
+    lane that serves, by its official name (Hasan, 2026-11-10)."""
+
+    SERVES = r"""
+    const U = JSON.parse(JSON.stringify(UNITS));
+    U.units['qwen38-sglang.service'] = {active: 'inactive', enabled: 'disabled'};
+    U.units['%(unit)s'] = {active: 'active', enabled: 'enabled'};
+    feed({config: CONFIG, units: U, lifecycle: life({'%(unit)s': eng('ready', {target: '%(target)s'})},
+                                                    {pool_guard: {enabled: true, threshold: 0.6, fails: 0, flushes: 0}})});
+    feed({canary: {skipped: true, last_ok: 1700000000, latency: 0.4, fails: 0},
+          reqguard: {lane: null, override: null, state: 'ok', verdict: 'no abandoned request in this window', window: '10m',
+                     guard: {}, zombies: {}}});
+    report({probe: txt('px-probe'), last: txt('px-last'), override: txt('zg-override'), guard: txt('mm-guard'),
+            flush: cannotWhy('flush_cache'), abort: cannotWhy('abort_all'), fit: cannotWhy('fit_opencode')});
+    """
+    LANES = (("qwen38-kolibri.service", "kolibri", "Kolibri-1"),
+             ("qwen38-nemotron.service", "nemotron", "Nemotron 3.5 Bolt"),
+             ("qwen38-nemotron-super.service", "nemotron-super", "Nemotron 3.5 Super VL"),
+             ("qwen38-flash-local.service", "flash-local", "Qwen3.8 Flash-Next FP4-Local"),
+             ("qwen38-ornith-122b.service", "ornith-122b", "Ornith 1.5 122B"))
+
+    def test_each_says_the_lane_that_serves(self):
+        for unit, target, name in self.LANES:
+            with self.subTest(name):
+                r = run(self, self.SERVES % {"unit": unit, "target": target})
+                self.assertEqual(r["probe"], f"not run: the {name} lane is checked by its own /health")
+                self.assertEqual(r["last"], f"none on the {name} lane")
+                self.assertEqual(r["override"], f"not on the {name} lane (an SGLang setting)")
+                self.assertEqual(r["guard"], f"not on the {name} lane: vLLM has no cache flush route, and evicts its "
+                                             "prefix cache by itself")
+                for k in ("flush", "abort", "fit"):
+                    self.assertTrue(r[k].startswith(f"The {name} lane"), r[k])
+                said = json.dumps(r)
+                self.assertEqual([x for _, _, x in self.LANES if x != name and x in said], [])
+
 
 class TheProbeLineIsNotAStaleOk(unittest.TestCase):
     """With no text engine serving (stopped, or a diffusion lane up) the canary skips, and

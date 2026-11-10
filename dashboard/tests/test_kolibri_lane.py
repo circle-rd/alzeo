@@ -235,7 +235,7 @@ class WhatItDoesNotHave(Base):
         finally:
             self.serving(None)
         self.assertTrue(out["skipped"])
-        self.assertIn("vLLM's own /health", out["why"])
+        self.assertIn("the Kolibri-1 lane is checked by vLLM's own /health", out["why"])
 
     def test_a_flush_says_it_has_none(self):
         self.serving("ready")
@@ -245,7 +245,7 @@ class WhatItDoesNotHave(Base):
             self.serving(None)
         self.assertFalse(ok)
         self.assertEqual(data["reason"], "unsupported")
-        self.assertIn("no cache flush route", lines[0])
+        self.assertIn("the Kolibri-1 lane's vLLM has no cache flush route", lines[0])
 
     def test_abort_all_says_it_has_none(self):
         self.serving("loading-weights")
@@ -254,7 +254,7 @@ class WhatItDoesNotHave(Base):
                 self.ck.engine_abort_all()
         finally:
             self.serving(None)
-        self.assertIn("no route that aborts", str(e.exception))
+        self.assertIn("the Kolibri-1 lane's vLLM has no route that aborts", str(e.exception))
 
     def test_the_memory_floor_never_claims_an_abort_it_could_not_make(self):
         # the belt counted an abort before trying it, and on this lane, which has no abort route,
@@ -292,7 +292,7 @@ class WhatItDoesNotHave(Base):
         finally:
             self.serving(None)
         self.assertFalse(out["available"])
-        self.assertIn("the Kolibri lane is serving", out["reason"])
+        self.assertIn("the Kolibri-1 lane is serving", out["reason"])
 
     def test_its_served_name_is_its_own(self):
         with self.ck.STATE_LOCK:
@@ -367,6 +367,7 @@ class TheServerRefusesWhatItsVllmHasNoRouteFor(Base):
             code, body = out[name]
             self.assertEqual((code, body.get("error")), (409, "blocked"), name)
             self.assertIn(why, " ".join(body.get("reasons") or []), name)
+            self.assertTrue(" ".join(body.get("reasons") or []).startswith("The Kolibri-1 lane"), name)
 
     def test_on_a_qwen_lane_the_gate_lets_them_through(self):
         code, body = self.act("flush_cache")

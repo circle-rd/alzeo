@@ -146,20 +146,20 @@ class WhatItDoesNotHave(Base):
         self.serving("ready")
         out = self.ck.collect_canary()
         self.assertTrue(out["skipped"], out)
-        self.assertIn("the Ornith lane is checked by vLLM's own /health", out["why"])
+        self.assertIn("the Ornith 1.5 122B lane is checked by vLLM's own /health", out["why"])
 
     def test_flush_abort_and_fit_are_refused_in_its_name(self):
         self.serving("ready")
         for name in ("flush_cache", "abort_all", "fit_opencode"):
             with self.subTest(name=name):
                 why = self.ck.b12x_cannot(name)
-                self.assertTrue(why and why.startswith("The Ornith lane"), why)
+                self.assertTrue(why and why.startswith("The Ornith 1.5 122B lane"), why)
         with self.assertRaises(RuntimeError) as e:
             self.ck.engine_abort_all()
-        self.assertIn("the Ornith lane's vLLM has no route that aborts", str(e.exception))
+        self.assertIn("the Ornith 1.5 122B lane's vLLM has no route that aborts", str(e.exception))
         ok, lines, _ = self.ck.job_flush_cache(None)
         self.assertFalse(ok)
-        self.assertIn("the Ornith lane's vLLM has no cache flush route", lines[0])
+        self.assertIn("the Ornith 1.5 122B lane's vLLM has no cache flush route", lines[0])
         # the Qwen3.8 Flash-Next FP4-Local lane keeps its own words
         self.serving("ready", unit="qwen38-flash-local.service")
         self.assertTrue(self.ck.b12x_cannot("flush_cache").startswith("The Qwen3.8 Flash-Next FP4-Local lane"))
@@ -168,7 +168,7 @@ class WhatItDoesNotHave(Base):
         self.serving("ready")
         out = self.ck.systemone_available(max_age=0)
         self.assertFalse(out["available"])
-        self.assertIn("the Ornith lane is serving", out["reason"])
+        self.assertIn("the Ornith 1.5 122B lane is serving", out["reason"])
         self.assertNotIn("Nemotron", out["reason"])
 
 
@@ -180,7 +180,7 @@ class ItsUnit(Base):
     def test_its_engine_is_told_apart_by_the_name_it_serves(self):
         self.assertEqual(self.ck.nemotron_unit_serving(MODELS["data"]), U)
         self.assertEqual(self.ck.B12X_SPEC[U], "MTP")
-        self.assertEqual(self.ck.B12X_LANE_NAME[U], "the Ornith lane")
+        self.assertEqual(self.ck.B12X_LANE_NAME[U], "the Ornith 1.5 122B lane")
 
     def test_it_is_a_switch_target_a_unit_the_page_may_drive_and_a_lane_it_prepares(self):
         self.assertIn("ornith-122b", self.ck.ACTIONS["switch"]["params"]["target"])

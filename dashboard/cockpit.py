@@ -609,9 +609,9 @@ def vllm_answered(kind: str, err: Exception) -> bool:
 # KOLIBRI_CANNOT): a caller other than the page got the engine's 404, or the fit tool's "no
 # engine to read" (found in review, 2026-10-14).
 KOLIBRI_CANNOT = {
-    "flush_cache": "The Kolibri lane has no cache flush route: vLLM evicts its prefix cache by itself.",
-    "abort_all": "The Kolibri lane has no route that aborts its generations: stopping the lane stops them.",
-    "fit_opencode": "Kolibri's opencode limits are its own, set when it is loaded: there is nothing to fit to its pool.",
+    "flush_cache": "The Kolibri-1 lane has no cache flush route: vLLM evicts its prefix cache by itself.",
+    "abort_all": "The Kolibri-1 lane has no route that aborts its generations: stopping the lane stops them.",
+    "fit_opencode": "The Kolibri-1 lane's opencode limits are its own, set when it is loaded: there is nothing to fit to its pool.",
 }
 
 
@@ -736,8 +736,8 @@ NEMOTRON_LANES = {NEMOTRON_UNIT: ("qwen38-nemotron", "nemotron", "nemotron-3.5-b
                   FLASH_LOCAL_UNIT: ("qwen38-flash-local", "flash-local", "qwen3.8-flash-next-fp4", "nvfp4"),
                   ORNITH_UNIT: ("qwen38-ornith-122b", "ornith-122b", "ornith-1.5-122b", "nvfp4")}
 # the lane in a sentence, and what its engine drafts with
-B12X_LANE_NAME = {NEMOTRON_UNIT: "the Nemotron lane", NEMOTRON_SUPER_UNIT: "the Nemotron lane",
-                  FLASH_LOCAL_UNIT: "the Qwen3.8 Flash-Next FP4-Local lane", ORNITH_UNIT: "the Ornith lane"}
+B12X_LANE_NAME = {NEMOTRON_UNIT: "the Nemotron 3.5 Bolt lane", NEMOTRON_SUPER_UNIT: "the Nemotron 3.5 Super VL lane",
+                  FLASH_LOCAL_UNIT: "the Qwen3.8 Flash-Next FP4-Local lane", ORNITH_UNIT: "the Ornith 1.5 122B lane"}
 B12X_SPEC = {NEMOTRON_UNIT: "LiLiCorr (DFlash)", NEMOTRON_SUPER_UNIT: "LiLiCorr (DFlash)", FLASH_LOCAL_UNIT: "MTP",
              ORNITH_UNIT: "MTP"}
 NEMOTRON_READY_ENTER: dict = {}
@@ -760,14 +760,20 @@ def b12x_serving_unit() -> str | None:
 
 
 def b12x_lane_name() -> str:
-    """The family's lane that serves, in a sentence ("the Nemotron lane" when none can be told)."""
-    return B12X_LANE_NAME.get(b12x_serving_unit() or NEMOTRON_UNIT, "the Nemotron lane")
+    """The family's lane that serves, in a sentence ("the lane" when none serves any more)."""
+    return B12X_LANE_NAME.get(b12x_serving_unit(), "the lane")
 
 
 NEMOTRON_CANNOT = {
-    "flush_cache": "The Nemotron lane has no cache flush route: vLLM evicts its prefix cache by itself.",
-    "abort_all": "The Nemotron lane has no route that aborts its generations: stopping the lane stops them.",
-    "fit_opencode": "Nemotron's opencode limits are its own, set when it is loaded: there is nothing to fit to its pool.",
+    "flush_cache": "The Nemotron 3.5 Bolt lane has no cache flush route: vLLM evicts its prefix cache by itself.",
+    "abort_all": "The Nemotron 3.5 Bolt lane has no route that aborts its generations: stopping the lane stops them.",
+    "fit_opencode": "The Nemotron 3.5 Bolt lane's opencode limits are its own, set when it is loaded: there is nothing to fit to its pool.",
+}
+# the same three on the Nemotron 3.5 Super VL lane, in its own name
+NEMOTRON_SUPER_CANNOT = {
+    "flush_cache": "The Nemotron 3.5 Super VL lane has no cache flush route: vLLM evicts its prefix cache by itself.",
+    "abort_all": "The Nemotron 3.5 Super VL lane has no route that aborts its generations: stopping the lane stops them.",
+    "fit_opencode": "The Nemotron 3.5 Super VL lane's opencode limits are its own, set when it is loaded: there is nothing to fit to its pool.",
 }
 # the same three on the Qwen3.8 Flash-Next FP4-Local lane, in its own name
 FLASH_LOCAL_CANNOT = {
@@ -777,18 +783,20 @@ FLASH_LOCAL_CANNOT = {
 }
 # and on the Ornith lane, in its own name
 ORNITH_CANNOT = {
-    "flush_cache": "The Ornith lane has no cache flush route: vLLM evicts its prefix cache by itself.",
-    "abort_all": "The Ornith lane has no route that aborts its generations: stopping the lane stops them.",
-    "fit_opencode": "The Ornith lane's opencode limits are its own, set when it is loaded: its window decides them, not its pool.",
+    "flush_cache": "The Ornith 1.5 122B lane has no cache flush route: vLLM evicts its prefix cache by itself.",
+    "abort_all": "The Ornith 1.5 122B lane has no route that aborts its generations: stopping the lane stops them.",
+    "fit_opencode": "The Ornith 1.5 122B lane's opencode limits are its own, set when it is loaded: its window decides them, not its pool.",
 }
+
+
+# the three of each lane of the family, by its unit
+B12X_CANNOT = {NEMOTRON_UNIT: NEMOTRON_CANNOT, NEMOTRON_SUPER_UNIT: NEMOTRON_SUPER_CANNOT,
+               FLASH_LOCAL_UNIT: FLASH_LOCAL_CANNOT, ORNITH_UNIT: ORNITH_CANNOT}
 
 
 def b12x_cannot(name: str) -> str | None:
     """Why an action is refused while a lane of the family serves, in that lane's name, or None."""
-    unit = b12x_serving_unit()
-    if unit is None:
-        return None
-    return {FLASH_LOCAL_UNIT: FLASH_LOCAL_CANNOT, ORNITH_UNIT: ORNITH_CANNOT}.get(unit, NEMOTRON_CANNOT).get(name)
+    return B12X_CANNOT.get(b12x_serving_unit(), {}).get(name)
 # (time, accepted draft tokens, drafts) of the last minute's reads: the acceptance over a window
 # long enough to hold a few hundred drafts, and idle when no draft came in it
 _SPEC_READS: deque = deque(maxlen=240)
@@ -902,7 +910,7 @@ def engine_abort_all(timeout: float = 8.0, why: str = "", floor: bool = True) ->
         if kolibri_serving() or nemotron_serving():
             if done["stopped"]:
                 return done
-            lane = "the Kolibri lane" if kolibri_serving() else b12x_lane_name()
+            lane = "the Kolibri-1 lane" if kolibri_serving() else b12x_lane_name()
             raise RuntimeError(f"no generation ran through the proxy{left}, and {lane}'s vLLM has no route that "
                                "aborts one sent to it straight (stopping the lane stops them)")
         try:
@@ -914,7 +922,7 @@ def engine_abort_all(timeout: float = 8.0, why: str = "", floor: bool = True) ->
             raise RuntimeError(f"no generation ran through the proxy{left}, and {missed}")
         return {**done, "missed": missed}
     if kolibri_serving():
-        raise RuntimeError("the Kolibri lane's vLLM has no route that aborts its generations "
+        raise RuntimeError("the Kolibri-1 lane's vLLM has no route that aborts its generations "
                            f"(stopping the lane stops them), and {missed}")
     if nemotron_serving():
         raise RuntimeError(f"{b12x_lane_name()}'s vLLM has no route that aborts its generations "
@@ -1279,7 +1287,7 @@ def collect_canary():
     if not ready and states.get(KOLIBRI_UNIT) in ("ready", "degraded"):
         # vLLM refuses the probe's model name, and its own /health already answers for it
         return {"node_id": "local", **CANARY, "skipped": True,
-                "why": "the Kolibri lane is checked by vLLM's own /health, not by a generation"}
+                "why": "the Kolibri-1 lane is checked by vLLM's own /health, not by a generation"}
     b12x = next((u for u in NEMOTRON_LANES if states.get(u) in ("ready", "degraded")), None)
     if not ready and b12x:
         return {"node_id": "local", **CANARY, "skipped": True,
@@ -3641,7 +3649,7 @@ def systemone_available(max_age: float = 60.0) -> dict:
     if text is None and states.get(KOLIBRI_UNIT) in lc.BUSY_STATES:
         # the proxy refuses it there (v6.37): its labels are measured on the Qwen tokenizer
         return {"available": False, "lane": "", "status": None,
-                "reason": f"the Kolibri lane is serving: System One is answered by {who} "
+                "reason": f"the Kolibri-1 lane is serving: System One is answered by {who} "
                           f"(its options are measured on the Qwen tokenizer), so load {one}"}
     if text is None and states.get(FLASH_LOCAL_UNIT) in lc.BUSY_STATES:
         # the proxy refuses it on every vLLM lane (v6.43), this Qwen one included
@@ -3649,13 +3657,14 @@ def systemone_available(max_age: float = 60.0) -> dict:
                 "reason": f"the Qwen3.8 Flash-Next FP4-Local lane is serving: System One is answered by {who}, "
                           f"on SGLang, so load {one}"}
     if text is None and states.get(ORNITH_UNIT) in lc.BUSY_STATES:
-        # the same refusal (v6.43), before the family's rule below names it a Nemotron lane
+        # the same refusal (v6.43), before the family's rule below gives it the Nemotron lanes' reason
         return {"available": False, "lane": "", "status": None,
-                "reason": f"the Ornith lane is serving: System One is answered by {who}, "
+                "reason": f"the Ornith 1.5 122B lane is serving: System One is answered by {who}, "
                           f"on SGLang, so load {one}"}
-    if text is None and any(states.get(u) in lc.BUSY_STATES for u in NEMOTRON_LANES):
+    b12x = next((u for u in NEMOTRON_LANES if states.get(u) in lc.BUSY_STATES), None)
+    if text is None and b12x:
         return {"available": False, "lane": "", "status": None,
-                "reason": f"a Nemotron lane is serving: System One is answered by {who} "
+                "reason": f"{B12X_LANE_NAME[b12x]} is serving: System One is answered by {who} "
                           f"(its options are measured on the Qwen tokenizer), so load {one}"}
     key = (text, served_model_name() if text else "")
     with SYSTEMONE_LOCK:
@@ -5162,7 +5171,7 @@ def video_content(vid: str) -> tuple[int, bytes, str]:
 
 def job_flush_cache(job: Job):
     if kolibri_serving():
-        return False, ["the Kolibri lane's vLLM has no cache flush route (nothing was flushed); "
+        return False, ["the Kolibri-1 lane's vLLM has no cache flush route (nothing was flushed); "
                        "vLLM evicts its prefix cache by itself"], {"ok": False, "reason": "unsupported"}
     if nemotron_serving():
         return False, [f"{b12x_lane_name()}'s vLLM has no cache flush route (nothing was flushed); "

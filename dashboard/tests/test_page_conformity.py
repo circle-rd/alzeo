@@ -9,6 +9,7 @@ differs by its operator's choices alone gets a banner (Hasan, 2026-10-17: a choi
 delay, and a box that keeps one wore the banner for good). The update banner no longer promises
 that an update keeps the context mode: an old default moves.
 """
+import importlib.util
 import pathlib
 import sys
 import unittest
@@ -157,6 +158,15 @@ class SettingsListsEachDifference(unittest.TestCase):
         r = page(self, js([drafter]))
         self.assertTrue(r["list"][0]["text"].startswith("27B drafter z-lab/Qwen3.8-27B-DFlash2 (unquant, D=8): moves"))
         self.assertTrue(r["list"][0]["text"].endswith("The update prints the variables that keep it."))
+
+    def test_each_setting_is_named_as_the_installers_list_names_it(self):
+        # one name a setting, in the page and in the list install.sh prints (conformity.py's PLAN_NAMES): the Kolibri-1
+        # checkpoint in both since 2026-11-10, two copies no test held together
+        spec = importlib.util.spec_from_file_location("conformity_for_the_page", pathlib.Path(__file__).resolve().parents[2]
+                                                      / "conformity.py")
+        conformity = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(conformity)
+        self.assertEqual(run(self, "report(CF_NAME);"), conformity.PLAN_NAMES)
 
 
 class SettingsGivesTheWayToTheRecommendedState(unittest.TestCase):

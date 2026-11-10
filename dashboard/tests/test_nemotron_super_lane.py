@@ -220,7 +220,7 @@ class WhatItDoesNotHave(Base):
         finally:
             self.serving(None)
         self.assertTrue(out["skipped"])
-        self.assertIn("checked by vLLM's own /health", out["why"])
+        self.assertIn("the Nemotron 3.5 Super VL lane is checked by vLLM's own /health", out["why"])
 
     def test_flush_abort_and_fit_are_refused_by_the_server_with_why(self):
         def act(name):
@@ -237,6 +237,20 @@ class WhatItDoesNotHave(Base):
         for name in out:
             code, body = out[name]
             self.assertEqual((code, body.get("error")), (409, "blocked"), name)
+            # in its own name: one sentence said "the Nemotron lane" for Bolt and for it (found 2026-11-10)
+            self.assertTrue(" ".join(body.get("reasons") or []).startswith("The Nemotron 3.5 Super VL lane"), name)
+
+    def test_a_flush_and_an_abort_say_it_has_none_in_its_name(self):
+        self.serving("ready")
+        try:
+            ok, lines, data = self.ck.job_flush_cache(None)
+            with self.assertRaises(RuntimeError) as e:
+                self.ck.engine_abort_all()
+        finally:
+            self.serving(None)
+        self.assertEqual((ok, data["reason"]), (False, "unsupported"))
+        self.assertIn("the Nemotron 3.5 Super VL lane's vLLM has no cache flush route", lines[0])
+        self.assertIn("the Nemotron 3.5 Super VL lane's vLLM has no route that aborts", str(e.exception))
 
     def test_system_one_points_at_the_qwen_lanes(self):
         self.serving("ready")
@@ -245,7 +259,7 @@ class WhatItDoesNotHave(Base):
         finally:
             self.serving(None)
         self.assertFalse(out["available"])
-        self.assertIn("a Nemotron lane is serving", out["reason"])
+        self.assertIn("the Nemotron 3.5 Super VL lane is serving", out["reason"])
 
     def test_its_served_name_is_its_own(self):
         with self.ck.STATE_LOCK:

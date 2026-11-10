@@ -430,7 +430,7 @@ def plan(config_dir, lane, chose=None, repo_dir=REPO, units_dir=UNITS, home=None
 
 # The settings that are no variable of their own, as the list names them.
 PLAN_NAMES = {"target.27b": "27B target", "target.flash": "flash target", "DRAFT2": "27B drafter",
-              "KOLIBRI_VARIANT": "Kolibri checkpoint", "IMAGE_MODEL": "image model", "VIDEO_VARIANT": "video variant"}
+              "KOLIBRI_VARIANT": "Kolibri-1 checkpoint", "IMAGE_MODEL": "image model", "VIDEO_VARIANT": "video variant"}
 
 
 def plan_lines(items, release):

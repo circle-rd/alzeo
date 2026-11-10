@@ -96,7 +96,7 @@ class ARecommendedRunKeepsNoChoice(Base):
         for name in ("27B drafter z-lab/Qwen3.8-27B-DFlash2 (unquant, D=8), to maurienne-ai",
                      "CONTEXT_MODE native, to 1m", "ENGINE_BIND 0.0.0.0, to 127.0.0.1",
                      "PROXY_BIND 127.0.0.1, to 0.0.0.0", "flash target flash-nvda, to flash",
-                     "Kolibri checkpoint nvfp4, to fp8", f"image model {TURBO}, to Qwen/Qwen-Image-2.1",
+                     "Kolibri-1 checkpoint nvfp4, to fp8", f"image model {TURBO}, to Qwen/Qwen-Image-2.1",
                      "video variant ref2va, to fl2va"):
             with self.subTest(moves=name):
                 self.assertRegex(out[at:], r"moves now +" + re.escape(name) + r".*: --recommended moves it")

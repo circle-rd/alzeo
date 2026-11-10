@@ -222,7 +222,7 @@ class WhatItDoesNotHave(Base):
         self.assertIn("the Qwen3.8 Flash-Next FP4-Local lane's vLLM has no cache flush route", lines[0])
         # and on a Nemotron lane, the words stay the Nemotron lane's
         self.serving("ready", unit="qwen38-nemotron.service")
-        self.assertTrue(self.ck.b12x_cannot("flush_cache").startswith("The Nemotron lane"))
+        self.assertTrue(self.ck.b12x_cannot("flush_cache").startswith("The Nemotron 3.5 Bolt lane"))
 
     def test_system_one_points_at_the_sglang_lanes(self):
         self.serving("ready")
