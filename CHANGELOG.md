@@ -20,12 +20,12 @@ still use short names.
 
 **A size is one figure in its unit.** Three sizes were said two ways. The 27B's NVFP4 weights were 22.0 GB in
 `boxmem.py` and 21 GB in the cockpit, the README and `install.sh`, for 21.945 GB measured: 21.9 everywhere, beside
-FP8's 30.9. The README's install table and its Quickstart gave the Qwen3.8 Flash-Next FP4-Local checkpoint 103 GB, the
-room its fetch asks, where the installer and the cockpit said 102 (102.26 measured): both say 102.3 and 18.2, rounded
-up to their 121, and the installer says that its 103 is that measure rounded up. The cockpit, the README and the image
-lane's page gave that lane's 31 GiB of weights as GB (33.1 GB measured, which is 30.9 GiB). The cockpit's note on the
-FP8 target also said `around 200,000 fewer tokens of context`, an extrapolation `install.sh` dropped on 2026-09-02 for
-the measure: 771,139 tokens against 863,398 on the same 1M unit.
+FP8's 30.9. The README's install table and its Quickstart gave the Qwen3.8 Flash-Next FP4-Local checkpoint as 103, the
+room its fetch asks in GB, where the installer and the cockpit said 102 (102.26 measured): both say 102.3 and 18.2,
+rounded up to their 121, and the installer says that its 103 is that measure rounded up. The cockpit, the README and
+the image lane's page gave that lane's 31 GiB of weights as GB (33.1 GB measured, which is 30.9 GiB). The cockpit's
+note on the FP8 target also said `around 200,000 fewer tokens of context`, an extrapolation `install.sh` dropped on
+2026-09-02 for the measure: 771,139 tokens against 863,398 on the same 1M unit.
 
 **A 64 GB box with no cockpit whose Bolt does not come up.** When Bolt's first load fails, the installer switches back
 to the 27B, and that switch writes the 27B's nominal opencode limits (173,000 and 64,000 at its native window) over the

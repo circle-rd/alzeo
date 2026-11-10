@@ -172,7 +172,7 @@ class AWeightIsOneFigureInItsUnit(unittest.TestCase):
     """A size said in several places is one figure, to the nearest in the unit it is said in (GB of 10^9 bytes,
     GiB of 2^30), and a room check that rounds it up says so beside it. Found on 2026-11-10: the 27B's NVFP4
     weights were 22.0 GB in boxmem.py and 21 GB in the cockpit, the README and install.sh, for 21.945 measured;
-    the README's install table gave the Qwen3.8 Flash-Next FP4-Local checkpoint 103 GB, the room its fetch asks,
+    the README's install table gave the Qwen3.8 Flash-Next FP4-Local checkpoint as 103, the room its fetch asks,
     where the installer and the cockpit said 102; the cockpit gave the image lane's 31 GiB as GB."""
 
     def test_the_27b_fp8_weights_against_the_nvfp4_ones(self):
