@@ -9,6 +9,9 @@
 # have ended, and only when every one of them passed, as on GitHub. A fragment, and any
 # run with CI_LOCAL_SERIAL=1, runs every step it takes in this checkout as it is, one after
 # the other.
+# CI_LOCAL_WORKFLOW names another workflow file than .github/workflows/ci.yml, run the same way:
+# CI_LOCAL_WORKFLOW=.github/workflows/nightly.yml ./ci-local.sh is the night's pass, every unittest
+# module of tests/ in one process, which a release runs here before it is pushed.
 # Exit status: 1 when a step failed, 2 when a full run finds changes nobody committed, 3
 # when nothing ran (a filter that matched no step, or only skipped ones), 0 otherwise.
 set -u
@@ -24,7 +27,7 @@ say = threading.Lock()
 # Each step's wall time, said on its line and summed up at the end: where a run's hour goes
 # is the first thing to know before making it shorter (2026-10-24).
 took, t_run = [], time.monotonic()
-d = yaml.safe_load(open(".github/workflows/ci.yml"))
+d = yaml.safe_load(open(os.environ.get("CI_LOCAL_WORKFLOW") or ".github/workflows/ci.yml"))
 ok = fail = skip = 0
 # A run stopped through its process group gets SIGTERM, which ended python without its
 # finally blocks: the step's throwaway HOME, with the keys the cockpit tests write, and

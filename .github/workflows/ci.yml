@@ -10,8 +10,9 @@ permissions:
 
 jobs:
   # The jobs run side by side, each on a runner of its own: the hour this took as one job was the
-  # sum of its steps (4,312 s for v1.40.3, 1,869 of them the single-process pass), and it is now
-  # the longest job. `checks`, last, keeps the one name a reader or a script looks for.
+  # sum of its steps (4,312 s for v1.40.3, 1,869 of them the pass that ran every module of tests/
+  # in one process, which runs them in groups since 2026-11-10, tests/run_single.py). `checks`,
+  # last, keeps the one name a reader or a script looks for.
   # Every job runs on ubuntu-24.04-arm, the architecture of the boxes this repo serves (aarch64).
   static:
     # Every check that reads the tree: syntax, lint, templates, fixtures, pins, the small scripts.
@@ -1346,7 +1347,9 @@ jobs:
           echo "  ok: HOME untouched, nothing left running or listening, no serving port contacted"
 
   single:
-    # Every unittest module of tests/ in ONE process: what a module does to another one shows here.
+    # Every unittest module of tests/ beside the others, in groups, each group one process: what a
+    # module does to another one of its group shows here, and to any other one in the pass that runs
+    # them all in ONE process, every night (nightly.yml) and before a release (tests/run_single.py).
     runs-on: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v5
@@ -1388,31 +1391,13 @@ jobs:
               sys.exit(1)
           print("every script-style test file is named by a step")
           PY
-          files=$(cd tests && grep -l 'def test_' test_*.py | sort | tr '\n' ' ')
-          mods=$(for f in $files; do printf 'tests.%s ' "${f%.py}"; done)
-          echo "unittest suites: $mods"
-          declared=$(cd tests && cat $files | grep -c 'def test_')
-          # Under bash -e a failing run used to end the step right here, having
-          # printed nothing but the list above (2026-09-23): say what failed.
-          out=$(python3 -m unittest -v $mods 2>&1) || {
-            echo "$out" | grep -vF ResourceWarning | tail -80
-            echo "the unittest suites failed:"; echo "$out" | grep -E '^(FAIL|ERROR):' || true
-            exit 1; }
-          echo "$out" | grep -vF ResourceWarning | tail -5
-          ran=$(echo "$out" | grep -oE '^Ran [0-9]+' | grep -oE '[0-9]+' || echo 0)
-          echo "declared $declared, ran $ran"
-          [ "$ran" = "$declared" ] || { echo "unittest ran $ran of $declared declared tests"; exit 1; }
-          # "Ran" counts a skipped test as run: a skip decorator on a whole class stayed
-          # green, and so did the SDK round trip when its install above failed (found in
-          # review, 2026-09-24). A skip passes only for a reason this list names: what a
-          # runner cannot have (the reference box, its cache, its units, opencode). The
-          # SDK is installed on the runner, so its absence is a reason only off it.
-          allowed='needs the reference class of machine|needs the pinned bytes cached|no 27B unit installed here|is not the enabled lane here|no Qwen3.8 tokenizer.json|needs a real opencode'
-          [ -n "${GITHUB_ACTIONS:-}" ] || allowed="$allowed|typesafe-sdk is not installed"
-          skips=$(echo "$out" | grep -E "\.\.\. skipped '" || true)
-          bad=$(echo "$skips" | grep -vE "$allowed" | grep . || true)
-          echo "skipped for a listed reason: $(echo "$skips" | grep -c . || true)"
-          [ -z "$bad" ] || { echo "tests skipped for a reason nobody listed:"; echo "$bad"; exit 1; }
+          # The modules in groups, each group one process, the groups side by side: in ONE process
+          # they were the longest job of a run, 1,808 s of its 30 minutes (2026-11-10), half of it
+          # the pair's tests. The run fails when a group fails, when fewer tests ran than the files
+          # declare (a skip decorator on a whole class stayed green until that was counted,
+          # 2026-09-24), and when a test was skipped for a reason its list does not name: what a
+          # runner cannot have (the reference box, its cache, its units, opencode).
+          python3 tests/run_single.py
           # Each one must also run its own tests when invoked directly: a file
           # without a __main__ block exits 0 having run nothing, and a SkipTest out
           # of setUpClass counts as one skip with testsRun 0, which is how

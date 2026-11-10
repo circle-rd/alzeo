@@ -165,6 +165,22 @@ class TheJobThatNeedsTheOthers(unittest.TestCase):
         self.assertIn("CI local: 2 ok, 1 echecs, 0 sautes", r.stdout)
         self.assertEqual(sorted(p.name for p in tmp.iterdir()), [], r.stdout)
 
+    def test_another_workflow_file_is_run_the_same_way_when_named(self):
+        # the night's pass (.github/workflows/nightly.yml), which a release runs here before it is pushed
+        night = ("name: nightly\non:\n  schedule:\n    - cron: '43 2 * * *'\njobs:\n  one-process:\n"
+                 "    runs-on: ubuntu-24.04-arm\n    steps:\n      - name: The night's one\n        run: \"true\"\n")
+        repo, tmp = self.make_repo(WORKFLOW.format(slow="false"), files={".github/workflows/nightly.yml": night})
+        r = subprocess.run(["bash", str(SCRIPT)], cwd=repo, capture_output=True, text=True, timeout=120,
+                           env=self.env(tmp, CI_LOCAL_WORKFLOW=".github/workflows/nightly.yml"))
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("[one-process] ok   The night's one", r.stdout)
+        self.assertIn("CI local: 1 ok, 0 echecs, 0 sautes", r.stdout)
+        self.assertNotIn("The slow one", r.stdout, "ci.yml's jobs are not this run's")
+        r = subprocess.run(["bash", str(SCRIPT)], cwd=repo, capture_output=True, text=True, timeout=120,
+                           env=self.env(tmp, CI_LOCAL_WORKFLOW=""))
+        self.assertEqual(r.returncode, 1, "without the name, ci.yml, whose slow job fails here")
+        self.assertIn("FAIL The slow one", r.stdout)
+
     def test_a_fragment_runs_in_the_checkout_as_it_is(self):
         # what one runs while editing: the worktrees of HEAD made it refuse every tree with a change
         repo, tmp = self.make_repo(WORKFLOW.format(slow="true"), {"notes.txt": "one\n"})

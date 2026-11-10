@@ -1,0 +1,35 @@
+# Nightly: every unittest module of tests/ in ONE process. What a module leaves to the modules
+# after it (a variable of the environment, the directory, sys.path, a thread, a signal handler)
+# shows only when they share a process. ci.yml ran them so at every push until 2026-11-10, the
+# longest job of a run (1,808 s of its 30 minutes): it runs them in groups since, side by side
+# (tests/run_single.py), and what a module does to a module of ANOTHER group is seen here alone,
+# the next night at the latest. A release runs this same pass before it is pushed.
+name: nightly
+
+on:
+  schedule:
+    # Every night, off the hour and off the :00 crowd.
+    - cron: '43 2 * * *'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  one-process:
+    # the runner of ci.yml's jobs: the architecture of the boxes this repo serves (aarch64)
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v7   # Node 24, the reference box's (ci.yml's static job says why)
+        with:
+          node-version: '24'
+
+      - name: Every unittest module of tests/ in one process
+        run: |
+          pip install 'jinja2==3.1.6'     # tests/test_lean_level.py renders with it
+          # tests/test_proxy_systemone.py's round trip through TypeSafe's own SDK. A failed
+          # install is refused by the run on a runner, where the SDK is not optional.
+          pip install 'typesafe-sdk==0.7.0' 2>/dev/null || echo "typesafe-sdk unavailable: the SDK round trip will skip"
+          python3 tests/run_single.py --one-process
