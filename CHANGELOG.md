@@ -1,5 +1,42 @@
 # Changelog
 
+## v1.46.1 (2026-11-10): a 64 GB box's first install no longer says two false things about Bolt's opencode limits
+
+**What was wrong.** A new 64 GB DGX Spark ends its first install on Nemotron 3.5 Bolt (since v1.40.0): the installer
+loads it the way the cockpit's Load does, and then ran `oc-fit-limits.py` against it. That tool fits opencode's limits
+to the KV pool of an SGLang engine, which it reads from `/server_info`. Bolt is served by vLLM, which has neither
+`/server_info` nor `/get_server_info`. So on a box with opencode on, the default, the fit failed on every such run,
+and the end of the install said two false things. `no engine to read at http://127.0.0.1:30000 (HTTPError): start
+one first, the pool is only known once it has booted` was printed under a Bolt that served. Then `NOTE: opencode's
+limits were not fitted to Bolt; the cockpit's button fits them` named a button that answers, while Bolt serves, that
+Nemotron's opencode limits are its own and that there is nothing to fit to its pool. A 64 GB box that boots the 27B
+and is given `--recommended`, which loads Bolt the same way, got the same two lines. A box installed with
+`--no-opencode` did not: there the tool says that the integration is off, and stops.
+
+Nothing else was wrong on those boxes. Bolt's opencode limits are its own pair, 205,000 and 32,000, written with its
+provider before its engine starts, by the installer's opencode step or by the switch of the load. That switch points
+opencode at Bolt and restarts the Agent tab's server, if it runs, when the configs it reads changed. The fit had
+nothing to add, and never got past its read of the engine.
+
+Found by reading the code, not on a box: no 64 GB box was at hand, and the test of that ending replaced the tool with
+a stand-in that always succeeded. The tool was then run against a server that answers 404 to both routes, as vLLM
+does: return code 1, and that first line.
+
+**What changes.** The installer no longer runs the fit after Bolt's first load. After its summary the run says
+`Nemotron 3.5 Bolt serves now, and at boot; the 27B is a Load away in the cockpit`, then its record line and the line
+of v1.46.0.
+
+**Tests.** `tests/test_spark_64.py` runs the installer's own ending, and its stand-in for the tool now answers as the
+tool does to a vLLM engine, one line and a return code of 1. A new check reads that nothing runs after the probe that
+finds Bolt answering and that the ending carries no NOTE. It fails on the code before.
+
+**What changes on a box.** `install.sh` only: two lines out, a comment in. No unit, template, image or page changes.
+
+**What an update does.** Nothing new on a 128 GB box, nor on a 64 GB box whose first install already ended whole: the
+two lines were those of a first install, and of `--recommended` on a box that boots the 27B. The update runs get.sh,
+which starts the new installer. The cockpit restarts, to name the new release. The engine and the proxy keep running,
+as nothing they read changed.
+
 ## v1.46.0 (2026-11-10): the installer's last line and the cockpit's Settings say what is new, and that a star helps
 
 **The one place the installer asks.** Alzeo is found by what its users say of it, and nothing in it said so. A run of
