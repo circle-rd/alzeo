@@ -2956,6 +2956,13 @@ bolt_first_load() {  # Bolt loaded as the cockpit's Load does it; 0 when it answ
   sudo systemctl start "$UNIT_NAME" || true
   return 1
 }
+# One quiet line, the last of a run that ended whole (Hasan, 2026-11-09): the project is found by what its users say
+# of it, and this is the only place the installer says so. No prompt, no reminder, nothing the run waits for. Not
+# from the installer started again for another lane (SECONDARY): its end is not the run's.
+star_line() {
+  if [ -n "$SECONDARY" ]; then return 0; fi
+  echo "  If Alzeo serves you well, a star helps other owners find it: https://github.com/hasso5703/alzeo"
+}
 record_install() {  # $1 how the run ended: full, side-boot, no-start or no-service
   if [ -n "$SECONDARY" ]; then return 0; fi
   local chose=()
@@ -2984,6 +2991,7 @@ if [ "$NO_SERVICE" -eq 1 ]; then
   echo "  Remove that provider with the key, or opencode refuses to start."
   echo "  No cockpit either: it is a systemd unit, and --no-service installs none."
   record_install no-service
+  star_line
   exit 0
 fi
 
@@ -3391,6 +3399,7 @@ else
     esac
   fi
   record_install side-boot
+  star_line
   exit 0
 fi
 
@@ -3403,6 +3412,7 @@ if [ "$NO_START" -eq 1 ]; then
   echo "also start the keepalive proxy with: sudo systemctl start $KEEPALIVE_UNIT"
   [ "$COCKPIT" -eq 1 ] && echo "the cockpit is not installed on the --no-start path: ./dashboard/install-dashboard.sh once the engine runs"
   record_install no-start
+  star_line
   exit 0
 fi
 
@@ -3905,6 +3915,7 @@ except Exception as e:
       fi
     fi
     record_install full
+    star_line
     exit 0
   fi
   ST="$(systemctl is-active "$UNIT_NAME" || true)"

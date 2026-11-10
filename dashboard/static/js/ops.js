@@ -554,6 +554,7 @@ function renderConformity(d){
 }
 on('update', d => {
   renderConformity(d);
+  whatsNew();
   const parts = [];
   if (d.installed) parts.push(d.installed);
   const run = d.install_running;
@@ -564,8 +565,28 @@ on('update', d => {
   else parts.push('up to date');
   setText('rp-upd', parts.join(', '));
 });
+// What the version this box runs changed, and the one place the cockpit says a star helps (Hasan, 2026-11-09):
+// two links in the page, which the user opens or not. The page itself asks GitHub nothing, and nothing reminds or
+// pops up. The release is published after its code, the reference box being updated in between: the link names
+// this version's notes only once the latest release GitHub gave the cockpit's check is this version or a later
+// one, compared number by number, and every release until then (the check off or offline, a box ahead of the
+// releases). Not by the check's "behind", which compares with the last install this box recorded: a cockpit
+// restarted in the middle of an update already runs the new version. Only what changed is written: the stream
+// brings the whole state about once a second, and links rebuilt each time lost the keyboard's focus and a click
+// that straddled a frame (both found in review, 2026-11-10).
+function whatsNew(){
+  const a = $('rp-notes'); if (!a) return;
+  const nums = s => (/^v?(\d+)\.(\d+)\.(\d+)$/.exec(s || '') || []).slice(1).map(Number);
+  const cur = nums((F.config || {}).version), last = nums((F.update || {}).latest);
+  const older = i => i < 3 && (last[i] < cur[i] || (last[i] === cur[i] && older(i + 1)));
+  const out = cur.length === 3 && last.length === 3 && !older(0), v = 'v' + cur.join('.');
+  const href = 'https://github.com/hasso5703/alzeo/releases' + (out ? '/tag/' + v : '');
+  setText(a, out ? `The notes of ${v}` : 'The release notes');
+  if (a.getAttribute('href') !== href) a.setAttribute('href', href);
+}
 on('config', d => {
   setText('ck-ver', d.version || '?');
+  whatsNew();
   setText('ck-mode', d.dry_run ? 'dry run: logged and audited, nothing executed' : 'live: actions execute after your confirmation');
   setText('ck-usable', Math.round((d.usable_frac || F.usable) * 100) + ' % of the KV pool for one prompt');
   const per = d.periods || {}, pv = Object.values(per);

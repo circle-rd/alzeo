@@ -79,11 +79,17 @@ def written(cfg):
 class EveryRunThatEndsWellRecordsIt(unittest.TestCase):
     def test_each_successful_end_of_a_run_records_how_it_ended(self):
         """Six lines end a run with exit 0 past the flags (--help ends on its own line): four
-        end the run that serves, each right after record_install with its path, one ends the
-        run for the other text lane, and one --plan, before step 1: neither records anything."""
+        end the run that serves, each right after record_install with its path and the run's
+        last line (star_line, v1.46.0), one ends the run for the other text lane, and one --plan,
+        before step 1: neither records anything."""
         ends = [i for i, ln in enumerate(LINES) if ln.strip() == "exit 0"]
         self.assertEqual(len(ends), 6, "a new way for install.sh to end: decide what it records")
-        before = [LINES[i - 1].strip() for i in ends]
+        self.assertEqual([i for i in ends if LINES[i - 1].strip().startswith("record_install ")], [],
+                         "a record is followed by the run's last line, then the exit")
+        for i in ends:
+            if LINES[i - 1].strip() == "star_line":
+                self.assertTrue(LINES[i - 2].strip().startswith("record_install "), "star_line only ends a recorded run")
+        before = [LINES[i - 2].strip() if LINES[i - 1].strip() == "star_line" else LINES[i - 1].strip() for i in ends]
         self.assertEqual(sorted(b for b in before if b.startswith("record_install ")),
                          ["record_install full", "record_install no-service", "record_install no-start",
                           "record_install side-boot"])
@@ -102,8 +108,8 @@ class EveryRunThatEndsWellRecordsIt(unittest.TestCase):
                             ('if [ "$NO_START" -eq 1 ]; then\n  step "Done (service installed', "no-start"),
                             ('lane_line "Super VL   "', "full")):
             at = TEXT.index(marker)
-            self.assertEqual(TEXT[at:TEXT.index("exit 0\n", at)].rstrip().splitlines()[-1].strip(),
-                             f"record_install {how}", how)
+            self.assertEqual([ln.strip() for ln in TEXT[at:TEXT.index("exit 0\n", at)].rstrip().splitlines()[-2:]],
+                             [f"record_install {how}", "star_line"], how)
 
 
 class WhatItWrites(unittest.TestCase):

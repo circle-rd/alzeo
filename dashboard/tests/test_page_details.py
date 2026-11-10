@@ -676,6 +676,84 @@ class TheEditEstimateCountsItsReferences(unittest.TestCase):
             self.assertAlmostEqual(got, measured, delta=measured * 0.1)
 
 
+class SettingsLinksTheNotesAndSaysAStarHelps(unittest.TestCase):
+    """v1.46.0 (Hasan, 2026-11-09): the Repo panel of Settings links the release notes and says, once and only
+    there, that a star helps other owners find the project. Two links in the page, which the user opens or not: the
+    page itself asks GitHub nothing. The notes of the version that runs are linked only once the latest release
+    GitHub gave the cockpit's check is that version or a later one (a release is published after its code), and
+    every release until then."""
+
+    NOTES, REPO = "https://github.com/hasso5703/alzeo/releases", "https://github.com/hasso5703/alzeo"
+    GENERIC = ["The release notes", NOTES, "_blank", "noopener"]
+
+    def row(self, version="'1.46.0'", update="{installed: 'v1.46.0', latest: 'v1.46.0'}"):
+        return run(self, r"""
+        feed({config: Object.assign({}, CONFIG, {version: %s}), update: %s});
+        const at = a => ['href', 'target', 'rel'].map(k => a.getAttribute(k));
+        report({text: txt('rp-new'), notes: [txt('rp-notes')].concat(at($('rp-notes'))), star: at($('rp-star')),
+                starText: txt('rp-star'), links: $('rp-new').querySelectorAll('a').length});
+        """ % (version, update))
+
+    def test_the_notes_of_the_version_that_runs_once_it_is_out(self):
+        for version in ("'1.46.0'", "'v1.46.0'"):
+            for latest in ("v1.46.0", "v1.46.1", "v1.47.0", "v1.100.0", "v2.0.0"):
+                with self.subTest(version=version, latest=latest):
+                    r = self.row(version, "{installed: 'v1.45.4', latest: '%s', behind: true}" % latest)
+                    self.assertEqual(r["notes"], ["The notes of v1.46.0", self.NOTES + "/tag/v1.46.0", "_blank", "noopener"])
+                    self.assertEqual(r["star"], [self.REPO, "_blank", "noopener"])
+                    self.assertEqual(r["text"], "The notes of v1.46.0. If Alzeo serves you well, "
+                                                "a star on GitHub helps other owners find it.")
+                    self.assertEqual(r["starText"], "a star on GitHub")
+                    self.assertEqual(r["links"], 2)
+
+    def test_every_release_until_this_one_is_known_to_be_out(self):
+        """The reference box is updated before the release is tagged, a box can be offline, and the check can be
+        off: a link to a tag GitHub does not have yet would open on a 404. The check's `behind` does not tell: it
+        compares the latest release with the last install this box recorded, and a cockpit restarted in the
+        middle of an update already runs the new version (both found in review, 2026-11-10)."""
+        for update in ("{installed: 'v1.46.0', latest: 'v1.45.4'}", "{installed: 'v1.45.3', latest: 'v1.45.4', behind: true}",
+                       "{installed: 'v1.45.3', latest: 'v1.9.9', behind: true}", "{installed: 'v1.46.0', latest: null}",
+                       "{installed: 'v1.46.0', latest: 'nightly'}", "{installed: 'v1.46.0', checked: false}", "{}", "undefined"):
+            with self.subTest(update=update):
+                r = self.row(update=update)
+                self.assertEqual(r["notes"], self.GENERIC)
+                self.assertEqual(r["star"], [self.REPO, "_blank", "noopener"])
+
+    def test_a_version_it_cannot_read_links_every_release(self):
+        for version in ("''", "'dev'", "undefined", "'1.46.0<script>'", "'1.46'"):
+            with self.subTest(version=version):
+                self.assertEqual(self.row(version, "{latest: 'v1.47.0', behind: true}")["notes"], self.GENERIC)
+
+    def test_the_links_stay_the_same_nodes_from_one_frame_to_the_next(self):
+        """The stream brings the whole state about once a second: links rebuilt each time lost the keyboard's focus
+        and a click that straddled a frame (found in review, 2026-11-10)."""
+        r = run(self, r"""
+        const state = {config: Object.assign({}, CONFIG, {version: '1.46.0'}), update: {latest: 'v1.46.0'}};
+        feed(state);
+        const notes = $('rp-notes'), star = $('rp-star'), kids = $('rp-new').childNodes.length;
+        let writes = 0; const set = notes.setAttribute.bind(notes); notes.setAttribute = (...a) => { writes++; set(...a); };
+        feed(state); feed(state);
+        report({same: notes === $('rp-notes') && star === $('rp-star'), inside: notes.parentNode === $('rp-new'),
+                kids: $('rp-new').childNodes.length === kids, writes, links: $('rp-new').querySelectorAll('a').length});
+        """)
+        self.assertEqual(r, {"same": True, "inside": True, "kids": True, "writes": 0, "links": 2})
+
+
+class TheCockpitsOwnPanelSaysItsModeAndItsShare(unittest.TestCase):
+    """The rework of the row above dropped the two lines that fill these rows, which then read "…" for good, and
+    no test read them (found in review, 2026-11-10)."""
+
+    def test_the_two_rows_are_filled(self):
+        for dry, mode in (("true", "dry run: logged and audited, nothing executed"),
+                          ("false", "live: actions execute after your confirmation")):
+            with self.subTest(dry=dry):
+                r = run(self, r"""
+                feed({config: Object.assign({}, CONFIG, {dry_run: %s, usable_frac: 0.92})});
+                report([txt('ck-mode'), txt('ck-usable')]);
+                """ % dry)
+                self.assertEqual(r, [mode, "92 % of the KV pool for one prompt"])
+
+
 class TheUpdateCommandsNameThisCheckout(unittest.TestCase):
     """U40: the update banner and the Agent view's install hint said cd ~/dgx-spark-qwen38
     whatever the checkout; the cockpit knows its own. And an update is the one command, run
