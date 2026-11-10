@@ -117,7 +117,7 @@ case "$IMAGE_GB" in ''|*[!0-9]*) die "install-nemotron.sh no longer defines IMAG
 vlane_engine_env "${NEMOTRON_SUPER_PORT:-}"
 
 if [ "$ACTION" = uninstall ]; then
-  step "Removing the Nemotron Super lane"
+  step "Removing the Nemotron 3.5 Super VL lane"
   vlane_uninstall_unit
   vlane_uninstall_clients
   # The image is the Nemotron Bolt lane's too: a build stays while an installed unit names it
@@ -155,14 +155,14 @@ vlane_room "$NEMOTRON_BASE_IMAGE" "$MODEL" "$DRAFT"
 if [ "$MODE" = units ]; then
   echo "OK: $(uname -m), key present; the image and the checkpoints come with the lane's first Load"
   install_service
-  step "Done: the Nemotron Super lane is installed; its first Load prepares it"
-  echo "  the cockpit: Load on Nemotron 3.5 Super VL in the Lanes view builds its image (the Nemotron Bolt lane's,"
+  step "Done: the Nemotron 3.5 Super VL lane is installed; its first Load prepares it"
+  echo "  the cockpit: Load on Nemotron 3.5 Super VL in the Lanes view builds its image (the Nemotron 3.5 Bolt lane's,"
   echo "               about 25 GB, 11 to download, once for the two), fetches its checkpoints (about $WEIGHTS_GB GB), then starts it"
   echo "  a terminal : ./install-nemotron-super.sh --prepare, then ./switch-model.sh nemotron-super and the commands it prints"
   exit 0
 fi
 
-step "2/5 Image ($LOCAL_IMAGE, the Nemotron Bolt lane's)"
+step "2/5 Image ($LOCAL_IMAGE, the Nemotron 3.5 Bolt lane's)"
 if docker image inspect "$LOCAL_IMAGE" >/dev/null 2>&1; then
   echo "already built"
 else
@@ -173,7 +173,7 @@ else
 fi
 
 if [ "$MODE" = prepare ]; then
-  step "Done: the Nemotron Super lane's image is ready; its Load fetches the checkpoints and starts it"
+  step "Done: the Nemotron 3.5 Super VL lane's image is ready; its Load fetches the checkpoints and starts it"
   exit 0
 fi
 
@@ -190,6 +190,6 @@ VLANE_SERVED=nemotron-3.5-super-vl; VLANE_KWARGS='{"enable_thinking":false}'
 VLANE_PARSERS="the qwen3_coder parser is"; VLANE_BOOT="about 11 min"; VLANE_WAIT_MIN=30
 vlane_prove
 
-step "Done: the Nemotron Super lane is installed and proved it serves on $ENGINE_BIND:$PORT"
+step "Done: the Nemotron 3.5 Super VL lane is installed and proved it serves on $ENGINE_BIND:$PORT"
 echo "  switch to it : Load on Nemotron 3.5 Super VL in the cockpit, or ./switch-model.sh nemotron-super"
 echo "  clients      : the proxy on :30001 with the box's key, model nemotron-3.5-super-vl (OpenAI and Anthropic APIs)"

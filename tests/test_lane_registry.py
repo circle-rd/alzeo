@@ -368,6 +368,38 @@ def patterns(arms):
     return [p for pats, _, _ in arms for p in pats if p != "*" and not p.startswith("$")]
 
 
+# A command that prints, wherever it stands on its line ("[ -f x ] || die ..."), and a lane named by a proper
+# name after it ("the Kolibri-1 lane", "The Ornith 1.5 122B lane's"): a name that starts with a capital. The
+# 27B and the image and video lanes are named by a figure or in lower case ("the image lane").
+SH_MESSAGE = re.compile(r"(?<![\w$-])(?:echo|step|die|printf|section)\b")
+SH_LANE_NAMED = re.compile(r"\b[Tt]he ([A-Z][\w.-]*(?: [A-Z0-9][\w.-]*)*) lanes?\b")
+# a here-document's opening (<<WORD, <<-'WORD'), not a here-string (<<<)
+SH_HEREDOC = re.compile(r"(?<!<)<<(?!<)(-?)\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\2")
+
+
+def sh_messages(text):
+    """[(line, name)] of each lane a script's messages name by a proper name, in the lines that print. Its
+    comments and its here-documents are not read (install.sh's help is one, and the Python the scripts run
+    are others); a here-document that never meets its word raises ValueError: nothing after it is skipped
+    unread."""
+    out, lines, i = [], text.splitlines(), 0
+    while i < len(lines):
+        line, n = lines[i], i + 1
+        i += 1
+        if line.lstrip().startswith("#"):
+            continue
+        cmd = SH_MESSAGE.search(line)
+        if cmd:
+            out += [(n, m.group(1)) for m in SH_LANE_NAMED.finditer(line, cmd.end())]
+        for h in SH_HEREDOC.finditer(line):
+            while i < len(lines) and (lines[i].lstrip("\t") if h.group(1) else lines[i]) != h.group(3):
+                i += 1
+            if i == len(lines):
+                raise ValueError(f"line {n}: a here-document never meets its {h.group(3)}")
+            i += 1
+    return out
+
+
 # ---------------------------------------------------------------------------------------------------
 # Python: module-level assignments and the literals of named functions, read by ast.
 
@@ -1356,8 +1388,9 @@ class TheNamesAreTheOfficialOnes(unittest.TestCase):
     """A lane's name in install.sh's messages is its official one (decision 1180), or for the image and
     video lanes their kind, the way install.sh names them ("the image lane"), their model after it: in
     lane_title, SERVING_LANE, the notes and the steps of the side lanes' installs, the 64 GB guards, and
-    in every message that names a lane by a proper name. The help, the comments, and the other scripts'
-    messages are not read here."""
+    in every message that names a lane by a proper name, in install.sh and in every other script of the
+    repo's root. Their comments and their here-documents (install.sh's help among them) are not read here,
+    nor the cockpit's messages."""
 
     SH = "install.sh"
 
@@ -1408,11 +1441,10 @@ class TheNamesAreTheOfficialOnes(unittest.TestCase):
         # the image and video lanes are named by what they are, in lower case or by a figure, which this leaves.
         titles = {f["title"] for f in LANES.values() if f["title"]}
         named = []
-        for m in re.finditer(r'^[ \t]*(?:\|\| )?(?:echo|step|die|printf)\b.*$', sh, re.M):
-            for n in re.finditer(r"\b[Tt]he ([A-Z][\w.-]*(?: [A-Z0-9][\w.-]*)*) lanes?\b", m.group(0)):
-                named.append(n.group(1))
-                if n.group(1) not in titles:
-                    p.append(f"{rel}:{line_at(sh, m.start())} says \"the {n.group(1)} lane\", which is no lane's official name")
+        for n, name in sh_messages(sh):
+            named.append(name)
+            if name not in titles:
+                p.append(f"{rel}:{n} says \"the {name} lane\", which is no lane's official name")
         floor(named, f"{rel} its messages that name a lane by a proper name", 2 * len(SIDE))
         # the 64 GB guard of each installer of its own names its lane
         for lane, f in LANES.items():
@@ -1424,6 +1456,31 @@ class TheNamesAreTheOfficialOnes(unittest.TestCase):
             if not self.said(lane, name):
                 p.append(f"{where} its 64 GB guard names {name!r}, the registry says {f['title']!r}")
         p.check(self, excuses(rel))
+
+    def test_the_other_scripts(self):
+        """The same rule in every other script of the repo's root: the lane installers' steps, the switch's
+        refusals, the uninstall's lines. Fourteen said "the Kolibri lane", "the Nemotron lane" and "the Nemotron
+        Super lane", and two "the Nemotron Bolt lane" (found 2026-11-10). Each text lane's installer of its own
+        names its lane, by that name."""
+        p, titles = Problems(), {f["title"] for f in LANES.values() if f["title"]}
+        scripts = floor(sorted(x.name for x in REPO.glob("*.sh") if x.name != self.SH), "the root's other scripts", len(SIDE) + 1)
+        named = {}
+        for rel in scripts:
+            for n, name in sh_messages(text_of(rel)):
+                named.setdefault(rel, []).append(name)
+                if name not in titles:
+                    p.append(f"{rel}:{n} says \"the {name} lane\", which is no lane's official name")
+        for lane in among(SIDE, TEXT):
+            rel = LANES[lane]["installer"]
+            if LANES[lane]["title"] not in named.get(rel, []):
+                p.append(f"{rel}: no message names \"the {LANES[lane]['title']} lane\", its own")
+            # and the steps that remove it, or say it is installed or its image ready, name it and no other lane
+            steps, where = finds(rel, text_of(rel), r'^\s*step "(?:Removing|Done:) the (.+?) lane\b')
+            for name in floor(steps, f"{rel} its steps \"Removing the <name> lane\" and \"Done: the <name> lane\"", 3):
+                if name != LANES[lane]["title"]:
+                    p.append(f"{where} a step of {lane}'s installer names \"the {name} lane\", the registry says {LANES[lane]['title']!r}")
+        floor(named.get("switch-model.sh", []), "switch-model.sh its messages that name a lane by a proper name")
+        p.check(self)
 
 
 class TheReadersReadWhatTheyClaim(unittest.TestCase):
@@ -1453,6 +1510,18 @@ class TheReadersReadWhatTheyClaim(unittest.TestCase):
         for needle in (r"=1", r"Z="):
             with self.subTest(needle), self.assertRaises(NotFound):
                 sh_case_with(sh, '"$c"', needle, "t")
+
+    def test_a_message_is_read_wherever_its_command_stands_and_nothing_else(self):
+        sh = ('[ -f x ] || die "the Alpha lane is not installed"\n'
+              '# echo "the Beta lane, in a comment"\n'
+              "cat <<'HLP'\necho \"the Gamma lane, in a help\"\nHLP\n"
+              'read -r a <<< "the Delta lane, in a here-string"\n'
+              '  step "Done: the Epsilon 1.5 lane\'s image is ready"\n'
+              'X="the Zeta lane, in no message"\n'
+              'echo "the image lane, the 27B lane"\n')
+        self.assertEqual(sh_messages(sh), [(1, "Alpha"), (7, "Epsilon 1.5")])
+        with self.assertRaises(ValueError):
+            sh_messages('cat <<EOF\necho "the Eta lane"\n')
 
     def test_a_javascript_table_is_read_whole_or_not_at_all(self):
         js = "const T = {[U27]: 'a', b: [1, \"c's\"], 'd-e': {f: X}, // note\n};"

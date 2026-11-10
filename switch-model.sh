@@ -126,7 +126,7 @@ KOLIBRI_UNIT_NAME="qwen38-kolibri.service"
 # exact-argv sudoers allowlist names, as the image unit is.
 KOL_STAGE="$CONFIG_DIR/qwen38-kolibri.service.switch-stage"
 if [ "$CHOICE" = "kolibri" ] || [ "$CHOICE" = "kolibri-nvfp4" ]; then
-  [ -f "$KOLIBRI_UNIT" ] || die "the Kolibri lane is not installed on this box (no $KOLIBRI_UNIT). Install it once: ./install.sh --with-kolibri (about 102 GB)"
+  [ -f "$KOLIBRI_UNIT" ] || die "the Kolibri-1 lane is not installed on this box (no $KOLIBRI_UNIT). Install it once: ./install.sh --with-kolibri (about 102 GB)"
   # The lane's two checkpoints, their pinned revisions, memory shares and sizes, from
   # install-kolibri.sh, the one place they are declared (the shares and sizes were copied
   # here by hand, and a share tuned there came back at the next switch: found in review,
@@ -144,7 +144,7 @@ if [ "$CHOICE" = "kolibri" ] || [ "$CHOICE" = "kolibri-nvfp4" ]; then
   fi
   KOL_IMAGE="$(grep -m1 -oE 'qwen38-kolibri:[^ ]+' "$KOLIBRI_UNIT" || true)"
   [ -n "$KOL_IMAGE" ] && docker image inspect "$KOL_IMAGE" >/dev/null 2>&1 \
-    || die "the Kolibri lane's image (${KOL_IMAGE:-none named in its unit}) is missing: ./prepare-lane.sh kolibri builds it (no sudo; its first Load from the cockpit runs it), then switch again"
+    || die "the Kolibri-1 lane's image (${KOL_IMAGE:-none named in its unit}) is missing: ./prepare-lane.sh kolibri builds it (no sudo; its first Load from the cockpit runs it), then switch again"
   KOL_HF="$(unit_hf_cache "$KOLIBRI_UNIT")"
   KOL_HF="${KOL_HF:-$HF_CACHE}"
   printf '\n\033[1;36m── Verifying %s @ %s in the cache (resumable)\033[0m\n' "$KOL_MODEL" "${KOL_REV:0:12}"

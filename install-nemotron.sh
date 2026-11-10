@@ -126,7 +126,7 @@ IMAGE_GB=35
 vlane_engine_env "${NEMOTRON_PORT:-}"
 
 if [ "$ACTION" = uninstall ]; then
-  step "Removing the Nemotron lane"
+  step "Removing the Nemotron 3.5 Bolt lane"
   vlane_uninstall_unit
   vlane_uninstall_clients
   # The image is the Nemotron Super lane's too (install-nemotron-super.sh): a build stays while an
@@ -164,7 +164,7 @@ vlane_room "$NEMOTRON_BASE_IMAGE" "$MODEL" "$DRAFT"
 if [ "$MODE" = units ]; then
   echo "OK: $(uname -m), key present; the image and the checkpoints come with the lane's first Load"
   install_service
-  step "Done: the Nemotron lane is installed; its first Load prepares it"
+  step "Done: the Nemotron 3.5 Bolt lane is installed; its first Load prepares it"
   echo "  the cockpit: Load on Nemotron 3.5 Bolt in the Lanes view builds its image (about 25 GB, 11 to download),"
   echo "               fetches its checkpoints (about $WEIGHTS_GB GB), then starts it"
   echo "  a terminal : ./install-nemotron.sh --prepare, then ./switch-model.sh nemotron and the commands it prints"
@@ -201,7 +201,7 @@ DEOF
 fi
 
 if [ "$MODE" = prepare ]; then
-  step "Done: the Nemotron lane's image is ready; its Load fetches the checkpoints and starts it"
+  step "Done: the Nemotron 3.5 Bolt lane's image is ready; its Load fetches the checkpoints and starts it"
   exit 0
 fi
 
@@ -218,6 +218,6 @@ VLANE_SERVED=nemotron-3.5-bolt; VLANE_KWARGS='{"enable_thinking":false}'
 VLANE_PARSERS="the qwen3_coder parser is"; VLANE_BOOT="about 8 min"; VLANE_WAIT_MIN=20
 vlane_prove
 
-step "Done: the Nemotron lane is installed and proved it serves on $ENGINE_BIND:$PORT"
+step "Done: the Nemotron 3.5 Bolt lane is installed and proved it serves on $ENGINE_BIND:$PORT"
 echo "  switch to it : Load on Nemotron 3.5 Bolt in the cockpit, or ./switch-model.sh nemotron"
 echo "  clients      : the proxy on :30001 with the box's key, model nemotron-3.5-bolt (OpenAI and Anthropic APIs)"
