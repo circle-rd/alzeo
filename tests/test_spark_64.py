@@ -183,8 +183,14 @@ class ANew64GBBoxServesBolt(unittest.TestCase):
                           f'  *qwen38-dashboard.service*) {"echo active" if cockpit == "active" else "echo inactive; exit 3"} ;;\n'
                           f'  *nemotron*) {"echo failed" if health == "failed" else "echo active"} ;;\n'
                           '  *) echo active ;;\nesac\n')
-        stub("curl", f'echo "curl $*" >> "{calls}"\nexit {0 if health == "ok" else 7}\n')
-        stub("sleep", "exit 0\n")
+        # the engine's /health: "ok" answers at once, "failed" never, "late" from its 31st asking on, each asking
+        # that finds nobody taking a twentieth of a second of real time (a wait bounded by a clock is bounded here)
+        stub("curl", f'echo "curl $*" >> "{calls}"\n'
+                     + ("exit 0\n" if health == "ok" else
+                        f'n=$(cat "{d}/asked" 2>/dev/null || echo 0); n=$((n + 1)); echo "$n" > "{d}/asked"\n'
+                        + ('[ "$n" -gt 30 ] && exit 0\n' if health == "late" else "")
+                        + "/bin/sleep 0.05\nexit 7\n"))
+        stub("sleep", f'echo "$*" >> "{d}/slept"\nexit 0\n')
         cfg = d / "cfg"
         cfg.mkdir()
         if ran_before:
@@ -200,6 +206,7 @@ class ANew64GBBoxServesBolt(unittest.TestCase):
                   + helpers + block)
         r = subprocess.run(["bash", "-c", script], capture_output=True, text=True, timeout=60)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.slept = (d / "slept").read_text().split() if (d / "slept").exists() else []
         return r.stdout, calls.read_text().splitlines() if calls.exists() else []
 
     LOAD = ["prepare-lane.sh nemotron", "switch-model.sh nemotron", "sudo systemctl stop qwen38-sglang.service",
@@ -264,12 +271,25 @@ class ANew64GBBoxServesBolt(unittest.TestCase):
                     self.assertEqual(tail, back, "nothing is fitted, started again or stopped")
                     self.assertIn("NOTE: the 27B does not answer yet, and opencode keeps its nominal limits, above its "
                                   "pool here: once it serves, run python3 oc-fit-limits.py", out)
+                    # it was asked every 10 s for as long as the run says it waits, on the engine's own port
+                    wait = int(re.search(r"^\s*if text_lane_answers (\d+); then$", INSTALL, re.M).group(1))
+                    asked = [c for c in calls[4:] if c.startswith("curl ")]
+                    self.assertEqual(len(asked), wait // 10, "one asking every 10 s of the wait")
+                    self.assertEqual(self.slept, ["10"] * (wait // 10))
+                    self.assertTrue(all(c.endswith(" http://127.0.0.1:30000/health") for c in asked), asked[:2])
+                    self.assertIn(f"once it answers ({wait // 60} min at most)", out)
                     continue
                 self.assertEqual(tail, back + [self.FIT], "the 27B is waited for and fitted, never started twice nor stopped")
                 health_at = max(i for i, c in enumerate(calls) if c.startswith("curl ") and "/health" in c)
                 self.assertGreater(calls.index(self.FIT), health_at, "fitted once the 27B answered")
                 self.assertFalse([c for c in calls if "chat/completions" in c], "no generation is sent to a box's only lane")
                 self.assertNotIn("nominal limits", out)
+        # a 27B that takes its time (it answers at the 31st asking, some five minutes in) is still waited for
+        out, calls = self.epilogue(fail=("start",), health="late", cockpit="inactive", engine="sglang")
+        self.assertEqual([c for c in calls[4:] if not c.startswith("curl ")], back + [self.FIT])
+        self.assertEqual(len([c for c in calls if c.startswith("curl ")]), 31)
+        self.assertEqual(self.slept, ["10"] * 30)
+        self.assertNotIn("nominal limits", out)
         # a switch that failed may have written Bolt's pair before it failed: the 27B, never stopped, is fitted too
         out, calls = self.epilogue(fail=("switch-model.sh nemotron",), cockpit="inactive", engine="sglang")
         self.assertEqual([c for c in calls if not c.startswith("curl ")],

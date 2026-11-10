@@ -3914,6 +3914,7 @@ except Exception as e:
     if [ "$MEM_CLASS" = 64 ] && [ "$SIDE_BOOT" -eq 0 ] && [ -z "$SECONDARY" ] && [ -z "$_ENV_MODEL_CHOICE" ] \
        && [ "$WANT_NEMOTRON" -eq 1 ] && { [ "$RECOMMENDED" -eq 1 ] || ! ran_whole_before; }; then
       step "A 64 GB DGX Spark serves Nemotron 3.5 Bolt: loading it as the cockpit does (the 27B stays installed)"
+      BOLT_SWITCHED=0
       if bolt_first_load; then
         # Nothing is fitted here. Bolt's opencode limits are its own pair (oc-limits.sh nemotron), written with its
         # provider at step 7 or by the switch above, which points opencode at Bolt and restarts the Agent tab's server
@@ -3930,11 +3931,11 @@ except Exception as e:
         # fits them again once the 27B answers (its autofit, unless it was turned off); with none, nothing did, and
         # opencode asked for nearly four times the pool until the next update (found in review, 2026-11-10). So the
         # 27B is waited for, then fitted. It is only waited for: nothing here starts or stops its unit, and no sudo
-        # is asked at the end of a run. systemd starts the 27B again by itself when its first try finds the GPU's
+        # is prompted for at the end of a run. systemd starts the 27B again by itself when its first try finds the GPU's
         # memory not given back yet (engine-preflight.sh), and the proof of the other lanes, which stops a unit it
         # sees restarting, would have left this box with no engine (found in review the same day). After a
         # preparation that failed the switch never ran: nothing moved, and nothing is done.
-        if [ "$OPENCODE" -eq 1 ] && [ "${BOLT_SWITCHED:-0}" -eq 1 ] \
+        if [ "$OPENCODE" -eq 1 ] && [ "$BOLT_SWITCHED" -eq 1 ] \
            && ! systemctl is-active --quiet qwen38-dashboard.service 2>/dev/null; then
           echo "  opencode's limits are fitted to the 27B's pool again once it answers (20 min at most)"
           if text_lane_answers 1200; then
