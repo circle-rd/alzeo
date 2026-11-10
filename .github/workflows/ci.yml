@@ -1304,7 +1304,7 @@ jobs:
           probe="$(mktemp -d)"
           # tests/run_suite.py loads the same hook into every python it starts (its sitecustomize.py),
           # beside the one that compares each file's environment at its start and at its exit.
-          export QWEN38_CONTACT_LOG="$probe/contacts" QWEN38_SERVING_PORTS=30000,30001,30002,30020,30090,30091,4096
+          export QWEN38_CONTACT_LOG="$probe/contacts" QWEN38_SERVING_PORTS=30000,30001,30002,30020,30022,30024,30025,30090,30091,4096
           before="$(find "$witness" -type f -exec sha256sum {} + | sort)"
           ports_before="$(ss -Htln 2>/dev/null | awk '{print $4}' | sort || true)"
           # The suite runs under tests/suite_reaper.py, a child subreaper: every process it

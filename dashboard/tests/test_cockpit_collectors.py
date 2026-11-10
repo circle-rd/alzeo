@@ -86,15 +86,17 @@ class Base(unittest.TestCase):
     def setUpClass(cls):
         cls.tmp = Path(tempfile.mkdtemp(prefix="cockpit-coll-"))
         (cls.tmp / "api-key").write_text("k\n")
-        # The engine, the proxy and the image lane on a closed port, and no request out:
-        # with the defaults left in place this suite made 46 requests to the engine
+        # The engine, the proxy, the image lane and the video lane on a closed port, and no
+        # request out: with the defaults left in place this suite made 46 requests to the engine
         # serving on the reference box (/health there is a one-token generation), one to
-        # the image lane and two to api.github.com (found in review, 2026-09-24). A test
-        # that needs an engine starts its own and points ENGINE_BASE at it.
+        # the image lane and two to api.github.com (found in review, 2026-09-24), and one to
+        # the video lane's port, which the offline suite's guard did not watch (found on
+        # 2026-11-10). A test that needs an engine starts its own and points ENGINE_BASE at it.
         os.environ.update(COCKPIT_DRY_RUN="1", COCKPIT_CONFIG_DIR=str(cls.tmp),
                           COCKPIT_REPO_DIR=str(REPO), COCKPIT_PORT="0",
                           COCKPIT_AGENT_PORT="0", COCKPIT_AUTOHEAL="0",
-                          COCKPIT_ENGINE=CLOSED, COCKPIT_PROXY=CLOSED, COCKPIT_IMAGE=CLOSED)
+                          COCKPIT_ENGINE=CLOSED, COCKPIT_PROXY=CLOSED, COCKPIT_IMAGE=CLOSED,
+                          COCKPIT_VIDEO=CLOSED)
         sys.path.insert(0, str(DASH))
         spec = importlib.util.spec_from_file_location("cockpit_coll_under_test",
                                                       DASH / "cockpit.py")
