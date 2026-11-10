@@ -32,10 +32,10 @@ to the 27B, and that switch writes the 27B's nominal opencode limits (173,000 an
 pair fitted earlier to its pool, some 59,625 tokens on a 64 GB box. A cockpit that runs fits them again once the 27B
 answers, unless its autofit was turned off. With none (`--no-cockpit`, or a cockpit that is stopped), nothing did, and
 opencode asked for nearly four times the pool until the next update. The installer now waits for the 27B, 20 minutes at
-most, and fits them, and says so when the 27B does not answer in time. It only waits: it starts and stops nothing and
-asks no sudo, so a 27B that systemd starts again is left to come up. After a preparation of Bolt that failed nothing
-had moved, and nothing is done. Found by reading the code: no 64 GB box was at hand, and the correction was proved on
-the installer's own ending with stand-ins, not on such a box.
+most, and fits them, and says so when the 27B does not answer in time. It only waits: it starts and stops no lane and
+prompts for no sudo, so a 27B that systemd starts again is left to come up. After a preparation of Bolt that failed
+nothing had moved, and nothing is done. Found by reading the code: no 64 GB box was at hand, and the correction was
+proved on the installer's own ending with stand-ins, not on such a box.
 
 **Smaller things.** The switch to the video lane asked 145 of free room when it could not read `install-video.sh`, the
 GB that installer counted before v1.20.0: it asks the 135 GiB the installer asks. The Now view wrote `127.0.0.1:30020`
@@ -47,11 +47,12 @@ button that leads to https://alzeo.ai/support/, the page that says what helps: t
 
 **Tests.** `tests/test_lane_registry.py` now reads the messages of every shell script of the repo's root and every
 string of the cockpit's Python and of its page, comments and docstrings aside: a message that says `the <Name> lane`
-names an official one, the refusals are the same sentences in the server and in the page, and each lane installer names
-its own lane. Its six excuses for the cockpit's names are gone. `tests/test_docs_facts.py` holds each of the three
-sizes to one figure in its unit. `tests/test_spark_64.py` runs the 64 GB ending with no cockpit: Bolt's start fails,
-its switch fails, the 27B does not answer in time, the preparation fails, and a 27B that systemd starts again meanwhile
-is never stopped. A page test answers `/api/image` with another port, another loads each vLLM lane and reads its own
+names an official one (a family said as one, `the SGLang lanes` or `a Qwen lane`, aside), the refusals are the same
+sentences in the server and in the page, and each lane installer names its own lane. Its six excuses for the cockpit's
+names are gone. `tests/test_docs_facts.py` holds each of the three sizes to one figure in its unit.
+`tests/test_spark_64.py` runs the 64 GB ending with no cockpit: Bolt's start fails, its switch fails, the 27B does not
+answer in time, the preparation fails, a 27B that systemd starts again meanwhile is never stopped, and the wait lasts
+what the run says. A page test answers `/api/image` with another port, another loads each vLLM lane and reads its own
 name, `tests/test_switch_room.py` runs the switch with no `install-video.sh` to read, `tests/test_pi_gen.py` holds a
 line of `docs/pi.md` to each lane of the generator's table, and `tests/test_oc_fit_limits.py` starts a server of its
 own that answers 404. Each fails on the code before. The five browser checks that start a cockpit of their own now
