@@ -56,13 +56,17 @@ def modules(repo=REPO):
 
 
 def groups(mods, own=OWN, rest=REST):
-    """The groups, the longest first: each module of own alone, the others dealt in turn into rest groups."""
+    """The groups, in the order they start: each module of own alone, the others dealt in turn into rest groups."""
     missing = [m for m in own if m not in mods]
     if missing:
         raise SystemExit(f"{missing}, named as the longest, are gone: name them again in OWN")
     others = [m for m in mods if m not in own]
-    dealt = [others[i::rest] for i in range(rest)]
-    return [[m] for m in own] + [g for g in dealt if g]
+    dealt = [g for g in (others[i::rest] for i in range(rest)) if g]
+    # The longest module first, then the dealt groups, then the other modules of own. A dealt group takes
+    # some 400 s and the second module of own 164: started after own's four, with four processes at a
+    # time, the dealt groups waited for a place and the run took 589 s where its longest group takes 497
+    # (2026-11-10).
+    return [[m] for m in own[:1]] + dealt + [[m] for m in own[1:]]
 
 
 def declared(mods, repo=REPO):

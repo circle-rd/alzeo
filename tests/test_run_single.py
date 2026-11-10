@@ -144,8 +144,17 @@ class TheRealPlan(unittest.TestCase):
         self.assertEqual(sorted(dealt), sorted(mods), "every module, once")
         self.assertEqual(len(dealt), len(set(dealt)))
         self.assertGreater(len(mods), 150, "the modules of tests/ are found")
-        self.assertEqual(plan[:len(rs.OWN)], [[m] for m in rs.OWN], "each of the longest is a process of its own")
+        self.assertEqual([g for g in plan if g[0] in rs.OWN], [[m] for m in rs.OWN], "each of the longest is a process of its own")
         self.assertEqual(len(plan), len(rs.OWN) + rs.REST)
+
+    def test_the_groups_start_in_the_order_of_their_length(self):
+        # the longest module, then the dealt groups, then the shorter modules of the longest: with four at a time,
+        # dealt groups that started last waited for a place and set the length of the run (589 s for 497, 2026-11-10)
+        self.assertEqual(rs.groups(["a", "b", "c", "long", "shorter"], own=["long", "shorter"], rest=2),
+                         [["long"], ["a", "c"], ["b"], ["shorter"]])
+        plan = rs.groups(rs.modules())
+        self.assertEqual(plan[0], [rs.OWN[0]])
+        self.assertEqual([len(g) > 1 for g in plan], [False] + [True] * rs.REST + [False] * (len(rs.OWN) - 1))
 
     def test_a_module_is_a_file_that_declares_a_test(self):
         mods = rs.modules()
