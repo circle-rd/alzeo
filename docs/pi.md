@@ -20,7 +20,7 @@ mkdir -p ~/.pi/agent && cp -n ~/.config/qwen38/pi/*.json ~/.pi/agent/
 mkdir -p ~/.omp/agent && cp -n ~/.config/qwen38/omp/*.yml ~/.omp/agent/
 ```
 
-`cp -n` copies nothing over a file that exists: if you already have a `models.json` or `models.yml` with other providers, merge the `qwen38` and `flashnext` providers into it by hand (each agent reads one such file), and likewise the default model and compaction settings. Copy again after a switch or a fit, and the agent carries the new lane.
+`cp -n` copies nothing over a file that exists: if you already have a `models.json` or `models.yml` with other providers, merge the providers of the generated file into it by hand (it carries one per installed lane, for example `qwen38` for the 27B and `flashnext` for the flash lane; each agent reads one such file), and likewise the default model and compaction settings. Copy again after a switch or a fit, and the agent carries the new lane.
 
 ## One build, two serializations
 

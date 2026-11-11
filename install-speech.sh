@@ -173,7 +173,7 @@ python3 -c 'import venv, ensurepip' 2>/dev/null || die "python3-venv is missing 
 existing(){ local p="$1"; while [ ! -e "$p" ]; do p="$(dirname "$p")"; done; printf '%s\n' "$p"; }
 free_gb(){ { df -BG --output=avail "$(existing "$1")" 2>/dev/null || true; } | tail -1 | tr -dc '0-9'; }
 FREE="$(free_gb "$LANE_DIR")"; WANT=$((MODELS_GB + RUNTIME_GB + 1))
-[ "${FREE:-0}" -ge "$WANT" ] || die "${FREE:-?} GB free under $LANE_DIR, this lane needs about $WANT GB. Free some space, or point SPEECH_LANE_DIR at a bigger disk."
+[ "${FREE:-0}" -ge "$WANT" ] || die "${FREE:-?} GiB free under $LANE_DIR, this lane needs about $WANT GiB. Free some space, or point SPEECH_LANE_DIR at a bigger disk."
 # The ports must be ours or free: another service on them would answer the proof.
 for p in "$PORT" "$ASR_PORT"; do
   if ss -ltnH "sport = :$p" 2>/dev/null | grep -q . && ! systemctl is-active --quiet "$UNIT" 2>/dev/null; then

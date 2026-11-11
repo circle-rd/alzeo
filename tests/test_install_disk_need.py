@@ -133,8 +133,8 @@ class ThePleTableAndTheImageOnOneDisk(unittest.TestCase):
 
     def test_their_sum_is_asked_on_their_disk(self):
         out = self.run_section(98)
-        self.assertIn("DIE: Need ~99 GB free on the disk that holds both PLE_DIR=", out)
-        self.assertIn("50 for the flash lane's PLE table, 49 for the 32 GB Docker image", out)
+        self.assertIn("DIE: Need ~99 GiB free on the disk that holds both PLE_DIR=", out)
+        self.assertIn("50 for the flash lane's PLE table, 49 for the 32 GiB Docker image", out)
         self.assertIn("FITS", self.run_section(99))
 
 

@@ -20,9 +20,10 @@ system prompt as "system": the served template refuses "developer");
 pi's settings.json adds the default model,
 modelThinkingLevels "off" for the Qwen models (unset sends no effort field: the
 installed template's default, lean, or xhigh on a box installed with LEAN_DEFAULT=0
-and on the Flash FP4-Local lane) and "high" for Kolibri, which is sent
-its effort (EFFORT_FIELD), keepRecentTokens from the artifact's
-compaction block and per-lane reserveTokens = the lane's output cap. omp
+and on the Qwen3.8 Flash-Next FP4-Local lane) and "high" for Kolibri-1, the two
+Nemotron lanes and Ornith 1.5 122B, which are sent their effort (EFFORT_FIELD),
+keepRecentTokens from the artifact's compaction block and per-lane reserveTokens =
+the lane's output cap. omp
 gets the same values re-serialized: the same models array, thinking block
 added, inputLimits and pi's compat dropped (its schema has no room for them);
 default provider + model id -> modelRoles.default. The thinking block lists

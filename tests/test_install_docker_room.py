@@ -30,7 +30,7 @@ printf 'Disp.\\n %sG\\n' "$FAKE_FREE"
 def block() -> str:
     text = INSTALL.read_text()
     start = text.index("DOCKER_ROOT=$(docker info")
-    end = text.index("\n", text.index('|| die "Need ~${DOCKER_NEED_GB} GB free on $DOCKER_ROOT', start)) + 1
+    end = text.index("\n", text.index('|| die "Need ~${DOCKER_NEED_GB} GiB free on $DOCKER_ROOT', start)) + 1
     return text[start:end]
 
 
@@ -57,17 +57,17 @@ class TheDockerRoomFollowsWhatThereIsToPull(unittest.TestCase):
 
     def test_a_first_pull_still_needs_the_room_for_the_image(self):
         out = run("27b", 36, [])
-        self.assertIn("DIE: Need ~40 GB free on /var/lib/docker for the 39 GB Docker image; found 36 GB", out)
+        self.assertIn("DIE: Need ~40 GiB free on /var/lib/docker for the 39 GB Docker image; found 36 GiB", out)
 
     def test_even_an_image_in_place_needs_the_containers_room(self):
         out = run("27b", 3, ["lmsysorg/sglang@sha256:27b"])
-        self.assertIn("DIE: Need ~5 GB free on /var/lib/docker for the container (its image is already here)", out)
+        self.assertIn("DIE: Need ~5 GiB free on /var/lib/docker for the container (its image is already here)", out)
 
     def test_the_flash_lane_looks_for_its_own_image(self):
         self.assertIn("PASS need=5 pull=lmsysorg/sglang@sha256:flash",
                       run("flash", 20, ["lmsysorg/sglang@sha256:flash"]))
         # the 27B's image being here says nothing about the flash lane's
-        self.assertIn("DIE: Need ~35 GB free", run("flash", 20, ["lmsysorg/sglang@sha256:27b"]))
+        self.assertIn("DIE: Need ~35 GiB free", run("flash", 20, ["lmsysorg/sglang@sha256:27b"]))
 
 
 

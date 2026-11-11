@@ -133,10 +133,10 @@ class TheVideoSwitchChecksForRoomToo(unittest.TestCase):
         # 2026-10-15)
         out = run_video(free_gb=200, home_disk_gb=16)
         self.assertIn("DIE: not enough room for the video lane's first start", out)
-        self.assertIn("about 17 GB needed", out)
+        self.assertIn("about 17 GiB needed", out)
         # each folder named, not the last one alone (found in review, 2026-10-15)
         self.assertIn("/home/.cache/sglang/diffusion/host_spill and ", out)
-        self.assertIn("/home/.cache/sgl_diffusion/decode_dtype_store: 16 GB free", out)
+        self.assertIn("/home/.cache/sgl_diffusion/decode_dtype_store: 16 GiB free", out)
         self.assertIn("NEED=135", run_video(free_gb=200, home_disk_gb=17))
 
     def test_without_install_video_sh_it_asks_the_same_room(self):

@@ -278,7 +278,7 @@ fi
 # existing: lanes.sh's (the nearest folder of a path that exists)
 free_gb(){ { df -BG --output=avail "$(existing "$1")" 2>/dev/null || true; } | tail -1 | tr -dc '0-9'; }
 HAVE_B="$({ du -s --apparent-size -B1 "$HF_CACHE/hub/models--${MODEL//\//--}/blobs" 2>/dev/null || true; } | cut -f1)"
-# what is left, in whole GB (a complete checkpoint is 0 left, not 1)
+# what is left, in whole GiB (a complete checkpoint is 0 left, not 1)
 WEIGHTS_NEED=$(( (WEIGHTS_GB * 1073741824 - ${HAVE_B:-0}) / 1073741824 )); [ "$WEIGHTS_NEED" -ge 0 ] || WEIGHTS_NEED=0
 # --prepare: the checkpoint is the Load's switch's to fetch, and to measure
 [ "$MODE" = prepare ] && WEIGHTS_NEED=0
@@ -296,9 +296,9 @@ for PART in "${PARTS[@]}"; do
 done
 for DEV in "${!NEED_ON[@]}"; do
   [ "${FREE_ON[$DEV]:-0}" -ge "${NEED_ON[$DEV]}" ] \
-    || die "${FREE_ON[$DEV]:-?} GB free on one disk, and this lane needs about ${NEED_ON[$DEV]} GB there: ${WHAT_ON[$DEV]}. Free some space, or point HF_CACHE or VIDEO_LANE_DIR at a bigger disk."
+    || die "${FREE_ON[$DEV]:-?} GiB free on one disk, and this lane needs about ${NEED_ON[$DEV]} GiB there: ${WHAT_ON[$DEV]}. Free some space, or point HF_CACHE or VIDEO_LANE_DIR at a bigger disk."
 done
-echo "OK: $(uname -m), key present, checkpoint $([ "$MODE" = prepare ] && echo "left to the Load's switch" || { [ "$WEIGHTS_NEED" -eq 0 ] && echo 'already cached'; } || echo "$WEIGHTS_NEED GB to download") into $HF_CACHE"
+echo "OK: $(uname -m), key present, checkpoint $([ "$MODE" = prepare ] && echo "left to the Load's switch" || { [ "$WEIGHTS_NEED" -eq 0 ] && echo 'already cached'; } || echo "$WEIGHTS_NEED GiB to download") into $HF_CACHE"
 
 step "2/6 Runtime ($LANE_DIR)"
 mkdir -p "$LANE_DIR"

@@ -54,11 +54,11 @@ image_as_the_switch_reads(){  # $1 the launcher or the unit, $2 the image it nam
     *) die "$1 names its image as $2, with no tag or digest: the switch reads name:tag or name@sha256:... only (hand-edited? ./install.sh writes it again)" ;;
   esac
 }
-room_or_die(){  # $1 GB, $2 a path on the disk it goes to, $3 what for
+room_or_die(){  # $1 GiB (df -BG counts the free space so), $2 a path on the disk it goes to, $3 what for
   local free; free="$(free_gb_at "$2")"
-  [ "${free:-0}" -ge "$1" ] || die "need ~$1 GB free under $2 for $3; found ${free:-unknown} GB. Free some space, then Load the lane again: what came already is kept."
+  [ "${free:-0}" -ge "$1" ] || die "need ~$1 GiB free under $2 for $3; found ${free:-unknown} GiB. Free some space, then Load the lane again: what came already is kept."
 }
-pull_image(){  # $1 image, $2 the lane (its local tag), $3 the room its pull needs in GB
+pull_image(){  # $1 image, $2 the lane (its local tag), $3 the room its pull needs in GiB
   local name="$2"; [ "$2" = 27b ] && name=27B
   section "The $name lane's image (${1:0:40})"
   if docker image inspect "$1" >/dev/null 2>&1; then

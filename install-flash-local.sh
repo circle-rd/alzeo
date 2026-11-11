@@ -360,7 +360,7 @@ if [ "$MODE" = stage ]; then
   exit 0
 fi
 
-step "1/5 Preflight (FP4-Local: $MODEL @ ${MODEL_REV:0:12})"
+step "1/5 Preflight (Qwen3.8 Flash-Next FP4-Local: $MODEL @ ${MODEL_REV:0:12})"
 vlane_preflight engine-preflight.sh engine-secrets.sh vllm_engine_auth.py ckpt-fetch.py patch-template.py seccomp-io-uring.json \
   flash-local-files.sh
 vlane_room "$FLASH_LOCAL_IMAGE" "$MODEL"

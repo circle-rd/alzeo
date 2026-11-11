@@ -434,7 +434,7 @@ video_first_start_caches(){
   done
 }
 
-# The room a text lane's checkpoint asks of its cache's disk, with its caches, whole GB still
+# The room a text lane's checkpoint asks of its cache's disk, with its caches, whole GiB still
 # needed, as install.sh counts it: 10 when the target is whole in the cache, else 45 for a 27B
 # target (its DFlash2 draft in it) and 180 for flash, what the cache holds of the repo off, 10 at
 # least. The switch checks it (switch-model.sh), and so does a first Load before its first
@@ -448,7 +448,7 @@ ckpt_room_gb(){  # $1 flash|27b, $2 the HF cache, $3 the repo, $4 its revision
   n=$(( n - ${have:-0} / 1073741824 )); [ "$n" -ge 10 ] || n=10
   echo "$n"
 }
-# What a first Load downloads, summed on each disk before the first byte: "path|GB|what" each.
+# What a first Load downloads, summed on each disk before the first byte: "path|GiB|what" each.
 # Each part checked its own room as it came, so a disk with room for the image and the
 # checkpoint and not for the PLE table beside them took 150 GB, then stopped (found in review,
 # 2026-10-15); install.sh sums its parts on each disk too. The refusal names the disk by the
@@ -466,7 +466,7 @@ room_per_disk(){
   done
   for dev in "${!need[@]}"; do
     [ "${free[$dev]:-0}" -ge "${need[$dev]}" ] \
-      || die "need ~${need[$dev]} GB free on the disk of ${at[$dev]} for this first Load (${what[$dev]}); found ${free[$dev]:-unknown} GB. Free some space, then Load the lane again: what came already is kept."
+      || die "need ~${need[$dev]} GiB free on the disk of ${at[$dev]} for this first Load (${what[$dev]}); found ${free[$dev]:-unknown} GiB. Free some space, then Load the lane again: what came already is kept."
   done
 }
 

@@ -15,7 +15,7 @@ def line(prefix):
 
 class ADfThatFailsSaysSo(unittest.TestCase):
     """A df that fails under pipefail ended the install at its own line, and the
-    "found unknown GB" message written for exactly that case never showed."""
+    "found unknown GiB" message written for exactly that case never showed."""
 
     def run_lines(self, *lines):
         d = pathlib.Path(tempfile.mkdtemp(prefix="df-fail-"))
@@ -30,12 +30,12 @@ class ADfThatFailsSaysSo(unittest.TestCase):
 
     def test_the_hf_cache_disk(self):
         out = self.run_lines(line("FREE_DISK_GB="), line('[ -n "$FREE_DISK_GB" ]'))
-        self.assertIn("DIE: Need ~45 GB free", out)
-        self.assertIn("found unknown GB", out)
+        self.assertIn("DIE: Need ~45 GiB free", out)
+        self.assertIn("found unknown GiB", out)
 
     def test_the_docker_disk(self):
         out = self.run_lines(line("DOCKER_FREE_GB="), line('[ "${DOCKER_FREE_GB:-0}"'))
-        self.assertIn("DIE: Need ~40 GB free on", out)
+        self.assertIn("DIE: Need ~40 GiB free on", out)
 
 
 class TheDownloadHintNamesTheDraftPin(unittest.TestCase):
@@ -242,7 +242,7 @@ class OneDiskForBoth(unittest.TestCase):
         return r.stdout
 
     def test_the_sum_is_asked_on_one_disk(self):
-        self.assertIn("DIE: Need ~85 GB free on the disk that holds both", self.run_block(True, 60))
+        self.assertIn("DIE: Need ~85 GiB free on the disk that holds both", self.run_block(True, 60))
         self.assertIn("FITS", self.run_block(True, 90))
 
     def test_two_disks_are_left_to_their_own_checks(self):

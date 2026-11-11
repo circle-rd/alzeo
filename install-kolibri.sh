@@ -81,7 +81,7 @@ docker_session bash "$HERE/${BASH_SOURCE[0]##*/}" "$@"
 # service, the preflight and the room, the fetch, the proof
 # shellcheck source=vllm-lane.sh
 . "$HERE/vllm-lane.sh"
-VLANE=kolibri; VLANE_SHORT=Kolibri
+VLANE=kolibri; VLANE_SHORT="Kolibri-1"
 
 # The pins, at column 0 like install.sh's: the vLLM image Aleph Alpha's Dockerfile builds on
 # (v0.29.0, its arm64 manifest), the plugin's wheel, and the two checkpoints at the

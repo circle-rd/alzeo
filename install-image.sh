@@ -282,7 +282,7 @@ python3 -c 'import venv, ensurepip' 2>/dev/null || die "python3-venv is missing 
 # existing: lanes.sh's (the nearest folder of a path that exists)
 free_gb(){ { df -BG --output=avail "$(existing "$1")" 2>/dev/null || true; } | tail -1 | tr -dc '0-9'; }
 HAVE_B="$({ du -s --apparent-size -B1 "$HF_CACHE/hub/models--${MODEL//\//--}/blobs" 2>/dev/null || true; } | cut -f1)"
-# what is left, in whole GB (a complete 30.86 GiB checkpoint is 0 left, not 1)
+# what is left, in whole GiB (a complete 30.86 GiB checkpoint is 0 left, not 1)
 WEIGHTS_NEED=$(( (WEIGHTS_GB * 1073741824 - ${HAVE_B:-0}) / 1073741824 )); [ "$WEIGHTS_NEED" -ge 0 ] || WEIGHTS_NEED=0
 # --prepare builds the runtime only: the checkpoint's room is the switch's to check, as it
 # fetches it. --units-only downloads nothing.
@@ -293,12 +293,12 @@ if [ "$MODE" = units ]; then
 elif [ "$(stat -L -c %d "$(existing "$HF_CACHE")")" = "$(stat -L -c %d "$(existing "$LANE_DIR")")" ]; then
   WANT=$((WEIGHTS_NEED + RUNTIME_GB))
   [ "${FREE_W:-0}" -ge "$WANT" ] \
-    || die "${FREE_W:-?} GB free on the disk of $HF_CACHE and $LANE_DIR, this needs about $WANT GB ($WEIGHTS_NEED for the checkpoint, $RUNTIME_GB for the runtime and its build). Free some space, or point HF_CACHE or IMAGE_LANE_DIR at a bigger disk."
+    || die "${FREE_W:-?} GiB free on the disk of $HF_CACHE and $LANE_DIR, this needs about $WANT GiB ($WEIGHTS_NEED for the checkpoint, $RUNTIME_GB for the runtime and its build). Free some space, or point HF_CACHE or IMAGE_LANE_DIR at a bigger disk."
 else
   [ "${FREE_W:-0}" -ge "$WEIGHTS_NEED" ] \
-    || die "${FREE_W:-?} GB free under HF_CACHE=$HF_CACHE, the checkpoint needs about $WEIGHTS_NEED GB more. Free some space, or point HF_CACHE at a bigger disk."
+    || die "${FREE_W:-?} GiB free under HF_CACHE=$HF_CACHE, the checkpoint needs about $WEIGHTS_NEED GiB more. Free some space, or point HF_CACHE at a bigger disk."
   [ "${FREE_R:-0}" -ge "$RUNTIME_GB" ] \
-    || die "${FREE_R:-?} GB free under $LANE_DIR, the runtime and its build need about $RUNTIME_GB GB. Free some space, or point IMAGE_LANE_DIR at a bigger disk."
+    || die "${FREE_R:-?} GiB free under $LANE_DIR, the runtime and its build need about $RUNTIME_GB GiB. Free some space, or point IMAGE_LANE_DIR at a bigger disk."
 fi
 if [ "$MODE" = units ]; then
   echo "OK: $(uname -m), key present; the runtime and the checkpoint come with the lane's first Load"
@@ -309,7 +309,7 @@ if [ "$MODE" = units ]; then
   echo "  a terminal : ./install-image.sh --prepare, then ./switch-model.sh image and the commands it prints"
   exit 0
 fi
-echo "OK: $(uname -m), key present, checkpoint $([ "$MODE" = prepare ] && echo "left to the Load's switch" || { [ "$WEIGHTS_NEED" -eq 0 ] && echo 'already cached'; } || echo "$WEIGHTS_NEED GB to download") into $HF_CACHE"
+echo "OK: $(uname -m), key present, checkpoint $([ "$MODE" = prepare ] && echo "left to the Load's switch" || { [ "$WEIGHTS_NEED" -eq 0 ] && echo 'already cached'; } || echo "$WEIGHTS_NEED GiB to download") into $HF_CACHE"
 
 step "2/6 Runtime ($LANE_DIR)"
 mkdir -p "$LANE_DIR"

@@ -1,5 +1,57 @@
 # Changelog
 
+## v1.46.3 (2026-11-11): a room check says GiB where it counts in GiB, and each vLLM lane's installer names its lane by its official name
+
+**A room check counted in GiB and said GB.** Every room check of the installers, of a lane's first Load and of the
+switch holds what `df -BG` prints, which is GiB, against a need counted in GiB, and its refusal said both in "GB":
+"Need ~45 GB free for the checkpoints and caches [...] found 44 GB" on a disk that has 47.2 GB free, where the README
+gives the same check as 49 GB. v1.46.1 gave each size one figure in its unit and left these messages, which its review
+listed. They say GiB now: the five refusals of `install.sh` (the checkpoints and caches, the Docker image, the two on
+one disk, the flash lane's PLE table alone and beside the image), the three of `install-image.sh`, the three of
+`vllm-lane.sh`, the ones of `install-video.sh` and `install-speech.sh`, a first Load's two (`lanes.sh`,
+`prepare-lane.sh`), and the three refusals and the "download failed" line of `switch-model.sh`. So do the parts those
+refusals name, "the 31 GiB Docker image" of `install.sh` and the video checkpoint's share in the switch's, and the line
+of `install-image.sh` and of `install-video.sh` that says what is left of the checkpoint to download, which they count
+in whole GiB. The comments that quoted or described these figures follow them. `ckpt-fetch.py`, which
+compares in bytes the free space it is handed in GiB and a need in GB of 10^9 bytes, says each side in its own unit:
+"10 GiB free in the cache, and org/model needs about 34 GB more". `ple-table.py` divides bytes by 10^9 and keeps its
+GB. No check asks for more or for less than it did: the words change, the numbers do not.
+
+**The vLLM lanes are named by their official names.** The installers of Kolibri-1, Nemotron 3.5 Bolt and Nemotron 3.5
+Super VL named their lane "Kolibri", "Nemotron" and "Super VL" in the sentences they share (`VLANE_SHORT` in
+`vllm-lane.sh`: a lane that starts at boot and whose new unit mounts what is not there yet, a lane that runs older
+files than the ones installed, and the line of `lanes.sh` that gives the boot back to the lane that had it). They name
+it as every other line of a run does. The first step of three installers said "Preflight (Bolt:", "(Super VL:" and
+"(FP4-Local:", `check-pins.sh` headed three lanes' pins "Kolibri lane", "Nemotron lane" and "Nemotron Super lane", and
+three refusals of `switch-model.sh` said "the Kolibri checkpoint" and "the Kolibri unit": the official names there too.
+
+**Three figures and two sentences.** `vllm-lane.sh` said "79 GB to download" of what is left of a lane's pin, which is
+rounded up: "about 79 GB to download". The copies of the Qwen3.8 Flash-Next FP4-Local lane's n-gram table are 32.31 GB,
+which the README's list of sizes, all rounded up, gave as 32 and the installer's help added as 962 GB for the whole box
+with the cache on another disk: 33 and 963, as the lane's own pin says. `docs/pi.md` told a pi user who has a
+`models.json` to merge "the `qwen38` and `flashnext` providers" of a file that carries one provider per installed lane,
+seven today. `pi-gen.py`'s header said Kolibri alone is sent its effort, where its table sends theirs to Kolibri-1, the
+two Nemotron lanes and Ornith 1.5 122B.
+
+**Left as it is, and why.** "about 34 GB" for the image checkpoints (33.13 and 32.49), "about 26 GB" and "about 77 GB"
+in the cockpit's notes for Nemotron 3.5 Bolt and Super VL (25.08 and 76.38) are the lanes' pins, rounded up, said with
+"about". The Qwen3.8 Flash-Next FP4-Local checkpoint (102.26) stays "102 GB", and its table's seven files (32.31) "32
+GB", where the docs and the cockpit say their size: a size is said to the nearest GB, and a sum or a room rounds up
+(103 and 33 in the lane's pin). The image lane's "46 GB (34 checkpoint, 12 runtime and its build)"
+is the sum of two figures rounded up (33.13 and 11.81), and the help, the README, the lane's page and two tests say
+it the same way. The two comments "31 GB of weights" in the image lane's unit template count in GiB: a template's
+comment is written into the unit, and changing them would rewrite that unit on every box for two words.
+
+**Tests.** `tests/test_room_unit_and_lane_names.py`, new: no script says "GB" of a figure `df -BG` gave, of a need
+held against one, of what is left of a checkpoint counted in GiB or of the Docker image in its label (the rule is shown
+to read the old wording and to pass the new: it finds 24 lines in v1.46.2 and none now), the scripts still have their
+room messages, each vLLM lane's installer names its lane by the title `lane_registry.py` gives it, as do the first
+step of four of them and `check-pins.sh`. Nine test files that quoted the messages quote them in GiB, and one of them
+the "about" of a download.
+
+**What an update does.** Scripts, documentation and tests only: no unit template, no file of the proxy and none of the
+cockpit changes. The cockpit restarts, as at every release: it reads the release's number in CHANGELOG.md at its start.
+
 ## v1.46.2 (2026-11-10): the CI of a push takes a little over nine minutes where it took thirty, and the pass it no longer makes runs every night and before a release
 
 **Thirty minutes, and where they went.** A full run of the CI took 30 minutes on the reference box and 32 on GitHub,

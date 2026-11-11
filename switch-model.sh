@@ -165,13 +165,13 @@ if [ "$CHOICE" = "kolibri" ] || [ "$CHOICE" = "kolibri-nvfp4" ]; then
     -v "$REPO_DIR/ckpt-fetch.py:/opt/qwen38/ckpt-fetch.py:ro" \
     -v "$KOL_HF":/hf "$KOL_IMAGE" /opt/qwen38/ckpt-fetch.py "$KOL_MODEL" "$KOL_REV" --offline-first \
     --need-gb "$KOL_NEED_GB" --free-gb "$(dl_free_gb "$KOL_HF")" \
-    || die "the Kolibri checkpoint could not be verified or fetched (re-run to resume; set HF_TOKEN if it stalls)"
+    || die "the Kolibri-1 checkpoint could not be verified or fetched (re-run to resume; set HF_TOKEN if it stalls)"
   fetched "$KOL_MODEL @ ${KOL_REV:0:12}"
   # The unit names one checkpoint, its revision and its memory share, on one line each; a
   # switch rewrites those and nothing else.
   KOL_CUR="$(grep -m1 -oE -- "[^ ]+ --revision [0-9a-f]{40}" "$KOLIBRI_UNIT" || true)"
   KOL_CUR_GMU="$(grep -m1 -oE -- "--gpu-memory-utilization [0-9.]+" "$KOLIBRI_UNIT" || true)"
-  [ -n "$KOL_CUR" ] && [ -n "$KOL_CUR_GMU" ] || die "the Kolibri unit names no checkpoint or memory share where this expects it (hand-edited unit?): re-run ./install-kolibri.sh --no-smoke"
+  [ -n "$KOL_CUR" ] && [ -n "$KOL_CUR_GMU" ] || die "the Kolibri-1 unit names no checkpoint or memory share where this expects it (hand-edited unit?): re-run ./install-kolibri.sh --no-smoke"
   KOL_WANT="$KOL_MODEL --revision $KOL_REV"; KOL_WANT_GMU="--gpu-memory-utilization $KOL_GMU"
   KOL_REWRITTEN=""
   if [ "$KOL_CUR" != "$KOL_WANT" ] || [ "$KOL_CUR_GMU" != "$KOL_WANT_GMU" ]; then
@@ -179,7 +179,7 @@ if [ "$CHOICE" = "kolibri" ] || [ "$CHOICE" = "kolibri-nvfp4" ]; then
     KOL_TEXT="${KOL_TEXT//"$KOL_CUR"/"$KOL_WANT"}"
     printf '%s\n' "${KOL_TEXT//"$KOL_CUR_GMU"/"$KOL_WANT_GMU"}" > "$KOL_STAGE"
     if ! grep -q -- "$KOL_WANT " "$KOL_STAGE" || ! grep -q -- "$KOL_WANT_GMU " "$KOL_STAGE"; then
-      rm -f "$KOL_STAGE"; die "the Kolibri unit's rewrite to $KOL_MODEL failed (hand-edited unit?): re-run ./install-kolibri.sh --no-smoke"
+      rm -f "$KOL_STAGE"; die "the Kolibri-1 unit's rewrite to $KOL_MODEL failed (hand-edited unit?): re-run ./install-kolibri.sh --no-smoke"
     fi
     diff "$KOL_STAGE" "$KOLIBRI_UNIT" || true   # show exactly what changes
     sudo install -m 644 "$KOL_STAGE" "$KOLIBRI_UNIT"
@@ -805,9 +805,10 @@ if [ "$CHOICE" = "image" ] || [ "$CHOICE" = "image-turbo" ]; then
   # The same two lessons the text lanes learned: Xet stalls on this box, and an
   # unauthenticated pull gets throttled. ckpt-fetch.py, the one fetch of every lane: the
   # cache first, so a complete one answers without touching the network at all; both
-  # checkpoints of this lane are about 33 GB, refused before the first byte when the room
-  # is not there. A revision is fetched as such and refs/main pointed at it, because the
-  # unit runs offline by name, which resolves refs/main: fetched at main, a push upstream
+  # checkpoints of this lane are about 33 GB (33.13 and 32.49: --need-gb 34 is the larger, rounded
+  # up), refused before the first byte when the room is not there. A revision is fetched as such
+  # and refs/main pointed at it, because the unit runs offline by name, which resolves refs/main:
+  # fetched at main, a push upstream
   # would have changed what the lane serves (the same lesson as install-image.sh, 2026-09-24).
   HF_HOME="${IMG_HF:-$HF_CACHE}" HF_HUB_DOWNLOAD_TIMEOUT=30 HF_HUB_DISABLE_XET=1 \
     HF_HUB_DISABLE_PROGRESS_BARS="$DL_NO_BARS" \
@@ -940,7 +941,7 @@ if [ "$CHOICE" = "video" ]; then
   # runtime, before the checkpoint, and this counted the checkpoint alone, so a disk with room
   # for each part passed both and filled up at the first start (found in review, 2026-10-15).
   dev_of(){ stat -L -c %d "$(existing "$1")"; }
-  VID_DEV="$(dev_of "${VID_HF:-$HF_CACHE}")"; VID_WHAT="about $VID_WANT_GB GB for the checkpoint"
+  VID_DEV="$(dev_of "${VID_HF:-$HF_CACHE}")"; VID_WHAT="about $VID_WANT_GB GiB for the checkpoint"
   declare -A C_NEED=() C_AT=() C_DIRS=() C_WHAT_ON=()
   while IFS='|' read -r C_DIR C_GB C_WHAT; do
     [ "$C_GB" -gt 0 ] || continue
@@ -957,11 +958,11 @@ if [ "$CHOICE" = "video" ]; then
   for C_DEV in "${!C_NEED[@]}"; do
     C_FREE="$(dl_free_gb "${C_AT[$C_DEV]}")"
     [ "${C_FREE:-0}" -ge "${C_NEED[$C_DEV]}" ] \
-      || die "not enough room for the video lane's first start under ${C_DIRS[$C_DEV]}: ${C_FREE:-?} GB free, about ${C_NEED[$C_DEV]} GB needed (${C_WHAT_ON[$C_DEV]}; nothing was changed). Free some space first."
+      || die "not enough room for the video lane's first start under ${C_DIRS[$C_DEV]}: ${C_FREE:-?} GiB free, about ${C_NEED[$C_DEV]} GiB needed (${C_WHAT_ON[$C_DEV]}; nothing was changed). Free some space first."
   done
   VID_FREE_GB="$(dl_free_gb "${VID_HF:-$HF_CACHE}")"
   [ "${VID_FREE_GB:-0}" -ge "$VID_WANT_GB" ] \
-    || die "not enough room for $VID_MODEL under HF_HOME=${VID_HF:-$HF_CACHE}: ${VID_FREE_GB:-?} GB free, about $VID_WANT_GB GB needed ($VID_WHAT; nothing was changed). Free some space first, or point HF_HOME at a bigger disk."
+    || die "not enough room for $VID_MODEL under HF_HOME=${VID_HF:-$HF_CACHE}: ${VID_FREE_GB:-?} GiB free, about $VID_WANT_GB GiB needed ($VID_WHAT; nothing was changed). Free some space first, or point HF_HOME at a bigger disk."
   # ckpt-fetch.py, the one fetch of every lane: the cache first (a full sha resolves straight
   # from snapshots/, refs or no refs), then the rest with resumed attempts. refs/main is what
   # the offline unit resolves, and a download by sha never writes it: --refs-main fill creates
@@ -1162,7 +1163,7 @@ printf '\n\033[1;36m── Verifying/downloading %s @ %s (resumable)\033[0m\n' "
 DL_NEED_GB="$(ckpt_room_gb "$TARGET_LANE" "$HF_CACHE" "$TARGET_REPO" "$TARGET_REV")"   # lanes.sh, the first Load's too
 DL_FREE_GB="$(dl_free_gb)"
 [ "${DL_FREE_GB:-0}" -ge "$DL_NEED_GB" ] \
-  || die "not enough room for $TARGET_REPO under HF_CACHE=$HF_CACHE: ${DL_FREE_GB:-?} GB free, about $DL_NEED_GB GB needed (nothing was changed). Free some space first."
+  || die "not enough room for $TARGET_REPO under HF_CACHE=$HF_CACHE: ${DL_FREE_GB:-?} GiB free, about $DL_NEED_GB GiB needed (nothing was changed). Free some space first."
 DL_TOKEN_ARGS=()
 # by name: docker takes the value from its own environment, so the token is not in the
 # docker client's argv, which any local user can read in /proc (found in review, 2026-09-24)
@@ -1194,7 +1195,7 @@ docker run --rm --init --network host --user "$(id -u):$(id -g)" \
   -v "$REPO_DIR/ckpt-fetch.py:/opt/qwen38/ckpt-fetch.py:ro" \
   -v "$HF_CACHE":/hf \
   "$DL_IMAGE" /opt/qwen38/ckpt-fetch.py "$TARGET_REPO" "$TARGET_REV" --offline-first --refs-main fill \
-  || die "download failed ($(dl_free_gb) GB left under $HF_CACHE; if that is near 0 the disk filled up, otherwise re-run to resume: HuggingFace throttles unauthenticated downloads, set HF_TOKEN=<your token> if it stalls)"
+  || die "download failed ($(dl_free_gb) GiB left under $HF_CACHE; if that is near 0 the disk filled up, otherwise re-run to resume: HuggingFace throttles unauthenticated downloads, set HF_TOKEN=<your token> if it stalls)"
 fetched "$TARGET_REPO @ ${TARGET_REV:0:12}"
 
 # 2) 1M YaRN patch on the target's cached config.json (27B pair only, and only

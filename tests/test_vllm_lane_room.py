@@ -58,8 +58,8 @@ class AVllmLaneCountsItsRoomInOneUnit(unittest.TestCase):
         out = run(79, 32, 106)
         self.assertIn("ROOM-OK", out, out)
         out = run(79, 32, 105)
-        self.assertIn("DIE: 105 GB free on the disk of", out)
-        self.assertIn("this needs about 106 GB (74 for the checkpoint, 32 for the image)", out)
+        self.assertIn("DIE: 105 GiB free on the disk of", out)
+        self.assertIn("this needs about 106 GiB (74 for the checkpoint, 32 for the image)", out)
 
     def test_what_the_cache_holds_comes_off_by_bytes(self):
         # 40 GB of the 79 already there: 39 GB, 36.3 GiB, so 37 left to fetch
@@ -70,8 +70,8 @@ class AVllmLaneCountsItsRoomInOneUnit(unittest.TestCase):
 
     def test_the_line_that_says_it_fits_gives_the_download_in_gb(self):
         # the check counts 74 GiB, and the line still says what is downloaded: 79 GB, 39 of 40 cached
-        self.assertIn("checkpoint 79 GB to download into", run(79, 32, 106))
-        self.assertIn("checkpoint 39 GB to download into", run(79, 32, 106, cached_bytes=40_000_000_000))
+        self.assertIn("checkpoint about 79 GB to download into", run(79, 32, 106))
+        self.assertIn("checkpoint about 39 GB to download into", run(79, 32, 106, cached_bytes=40_000_000_000))
         self.assertIn("checkpoint already cached into", run(79, 32, 106, cached_bytes=79_000_000_000))
 
     def test_an_image_already_here_needs_no_room(self):

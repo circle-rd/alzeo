@@ -74,7 +74,7 @@ docker_session bash "$HERE/${BASH_SOURCE[0]##*/}" "$@"
 # service, the preflight and the room, the fetch, the proof
 # shellcheck source=vllm-lane.sh
 . "$HERE/vllm-lane.sh"
-VLANE=nemotron-super; VLANE_SHORT="Super VL"
+VLANE=nemotron-super; VLANE_SHORT="Nemotron 3.5 Super VL"
 
 # The pins, at column 0 like install.sh's: the model at its revision of 2026-10-15 21:36 UTC, 8a115b9d,
 # which holds every file of the revision the reference box measured (82d93699, 2026-10-15 and 16) as
@@ -149,7 +149,7 @@ install_service(){
   echo "  a terminal : ./switch-model.sh nemotron-super, then the commands it prints"
 }
 
-step "1/5 Preflight (Super VL: $MODEL @ ${MODEL_REV:0:12}, drafter $DRAFT @ ${DRAFT_REV:0:12})"
+step "1/5 Preflight (Nemotron 3.5 Super VL: $MODEL @ ${MODEL_REV:0:12}, drafter $DRAFT @ ${DRAFT_REV:0:12})"
 vlane_preflight engine-preflight.sh engine-secrets.sh vllm_engine_auth.py ckpt-fetch.py install-nemotron.sh
 vlane_room "$NEMOTRON_BASE_IMAGE" "$MODEL" "$DRAFT"
 if [ "$MODE" = units ]; then

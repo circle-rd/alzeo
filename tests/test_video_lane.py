@@ -347,7 +347,7 @@ class TheInstaller(unittest.TestCase):
         135 + 11 + 12 + 5 there."""
         out = self.room(free_gb=160)
         self.assertIn("DIE:", out)
-        self.assertIn("needs about 163 GB there", out)
+        self.assertIn("needs about 163 GiB there", out)
         self.assertIn("12 for the runtime's transformed weights", out)
         self.assertIn("5 for the decoder's converted weights", out)
         self.assertIn("ROOM-OK", self.room(free_gb=163))

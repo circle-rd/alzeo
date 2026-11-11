@@ -118,7 +118,7 @@ def room(repo, need_gb, free_gb):
     have = sum(e.stat().st_size for e in os.scandir(blobs) if e.is_file()) if os.path.isdir(blobs) else 0
     rest = max(need_gb * 10**9 - have, 10**9)
     if free_gb * 2**30 < rest:
-        raise SystemExit(f"{free_gb} GB free in the cache, and {repo} needs about {-(-rest // 10**9)} GB more: "
+        raise SystemExit(f"{free_gb} GiB free in the cache, and {repo} needs about {-(-rest // 10**9)} GB more: "
                          "free some space first")
 
 

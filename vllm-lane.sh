@@ -5,7 +5,8 @@
 #
 #   VLANE        the lane (kolibri, nemotron, nemotron-super, flash-local, ornith-122b): its opencode provider, the
 #                record of the text lane it took the boot from (lanes.sh), its --no-<lane>, its cache folder
-#   VLANE_SHORT  the lane in a sentence (Kolibri, Nemotron, Super VL, Qwen3.8 Flash-Next FP4-Local, Ornith 1.5 122B)
+#   VLANE_SHORT  the lane in a sentence, by its official name (Kolibri-1, Nemotron 3.5 Bolt, Nemotron 3.5 Super VL,
+#                Qwen3.8 Flash-Next FP4-Local, Ornith 1.5 122B)
 #   UNIT, INSTALLED, CONTAINER, CONFIG_DIR, HERE; and, for each part below, what it says it reads.
 #
 # Until v1.35 each installer carried its own copy of all of it, one renamed from the other: a fix
@@ -273,14 +274,14 @@ vlane_room(){  # $1 the base image, $2... the checkpoints' repos
   hf_dev="$(existing "$HF_CACHE")"; docker_dev="$(existing "$DOCKER_ROOT")"
   if [ "$(stat -L -c %d "$hf_dev")" = "$(stat -L -c %d "$docker_dev")" ]; then
     [ "${free_w:-0}" -ge "$((WEIGHTS_NEED + IMAGE_NEED))" ] \
-      || die "${free_w:-?} GB free on the disk of $HF_CACHE and $DOCKER_ROOT, this needs about $((WEIGHTS_NEED + IMAGE_NEED)) GB ($WEIGHTS_NEED for the $what, $IMAGE_NEED for the image). Free some space, or ./install.sh --no-$VLANE to leave this lane out."
+      || die "${free_w:-?} GiB free on the disk of $HF_CACHE and $DOCKER_ROOT, this needs about $((WEIGHTS_NEED + IMAGE_NEED)) GiB ($WEIGHTS_NEED for the $what, $IMAGE_NEED for the image). Free some space, or ./install.sh --no-$VLANE to leave this lane out."
   else
     [ "${free_w:-0}" -ge "$WEIGHTS_NEED" ] \
-      || die "${free_w:-?} GB free under HF_CACHE=$HF_CACHE, the $what need$([ "$#" -eq 1 ] && echo s) about $WEIGHTS_NEED GB more. Free some space, or ./install.sh --no-$VLANE."
+      || die "${free_w:-?} GiB free under HF_CACHE=$HF_CACHE, the $what need$([ "$#" -eq 1 ] && echo s) about $WEIGHTS_NEED GiB more. Free some space, or ./install.sh --no-$VLANE."
     [ "${free_d:-0}" -ge "$IMAGE_NEED" ] \
-      || die "${free_d:-?} GB free under $DOCKER_ROOT, the image needs about $IMAGE_NEED GB. Free some space, or ./install.sh --no-$VLANE."
+      || die "${free_d:-?} GiB free under $DOCKER_ROOT, the image needs about $IMAGE_NEED GiB. Free some space, or ./install.sh --no-$VLANE."
   fi
-  echo "OK: $(uname -m), key present, $what $([ "$MODE" = prepare ] && echo "left to the Load's switch" || { [ "$WEIGHTS_NEED" -eq 0 ] && echo 'already cached'; } || echo "$dl_gb GB to download") into $HF_CACHE, engine on $ENGINE_BIND:$PORT"
+  echo "OK: $(uname -m), key present, $what $([ "$MODE" = prepare ] && echo "left to the Load's switch" || { [ "$WEIGHTS_NEED" -eq 0 ] && echo 'already cached'; } || echo "about $dl_gb GB to download") into $HF_CACHE, engine on $ENGINE_BIND:$PORT"
 }
 
 # ── The checkpoints ──────────────────────────────────────────────────────────────────────────

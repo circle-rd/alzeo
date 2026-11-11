@@ -237,7 +237,7 @@ class Room(unittest.TestCase):
     def test_no_room_stops_before_the_first_byte(self):
         rc, out, err, calls = Box(cached=False).run("--offline-first", "--need-gb", "34", "--free-gb", "10")
         self.assertNotEqual(rc, 0)
-        self.assertIn("10 GB free in the cache, and org/model needs about 34 GB more: free some space first", err)
+        self.assertIn("10 GiB free in the cache, and org/model needs about 34 GB more: free some space first", err)
         self.assertEqual([c["local"] for c in calls], [True], "nothing asked of the network")
 
     def test_what_the_cache_holds_comes_off_the_need(self):
@@ -256,7 +256,7 @@ class Room(unittest.TestCase):
         self.assertEqual(rc, 0, err)
         rc, out, err, calls = Box(cached=False, blobs_bytes=70 * 10**9).run(
             "--offline-first", "--need-gb", "79", "--free-gb", "8")
-        self.assertIn("8 GB free in the cache, and org/model needs about 9 GB more", err)
+        self.assertIn("8 GiB free in the cache, and org/model needs about 9 GB more", err)
 
     def test_a_free_space_df_could_not_say_checks_nothing(self):
         # dl_free_gb answers "" when df cannot: the copies before took that as no check

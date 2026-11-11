@@ -257,7 +257,7 @@ if [ "$PRIV" -eq 1 ]; then
 else
   docker rm -f qwen38-sglang-run 2>/dev/null || true      # ./run.sh's foreground engine, if one was left
 fi
-# The image lane's runtime is the user's, not root's: no sudo, and the 31 GB checkpoint
+# The image lane's runtime is the user's, not root's: no sudo, and the 31 GiB checkpoint
 # stays in the HF cache with every other checkpoint, which this script reports separately.
 # Only what install-image.sh put there (venv/ and sglang/): IMAGE_LANE_DIR can be a
 # directory shared with other work, and removing it whole took the rest with it (found in

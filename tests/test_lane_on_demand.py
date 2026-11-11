@@ -552,8 +552,8 @@ class TheFlashPreparation(unittest.TestCase):
                 got, out, calls = b.run("flash")
                 self.assertEqual(got, rc, out)
                 if rc:
-                    self.assertIn(f"need ~99 GB free on the disk of {b.t}/docker-root and {b.ple} for this first Load "
-                                  "(49 for its image; 50 for its PLE table, 47.7 GiB written at every boot); found 98 GB", out)
+                    self.assertIn(f"need ~99 GiB free on the disk of {b.t}/docker-root and {b.ple} for this first Load "
+                                  "(49 for its image; 50 for its PLE table, 47.7 GiB written at every boot); found 98 GiB", out)
                     self.assertEqual(heads(calls), ["docker image", "docker info"])
                 (ssd / "hf").rename(ssd / f"hf-{home_free}")
 
@@ -594,7 +594,7 @@ class TheFlashPreparation(unittest.TestCase):
         # the image, the checkpoint and its caches, the PLE table: summed on their one disk
         rc, out, calls = self.box(free_gb=20).run("flash")
         self.assertEqual(rc, 1, out)
-        self.assertIn("need ~279 GB free on the disk of ", out)
+        self.assertIn("need ~279 GiB free on the disk of ", out)
         self.assertIn("for this first Load (49 for its image; 180 for its checkpoint and its caches; "
                       "50 for its PLE table, 47.7 GiB written at every boot)", out)
         self.assertEqual(heads(calls), ["docker image", "docker info"])
@@ -604,7 +604,7 @@ class TheFlashPreparation(unittest.TestCase):
         # in review, 2026-10-15)
         rc, out, calls = self.box(image_here=True, free_gb=200).run("flash")
         self.assertEqual(rc, 1, out)
-        self.assertIn("need ~230 GB free on the disk of ", out)
+        self.assertIn("need ~230 GiB free on the disk of ", out)
         self.assertIn("50 for its PLE table", out)
         self.assertNotIn("for its image", out)                         # what is already here is not listed
         self.assertNotIn("switch-model.sh flash", heads(calls))      # nothing fetched
@@ -706,7 +706,7 @@ class TheTwentySevenBPreparation(unittest.TestCase):
         self.assertEqual(rc, 1, out)
         # the draft in the checkpoint's 45, as install.sh counts them: 5 more for it asked 98 where
         # install.sh asks 93 (found in review, 2026-10-15)
-        self.assertIn("need ~93 GB free on the disk of ", out)
+        self.assertIn("need ~93 GiB free on the disk of ", out)
         self.assertIn("for this first Load (48 for its image; 45 for its checkpoint, its DFlash2 draft and their caches)", out)
         self.assertEqual(heads(calls), ["docker image", "docker info"])
 

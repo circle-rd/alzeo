@@ -584,7 +584,7 @@ other text lane (the flash beside the 27B, its image, checkpoint and PLE table,
 Alpha's Kolibri-1, on vLLM, 102), the Nemotron lane (NVIDIA's Nemotron 3.5
 Bolt, on vLLM, 51), the Nemotron Super lane (NVIDIA's Nemotron 3.5 Super VL
 on vLLM, in the Nemotron lane's image: 77 beside it, else 102), the Flash
-FP4-Local lane (NVIDIA's FP4 build of the flash model, on vLLM, 121; 32 more
+FP4-Local lane (NVIDIA's FP4 build of the flash model, on vLLM, 121; 33 more
 when the HF cache is on another disk than the home directory's, for the copy
 of its n-gram table) and the Ornith 122B lane (Ornith AI's Ornith 1.5 122B,
 on vLLM, in the Qwen3.8 Flash-Next FP4-Local lane's image: 78 beside it, else 96). The lane that
@@ -644,7 +644,7 @@ without a terminal.
   --all-weights         install every lane whole now (the flash beside the 27B,
                         the image, video, Kolibri, both Nemotron, the Flash
                         FP4-Local and the Ornith lanes), runtime and weights, about
-                        930 GB of disk (962 with the cache on another disk), and prove
+                        930 GB of disk (963 with the cache on another disk), and prove
                         each new one
                         (without it, each is prepared at its first Load from
                         the cockpit; --with-<lane> does the same for that one
@@ -1688,7 +1688,7 @@ fi
 # people there while measuring here).
 mkdir -p "$HF_CACHE" 2>/dev/null || true
 # `|| true` inside: a df that fails (a path it cannot reach) under pipefail ended the
-# install at this line, and the "found unknown GB" below never said why (found in review,
+# install at this line, and the "found unknown GiB" below never said why (found in review,
 # 2026-09-24).
 FREE_DISK_GB=$({ df -BG --output=avail "$HF_CACHE" 2>/dev/null || true; } | tail -1 | tr -dc '0-9')
 # Fresh installs need ~45 GiB for the 27B stack (checkpoints + caches) and ~180 GiB for
@@ -1703,9 +1703,9 @@ FREE_DISK_GB=$({ df -BG --output=avail "$HF_CACHE" 2>/dev/null || true; } | tail
 # the 27B's image is 33.7 GB unpacked and 14.8 GB to download, 45.1 GiB at the peak; the flash
 # lane's 34.4 GB and 15.3 GB, 46.3 GiB. It asked for 40 and 35, which a pull on a disk with just
 # that free outgrew in either store (found in review, 2026-10-15).
-NEED_GB=45; DOCKER_NEED_GB=48; IMG_LABEL="31 GB Docker image"
+NEED_GB=45; DOCKER_NEED_GB=48; IMG_LABEL="31 GiB Docker image"
 if [ "$LANE" = "flash" ]; then
-  NEED_GB=180; DOCKER_NEED_GB=49; IMG_LABEL="32 GB Docker image"
+  NEED_GB=180; DOCKER_NEED_GB=49; IMG_LABEL="32 GiB Docker image"
 fi
 # What is left to download, not what a checkpoint weighs. huggingface_hub creates the
 # snapshot folder before the first byte of the first file (file_download.py, 1.31.0), so a
@@ -1732,13 +1732,13 @@ if [ "$LANE" = "flash" ] && [ "$UNITS_ONLY" -eq 0 ] && ! ls "$PLE_DIR"/ple_table
   else
     PLE_OWN_DEV="$(stat -L -c %d "$PLE_PARENT")"
     PLE_FREE_GB="$({ df -BG --output=avail "$PLE_PARENT" 2>/dev/null || true; } | tail -1 | tr -dc '0-9')"
-    [ -n "$PLE_FREE_GB" ] && [ "$PLE_FREE_GB" -ge 50 ] || die "Need ~50 GB free under PLE_DIR=$PLE_DIR for the flash lane's PLE table (47.7 GiB, written at every boot); found ${PLE_FREE_GB:-unknown} GB. Free some space or set PLE_DIR to another disk."
+    [ -n "$PLE_FREE_GB" ] && [ "$PLE_FREE_GB" -ge 50 ] || die "Need ~50 GiB free under PLE_DIR=$PLE_DIR for the flash lane's PLE table (47.7 GiB, written at every boot); found ${PLE_FREE_GB:-unknown} GiB. Free some space or set PLE_DIR to another disk."
   fi
 fi
 # A lane installed on demand takes no room now: its first Load checks the room for what it
 # fetches (prepare-lane.sh, then its switch).
 [ "$UNITS_ONLY" -eq 0 ] || NEED_GB=0
-[ -n "$FREE_DISK_GB" ] && [ "$FREE_DISK_GB" -ge "$NEED_GB" ] || die "Need ~${NEED_GB} GB free for the checkpoints and caches under $HF_CACHE; found ${FREE_DISK_GB:-unknown} GB. Free some space or set HF_CACHE to another disk."
+[ -n "$FREE_DISK_GB" ] && [ "$FREE_DISK_GB" -ge "$NEED_GB" ] || die "Need ~${NEED_GB} GiB free for the checkpoints and caches under $HF_CACHE; found ${FREE_DISK_GB:-unknown} GiB. Free some space or set HF_CACHE to another disk."
 # Docker from the Snap package, beside the NVIDIA Container Toolkit DGX OS installs on the host, fails to
 # start a container with the GPU (canonical/docker-snap#357). Step 3 found it only after the image was
 # pulled, and said the toolkit was missing (issue #58, 2026-10-21). Canonical's two ways round it remove
@@ -1763,21 +1763,21 @@ if docker image inspect "$PULL_TARGET" >/dev/null 2>&1; then
   DOCKER_NEED_GB=5; IMG_LABEL="container (its image is already here)"
 fi
 [ "$UNITS_ONLY" -eq 0 ] || DOCKER_NEED_GB=0
-[ "${DOCKER_FREE_GB:-0}" -ge "$DOCKER_NEED_GB" ] || die "Need ~${DOCKER_NEED_GB} GB free on $DOCKER_ROOT for the $IMG_LABEL; found ${DOCKER_FREE_GB:-?} GB (docker images live there, not under \$HOME)."
+[ "${DOCKER_FREE_GB:-0}" -ge "$DOCKER_NEED_GB" ] || die "Need ~${DOCKER_NEED_GB} GiB free on $DOCKER_ROOT for the $IMG_LABEL; found ${DOCKER_FREE_GB:-?} GiB (docker images live there, not under \$HOME)."
 # One disk for both, as on the reference box: the two needs add up there. Checked apart,
 # 45 GB free passed a first 27B install that needs 45 for the checkpoints and 40 for the
 # image on that same disk (found in review, 2026-09-24).
 HF_DEV="$(stat -L -c %d "$HF_CACHE" 2>/dev/null || true)"; DOCKER_DEV="$(stat -L -c %d "$DOCKER_ROOT" 2>/dev/null || true)"
 if [ -n "$HF_DEV" ] && [ "$HF_DEV" = "$DOCKER_DEV" ]; then
   BOTH_GB=$((NEED_GB + DOCKER_NEED_GB))
-  [ "${FREE_DISK_GB:-0}" -ge "$BOTH_GB" ] || die "Need ~${BOTH_GB} GB free on the disk that holds both $HF_CACHE and $DOCKER_ROOT (${NEED_GB} for the checkpoints and caches, ${DOCKER_NEED_GB} for the $IMG_LABEL); found ${FREE_DISK_GB:-unknown} GB. Free some space, or set HF_CACHE to another disk."
+  [ "${FREE_DISK_GB:-0}" -ge "$BOTH_GB" ] || die "Need ~${BOTH_GB} GiB free on the disk that holds both $HF_CACHE and $DOCKER_ROOT (${NEED_GB} for the checkpoints and caches, ${DOCKER_NEED_GB} for the $IMG_LABEL); found ${FREE_DISK_GB:-unknown} GiB. Free some space, or set HF_CACHE to another disk."
 fi
 # The PLE table and the image on one disk that is not the cache's (the cache on a disk of its
 # own): their needs add up there too. Checked apart, 60 GB free passed both (found in review,
 # 2026-10-15).
 if [ -n "$PLE_OWN_DEV" ] && [ "$PLE_OWN_DEV" = "$DOCKER_DEV" ]; then
   PLE_BOTH_GB=$((50 + DOCKER_NEED_GB))
-  [ "${DOCKER_FREE_GB:-0}" -ge "$PLE_BOTH_GB" ] || die "Need ~${PLE_BOTH_GB} GB free on the disk that holds both PLE_DIR=$PLE_DIR and $DOCKER_ROOT (50 for the flash lane's PLE table, ${DOCKER_NEED_GB} for the $IMG_LABEL); found ${DOCKER_FREE_GB:-unknown} GB. Free some space or set PLE_DIR to another disk."
+  [ "${DOCKER_FREE_GB:-0}" -ge "$PLE_BOTH_GB" ] || die "Need ~${PLE_BOTH_GB} GiB free on the disk that holds both PLE_DIR=$PLE_DIR and $DOCKER_ROOT (50 for the flash lane's PLE table, ${DOCKER_NEED_GB} for the $IMG_LABEL); found ${DOCKER_FREE_GB:-unknown} GiB. Free some space or set PLE_DIR to another disk."
 fi
 # A secondary run shares the port with the lane its parent serves, which holds it by
 # design: the parent checked both ports, and owns the proxy.

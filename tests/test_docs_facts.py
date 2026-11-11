@@ -137,7 +137,8 @@ class TheDiskNeedsAreThePreflights(unittest.TestCase):
         ple = re.findall(r"NEED_GB=\$\(\(NEED_GB \+ (\d+)\)\)", sh)
         self.assertEqual(len(ple), 1, "the PLE table's share moved: fix the pattern")
         f_hf += gb(ple[0])
-        labels = [gb(n) for n in re.findall(r'IMG_LABEL="(\d+) GB Docker image"', sh)]
+        labels = [gb(n) for n in re.findall(r'IMG_LABEL="(\d+) GiB Docker image"', sh)]
+        self.assertEqual(len(labels), 2, "the two images' labels moved: fix the pattern")
         readme = (REPO / "README.md").read_text()
         req = next(line for line in readme.splitlines() if line.startswith("Requirements:"))
         for n in (b_hf, b_docker, f_hf, f_docker, b_hf + b_docker, f_hf + f_docker):
