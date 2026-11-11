@@ -9,35 +9,19 @@ Usage: oc-flash-local.py <base_url> <api-key file> <ctx> <out> <name>
 prints {"provider": {"flash-local": ...}}, the shape oc-merge-limits.py --add-providers reads.
 """
 import json
-import os
 import sys
 
 # The checkpoint's chat template is the Qwen3.8 one the flash lane serves, byte for byte, patched
-# the same way (patch-template.py), so the same four levels, in the order install.sh lists the other
-# Qwen lanes' but with the level a request that names none gets first, as a picker lists it: lean, as
-# on the other Qwen lanes since v1.46.4, or xhigh, its model card's default, on a box whose installer
-# was run with FLASH_LOCAL_EFFORT=xhigh. Fixed at xhigh until v1.46.3, the lane's default then.
-LEVELS = ("lean", "low", "medium", "xhigh")
-# The choice the lane's installer keeps beside the box's key (install-flash-local.sh), read here and
-# not from the template: install.sh writes the opencode config before it runs the lane's installer,
-# which writes the template again, and that template takes the choice.
-EFFORT_FILE = "flash-local-effort"
-
-
-def default_effort(config_dir):
-    """The level the lane's template defaults to, read as its installer reads its kept choice."""
-    try:
-        with open(os.path.join(config_dir, EFFORT_FILE), encoding="utf-8", errors="replace") as f:
-            return "xhigh" if f.readline().rstrip("\n") == "xhigh" else "lean"
-    except OSError:
-        return "lean"
+# the same way (patch-template.py), so the same four levels. Their order is the one this lane's
+# provider has had since v1.37.0, xhigh first, its default then: the default is lean since v1.46.4
+# (install-flash-local.sh), and the order stays, as opencode sends no level when none is picked, so
+# it decides no request, and another one would have rewritten the generated config and restarted
+# the Agent view's server on every box at its update.
+LEVELS = ("xhigh", "lean", "low", "medium")
 
 
 def provider(base_url, key_file, ctx, out, name):
-    """The provider block. The model reads images, as the flash lane's does. Both callers hand the
-    box's key in the config directory, where the lane's installer keeps its level."""
-    first = default_effort(os.path.dirname(key_file))
-    levels = (first,) + tuple(lvl for lvl in LEVELS if lvl != first)
+    """The provider block. The model reads images, as the flash lane's does."""
     return {
         "npm": "@ai-sdk/openai-compatible",
         "name": "Qwen3.8-Flash-Next FP4-Local (DGX Spark)",
@@ -45,7 +29,7 @@ def provider(base_url, key_file, ctx, out, name):
         "models": {"qwen3.8-flash-next-fp4": {
             "name": name,
             "limit": {"context": ctx, "input": ctx, "output": out},
-            "variants": {lvl: {"chat_template_kwargs": {"reasoning_effort": lvl}} for lvl in levels},
+            "variants": {lvl: {"chat_template_kwargs": {"reasoning_effort": lvl}} for lvl in LEVELS},
             "attachment": True,
             "modalities": {"input": ["text", "image"], "output": ["text"]},
         }},

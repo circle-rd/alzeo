@@ -33,10 +33,8 @@ PINS = "\n".join(line for line in INSTALL.read_text().splitlines()
 def generate(lane, mode, unit_ctx=None, flash_unit=False, model="RadixArk/Qwen3.8-27B-NVFP4",
              pair=None, names=False, flash_running=None, kolibri_unit=False, kolibri_boot=False, doc=False,
              nemotron_unit=False, nemotron_boot=False, super_unit=False, super_boot=False,
-             flocal_unit=False, flocal_boot=False, ornith_unit=False, ornith_boot=False, flocal_effort=None):
+             flocal_unit=False, flocal_boot=False, ornith_unit=False, ornith_boot=False):
     t = pathlib.Path(tempfile.mkdtemp(prefix="oc-art-"))
-    if flocal_effort:       # what install-flash-local.sh keeps of FLASH_LOCAL_EFFORT, in the config directory
-        (t / "flash-local-effort").write_text(flocal_effort + "\n")
     kolibri = t / "qwen38-kolibri.service"
     if kolibri_unit:
         kolibri.write_text("ExecStart=... Aleph-Alpha/Kolibri-1 --revision 258cae8f ...\n")
@@ -266,9 +264,8 @@ class ABoxBootingNemotronSuper(unittest.TestCase):
 class ABoxBootingFlashLocal(unittest.TestCase):
     """The Qwen3.8 Flash-Next FP4-Local lane, its own provider (its own served model): serving at boot it is
     opencode's default, its compaction sized from its window; installed beside another lane it is
-    offered; with no unit, absent. Its levels are the flash lane's Qwen levels, its template's default
-    first: lean since v1.46.4, as on the other Qwen lanes, or xhigh where its installer keeps
-    FLASH_LOCAL_EFFORT=xhigh (xhigh always until then, Hasan's choice of 2026-10-19)."""
+    offered; with no unit, absent. Its levels are the flash lane's Qwen levels, xhigh first: its
+    template's default (Hasan's choice, 2026-10-19)."""
 
     def test_the_default_the_compaction_and_the_provider_are_flash_locals(self):
         d = generate("27b", "1m", unit_ctx=1010000, flash_unit=True, pair=("551000", "160000"),
@@ -282,22 +279,9 @@ class ABoxBootingFlashLocal(unittest.TestCase):
         self.assertEqual(m["name"], "Qwen3.8-Flash-Next FP4-Local NVIDIA + MTP (local, 262K)")
         self.assertTrue(m["attachment"])
         self.assertEqual(m["modalities"]["input"], ["text", "image"])
-        self.assertEqual(list(m["variants"]), ["lean", "low", "medium", "xhigh"])
+        self.assertEqual(list(m["variants"]), ["xhigh", "lean", "low", "medium"])
         self.assertEqual(m["variants"]["lean"], {"chat_template_kwargs": {"reasoning_effort": "lean"}})
         self.assertEqual(d["provider"]["flash-local"]["name"], "Qwen3.8-Flash-Next FP4-Local (DGX Spark)")
-
-    def test_its_levels_list_first_the_one_its_installer_keeps(self):
-        # read from the choice its installer keeps, not from its template: this block runs before install.sh runs the
-        # lane's installer, which writes the template again (v1.46.4)
-        d = generate("27b", "1m", unit_ctx=1010000, pair=("551000", "160000"), flocal_unit=True, flocal_effort="xhigh",
-                     doc=True)
-        m = d["provider"]["flash-local"]["models"]["qwen3.8-flash-next-fp4"]
-        self.assertEqual(list(m["variants"]), ["xhigh", "lean", "low", "medium"])
-        self.assertEqual(m["variants"]["xhigh"], {"chat_template_kwargs": {"reasoning_effort": "xhigh"}})
-        d = generate("27b", "1m", unit_ctx=1010000, pair=("551000", "160000"), flocal_unit=True, flocal_effort="medium",
-                     doc=True)
-        self.assertEqual(list(d["provider"]["flash-local"]["models"]["qwen3.8-flash-next-fp4"]["variants"])[0], "lean",
-                         "a choice the installer would not have kept is not one")
 
     def test_its_pair_is_the_flash_lanes_and_fits_its_window(self):
         ctx, out, *_ = subprocess.run([str(REPO / "oc-limits.sh"), "flash-local"], capture_output=True,

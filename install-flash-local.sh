@@ -235,13 +235,28 @@ fi
 TEMPLATE="$CONFIG_DIR/chat-template-flash-local.jinja"
 TEMPLATE_FIXES=(LEAN_DEFAULT=1)
 if [ "$FLASH_LOCAL_EFFORT" = xhigh ]; then TEMPLATE_FIXES=(LEAN_DEFAULT=0); fi
-lane_template(){ vlane_template "$TEMPLATE" "${TEMPLATE_FIXES[@]}"; }
+# Said where a template that defaulted to xhigh (v1.37.0 to v1.46.3) is about to default to lean: once, as the template
+# written after it says lean.
+effort_note(){
+  [ "$FLASH_LOCAL_EFFORT" = lean ] || return 0
+  grep -q "reasoning_effort|default('xhigh')" "$TEMPLATE" 2>/dev/null || return 0
+  echo "NOTE: Qwen3.8 Flash-Next FP4-Local answers at the lean effort by default from now on (xhigh until v1.46.3): FLASH_LOCAL_EFFORT=xhigh ./install-flash-local.sh --units-only, then a Load of the lane, keeps xhigh"
+}
+# The level given, kept with the template that took it: a run refused after its template was written (a window refused)
+# left a template at xhigh that the Load after wrote back at lean (found in review of v1.46.4).
+keep_effort(){
+  [ -n "$EFFORT_GIVEN" ] || return 0
+  if [ "$FLASH_LOCAL_EFFORT" = xhigh ]; then mkdir -p "$CONFIG_DIR" && echo xhigh > "$EFFORT_CHOICE"; else rm -f "$EFFORT_CHOICE"; fi
+}
+lane_template(){
+  effort_note
+  vlane_template "$TEMPLATE" "${TEMPLATE_FIXES[@]}"
+  keep_effort
+}
 # The choices given, kept for the runs after (a Load stages the unit with none of the user's environment): by the render
 # that takes them, after the template, and by --prepare, which renders nothing. A refused one is not kept (render_unit).
 keep_choice(){
-  if [ -n "$EFFORT_GIVEN" ]; then
-    if [ "$FLASH_LOCAL_EFFORT" = xhigh ]; then mkdir -p "$CONFIG_DIR" && echo xhigh > "$EFFORT_CHOICE"; else rm -f "$EFFORT_CHOICE"; fi
-  fi
+  keep_effort
   [ -n "$CONTEXT_GIVEN" ] || return 0
   if [ "$FLASH_LOCAL_CONTEXT" = 1m ]; then mkdir -p "$CONFIG_DIR" && echo 1m > "$CONTEXT_CHOICE"; else rm -f "$CONTEXT_CHOICE"; fi
 }
@@ -397,6 +412,7 @@ if [ "$MODE" = units ]; then
   echo "OK: $(uname -m), key present; the image and the checkpoint come with the lane's first Load"
   # a checkpoint already in the cache (an install.sh run after a Load) keeps the table's mounts
   lane_table mounts
+  effort_note
   vlane_template_if_cached "$TEMPLATE" "${TEMPLATE_FIXES[@]}"
   install_service
   step "Done: the Qwen3.8 Flash-Next FP4-Local lane is installed; its first Load prepares it"

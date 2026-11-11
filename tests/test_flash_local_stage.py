@@ -403,6 +403,21 @@ class TheMillionTokenWindow(unittest.TestCase):
         self.assertNotEqual(rc, 0, out)
         self.assertIn("native (262,144 tokens, the default) or 1m", out)
 
+    def test_a_level_given_with_a_window_refused_is_kept_with_its_template(self):
+        # the template is written before the window is checked: refused there, the run left a template at xhigh with no
+        # choice kept, and the Load after wrote it back at lean (found in review of v1.46.4)
+        moved = json.loads(json.dumps(self.CONFIG))
+        moved["text_config"]["rope_parameters"]["mrope_section"] = [16, 24, 24]
+        (self.snap / "config.json").write_text(json.dumps(moved))
+        cfg = self.box.home / ".config" / "qwen38"
+        rc, out = self.box.stage(FLASH_LOCAL_PLE_DIR="none", FLASH_LOCAL_CONTEXT="1m", FLASH_LOCAL_EFFORT="xhigh")
+        self.assertNotEqual(rc, 0, out)
+        self.assertIn("reasoning_effort|default('xhigh')", (cfg / "chat-template-flash-local.jinja").read_text())
+        self.assertEqual((cfg / "flash-local-effort").read_text(), "xhigh\n")
+        rc, out = self.box.stage(FLASH_LOCAL_PLE_DIR="none")          # the Load after: the level kept, not the window
+        self.assertEqual(rc, 0, out)
+        self.assertIn("reasoning_effort|default('xhigh')", (cfg / "chat-template-flash-local.jinja").read_text())
+
     def test_a_refused_choice_is_not_kept_and_the_refusal_says_how_to_go_back(self):
         # the choice was kept before its overrides were checked: one refused try left every Load after it refused,
         # and nothing said how to go back (code review of v1.45.2)
@@ -611,6 +626,12 @@ class TheEffortARequestThatNamesNoneGets(unittest.TestCase):
         rc, out = self.box.stage(FLASH_LOCAL_PLE_DIR="none")          # the update's run, or the lane's next Load
         self.assertEqual((rc, self.default()), (0, "lean"), out)
         self.assertFalse(self.choice.exists())
+        # said once, with the command that keeps xhigh: the run after finds a template at lean
+        self.assertIn("answers at the lean effort by default from now on (xhigh until v1.46.3): FLASH_LOCAL_EFFORT=xhigh "
+                      "./install-flash-local.sh --units-only", out)
+        rc, out = self.box.stage(FLASH_LOCAL_PLE_DIR="none")
+        self.assertEqual((rc, self.default()), (0, "lean"), out)
+        self.assertNotIn("from now on", out)
 
     def run_lines(self, mode, tail, **env):
         """The installer's own lines from the end of its --uninstall to the render (the template, the choices kept, the
@@ -715,11 +736,12 @@ class TheLoadSetsTheClientsForTheWindow(unittest.TestCase):
                     self.assertEqual(c["compaction"]["preserve_recent_tokens"], keep)
                     self.assertLess(keep, ctx - 20000, "a compaction keeps less than its threshold")
 
-    def test_the_provider_a_load_adds_lists_first_the_level_its_template_serves(self):
-        # lean since v1.46.4, or xhigh where the lane's installer keeps FLASH_LOCAL_EFFORT=xhigh beside the key: a picker
-        # lists first what a request that names no level gets
+    def test_the_provider_a_load_adds_keeps_the_order_of_its_levels(self):
+        # xhigh first, as since v1.37.0, whatever the lane's default (lean since v1.46.4, or the xhigh its installer
+        # keeps): opencode sends no level when none is picked, so the order decides no request, and another one would
+        # have rewritten the generated config and restarted the Agent view's server on every box at its update
         choice = self.cfg / "flash-local-effort"
-        for kept, first in ((None, "lean"), ("xhigh", "xhigh")):
+        for kept, first in ((None, "xhigh"), ("xhigh", "xhigh")):
             with self.subTest(kept=kept):
                 for c in self.configs:
                     d = json.loads(c.read_text())

@@ -272,9 +272,10 @@ cd ~/dgx-spark-qwen38 && FLASH_LOCAL_EFFORT=lean ./install-flash-local.sh --unit
 `--units-only` writes the choice, and the lane's chat template when its checkpoint is in the cache, and
 downloads and starts nothing: a lane that serves answers at its new default once it starts again, at its
 next Load. The choice is kept for the Loads and the updates after (a Load from the cockpit runs with none
-of your environment), in `~/.config/qwen38/flash-local-effort`. opencode's generated config lists the
-lane's default level first from the next `./install.sh`, and omp starts at its template's (`pi-gen.py`, which
-a Load runs again). `LEAN_DEFAULT`, the 27B and flash lanes' setting, does not reach this lane.
+of your environment), in `~/.config/qwen38/flash-local-effort`. opencode's generated config keeps the
+order of the lane's four levels (`xhigh` first), which decides no request: a turn that picks no level names
+none. omp, which names its level with every request, starts at the level chosen (`pi-gen.py`, which an update
+and a Load run again). `LEAN_DEFAULT`, the 27B and flash lanes' setting, does not reach this lane.
 
 ## Installing, loading, removing
 

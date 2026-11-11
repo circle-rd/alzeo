@@ -214,12 +214,12 @@ class PiGen(unittest.TestCase):
         self.assertEqual(level("lean"), "minimal")
         self.assertEqual(level(None), "minimal")          # no template there: the patched default
 
-    def test_the_flash_local_lane_starts_in_omp_at_the_level_its_template_serves(self):
-        # its template's default is lean since v1.46.4, as on the other Qwen lanes, or Qwen's xhigh where its installer
-        # keeps FLASH_LOCAL_EFFORT=xhigh, and its provider lists that level first. omp took "lean" in its tiers for the
-        # patched template's default and started an xhigh lane at minimal, sent as lean (found in review, 2026-10-20);
-        # the template decides where it is there, as install.sh writes the artifact before the lane's installer writes
-        # the template, and a Load keeps an entry already there (v1.46.4)
+    def test_the_flash_local_lane_starts_in_omp_at_the_level_its_installer_chose(self):
+        # the lane's default is lean since v1.46.4, as on the other Qwen lanes, or Qwen's xhigh where its installer
+        # keeps FLASH_LOCAL_EFFORT=xhigh beside these configs. omp took "lean" in its tiers for the patched template's
+        # default and started an xhigh lane at minimal, sent as lean (found in review, 2026-10-20); and it read the
+        # lane's template, which an update writes after these configs, so it stayed at the xhigh of v1.46.3's (found
+        # in review of v1.46.4): the installer's kept choice decides
         import importlib.util
         spec = importlib.util.spec_from_file_location("oc_flash_local", REPO / "oc-flash-local.py")
         ocf = importlib.util.module_from_spec(spec)
@@ -257,15 +257,19 @@ class PiGen(unittest.TestCase):
             self.assertEqual(omp_models["providers"]["qwen38"]["models"][0]["thinking"]["defaultLevel"], "minimal",
                              "the patched template's default, lean, for the lanes that keep it")
             return entry["thinking"]
-        lean_first, xhigh_first = ["minimal", "low", "medium", "xhigh"], ["xhigh", "minimal", "low", "medium"]
-        self.assertEqual(omp("lean", None), {"mode": "effort", "efforts": lean_first, "defaultLevel": "minimal"})
-        self.assertEqual(omp("xhigh", "xhigh"), {"mode": "effort", "efforts": xhigh_first, "defaultLevel": "xhigh"})
-        # an artifact that lists first the level the template served before: the template decides
-        self.assertEqual(omp("lean", None, listed=["xhigh", "lean", "low", "medium"])["defaultLevel"], "minimal")
-        self.assertEqual(omp("xhigh", None, listed=["lean", "low", "medium", "xhigh"])["defaultLevel"], "xhigh")
-        # installed and never loaded, no template yet: the level its provider lists first, its installer's choice
-        self.assertEqual(omp(None, None), {"mode": "effort", "efforts": lean_first, "defaultLevel": "minimal"})
-        self.assertEqual(omp(None, "xhigh"), {"mode": "effort", "efforts": xhigh_first, "defaultLevel": "xhigh"})
+        listed = ["xhigh", "minimal", "low", "medium"]         # the provider's order, xhigh first as since v1.37.0
+        self.assertEqual(omp("lean", None), {"mode": "effort", "efforts": listed, "defaultLevel": "minimal"})
+        self.assertEqual(omp("xhigh", "xhigh"), {"mode": "effort", "efforts": listed, "defaultLevel": "xhigh"})
+        # the installer's choice decides, not the template: an update runs this before the lane's installer writes the
+        # template again (still at the xhigh of v1.46.3), and a choice made is in the template at its next write only
+        self.assertEqual(omp("xhigh", None)["defaultLevel"], "minimal")
+        self.assertEqual(omp("lean", "xhigh")["defaultLevel"], "xhigh")
+        # nor the order of the artifact's levels
+        self.assertEqual(omp("lean", None, listed=["lean", "low", "medium", "xhigh"])["defaultLevel"], "minimal")
+        self.assertEqual(omp(None, "xhigh", listed=["lean", "low", "medium", "xhigh"])["defaultLevel"], "xhigh")
+        # installed and never loaded, no template yet
+        self.assertEqual(omp(None, None), {"mode": "effort", "efforts": listed, "defaultLevel": "minimal"})
+        self.assertEqual(omp(None, "xhigh"), {"mode": "effort", "efforts": listed, "defaultLevel": "xhigh"})
 
     def test_nemotron_is_sent_its_effort_starts_at_high_and_takes_images(self):
         # Bolt reasons at its full depth unasked, as Kolibri does at high; the proxy turns the effort

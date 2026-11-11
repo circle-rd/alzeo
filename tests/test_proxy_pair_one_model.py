@@ -654,10 +654,12 @@ class TwoBoxesServeOneModel(PairFixture, unittest.TestCase):
         self.assertEqual(Peer.seen, [])
         # what this box says of it: the alert read ("refused this box's certificate"), or, when that box had closed the
         # connection before this box's request went out, the end of the connection ("does not answer (EOF occurred in
-        # violation of protocol"): under TLS 1.3 the refusal comes after this box's side of the handshake, and which
+        # violation of protocol", or the reset or the broken pipe of a connection closed there): under TLS 1.3 the refusal comes after this box's side of the handshake, and which
         # of the two this box meets first is a race (the second on GitHub, main, 2026-11-11). Never a box that "had
         # the request": that one is bound there, and this request ran here
-        said = ("refused this box's certificate", "pair: spark2 does not answer (")
+        said = ("refused this box's certificate", "pair: spark2 does not answer (EOF occurred in violation of protocol",
+                "pair: spark2 does not answer ([Errno 104] Connection reset by peer",
+                "pair: spark2 does not answer ([Errno 32] Broken pipe")
         by = time.monotonic() + 8
         while not any(s in self.journal_of("spark1-tls") for s in said) and time.monotonic() < by:
             time.sleep(0.1)
