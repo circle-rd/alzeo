@@ -83,6 +83,29 @@ its level with every request, so its turns are at `lean` once that config is cop
 (docs/pi.md), on a lane that still serves its old template too. The proxy does not change; the cockpit restarts, as at
 every release, and its note on the lane says `lean`.
 
+**After the push.** The pull request ran GitHub's CI on its runners before `main` moved: 95 steps, none skipped, in 10
+min 54 s. Merged as a fast-forward, `main` passed its own run on 8f309a3 at the first try (95 steps, none skipped, 11
+min 7 s): the two tests of the pair steadied here held. On the reference box the final tree passed the CI in 564 s (53
+steps, none skipped) and, beside it, the pass in one process in 1,833 s. The reference box updated in 1 min 36 s by the
+README's command (get.alzeo.ai): the 27B and the proxy kept running, the cockpit restarted and serves v1.46.4, the
+Agent view's server was kept, and the installer said the change of level once, with the command that keeps `xhigh`.
+FP4-Local was not serving: its template was written with `lean`, its unit for its comment, and of the configuration
+nothing else changed but the record of what is installed. The client matrix then loaded each of the seven text lanes
+from the cockpit's path and ran the eight real clients on each (Claude Code, opencode, Hermes, pi, the OpenAI and
+Anthropic SDKs, fetch under Node and under Bun, LiteLLM): 56 cases of 56 passed, in 1 h 11 min, FP4-Local ready in 652
+s.
+
+The matrix shows that the clients work, not that the default moved, so the lane was loaded once more and asked. A
+one-word request that names no level cost the 109 prompt tokens of one that names `lean` (53 at `xhigh`). At that
+default the eight "about 800 characters" requests were all answered, and so were the eight long JSON answers, each one
+parsed, in a median of 93.8 s and 2,283 output tokens, 1,537 of them reasoning (59 s and 1,427 tokens for the morning's
+eight at `lean`, 1,007 s and 21,260 at the default of v1.46.3). The four "exactly 300 characters" requests spent their
+5,000 tokens reasoning, as at every level that reasons. An agent's conversation that grows (a system prompt of 40,000
+tokens, four turns, through the proxy) found its prefix in the cache from the second turn, with reasoning and without:
+22 to 127 tokens computed again, and a first token in 0.31 to 0.43 s against 17.7 s cold. The 27B came back in 223 s.
+On it the production checks passed, and so did the eight real clients. The cockpit showed no banner on any of its
+views, and no JavaScript error.
+
 ## v1.46.3 (2026-11-11): a room check says GiB where it counts in GiB, and each vLLM lane's installer names its lane by its official name
 
 **A room check counted in GiB and said GB.** Every room check of the installers, of a lane's first Load and of the
