@@ -1648,6 +1648,13 @@ class TwoBoxesServeOneModel(PairFixture, unittest.TestCase):
             with self.subTest(read=which):
                 m._FLOOR.clear(); m._FLOOR.update(floor)                        # no episode of the read before
                 reads, stops = [], []
+                # nor a generation of it still counted here: its handler leaves the pair's count a moment after its
+                # client read the last byte, and a request sent in that moment went to the other box, whose answer has
+                # no death in it (a run on GitHub, 2026-11-11: read=2 was answered "spark2-0 spark2-1 spark2-2")
+                free_by = time.monotonic() + 10
+                while m.busy_here() and time.monotonic() < free_by:
+                    time.sleep(0.02)
+                self.assertEqual(m.busy_here(), 0, "this box still counts a generation of the read before")
 
                 def a_stop_meanwhile():
                     reads.append(1)
