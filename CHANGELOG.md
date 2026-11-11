@@ -31,7 +31,19 @@ Until that job has run, or when it fails, the view says the cap is kept and not 
 with no `/usr/bin/nvidia-smi` offers no cap and says why, and a box whose sudoers file has no line for the call yet is
 told to run the installer again. `./uninstall.sh` lifts a cap the cockpit keeps before it removes the sudoers file, and
 the cockpit's "Remove with" line does the same. A cap set by hand outside the cockpit is not read back (nvidia-smi
-gives the clock and the GPU's maximum, not the cap) and is left alone.
+gives the clock and the GPU's maximum, not the cap) and is left alone. The clock the view shows is the one nvidia-smi
+reads, which is the one the GPU last ran at: idle, it does not move, so it shows a cap only once the GPU has worked
+under it, and the view says so.
+
+**On the real GPU.** The cockpit's own code set and lifted the cap on the reference box (2026-11-11, driver
+580.178.04), with no test double: `sudo -n /usr/bin/nvidia-smi -lgc 0,2400` answered "GPU clocks set to (gpuClkMin 0,
+gpuClkMax 2400)", the job for 2,000 MHz ended done, named its command and kept `{"cap": "2000"}`, a cockpit start set
+it again by a job of origin `boot`, 1,800 was refused (400, "invalid cap"), and None lifted the cap and removed the
+file. Then one generation of 700 tokens on the 27B lane, three times: with no cap the GPU ran at 2,541 MHz and 41.5 W
+for 32.6 s, under the cap of 2,000 MHz at 1,989 MHz and 21.8 W for 33.6 s, and with the cap lifted at 2,522 MHz and
+43.4 W for 32.5 s. One run each: a first look at the 27B, not a measurement of it. It is also what showed that an idle
+GPU keeps the reading of its last run (2,502 MHz read with the cap of 2,000 just set, 1,989 MHz still read once it was
+lifted): the row that said "Clock now" says "Clock last run at", with the reason under it.
 
 **Tests.** `dashboard/tests/test_cockpit_gpu_clock.py`: the four values and no other (a value with an option after it,
 a pair, spaces, five digits), the exact argv called, with a sudo and an nvidia-smi of the test's own on the PATH, the

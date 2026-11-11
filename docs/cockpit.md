@@ -205,7 +205,7 @@ default, or 2,400, 2,200 or 2,000 MHz. A cap is a ceiling with no floor
 (`nvidia-smi -lgc 0,<MHz>`), and None lifts it (`nvidia-smi -rgc`); each goes through its exact
 line of the sudoers allowlist, after the sheet that shows the command. nvidia-smi applies it at
 once, "regardless if an app is running" in its own words, so a generation in flight goes on at
-the new clock. The view shows the clock read now and, for each cap, what it cost and gave here:
+the new clock. The view shows the clock the GPU last ran at and, for each cap, what it cost and gave here:
 
 | Cap | Clock read | tok/s, 4 streams | GPU watts | Hottest zone | tok/s, 1 stream | Prefill, tok/s |
 |---|---|---|---|---|---|---|
@@ -220,6 +220,11 @@ work at each cap, 48 answers of 1,200 tokens.* At 2,400 MHz the lane answered as
 cap (105.87 tok/s, against 105.74 and 105.02 for the two runs without one) for 10.7 W less on the
 GPU and 2.4 °C less at its hottest zone; at 2,000 MHz it gave up 2.59 tok/s at 4 streams (2.4 %)
 for less than half the GPU's watts and 8.2 °C less.
+
+The clock nvidia-smi reads is the one the GPU last ran at, not the one it would run at. Idle, the reading does not
+move: on the reference box a cap of 2,000 MHz just set still read 2,502 MHz, read 1,989 MHz all through the next
+generation, and still read 1,989 MHz after the cap was lifted, until the GPU worked again (2,522 MHz). So a reading
+above the cap on an idle box is not a cap that failed.
 
 What this does not say yet: one lane was measured, a text one, and the image, video and 27B lanes
 are not measured. The watts are the GPU's alone, as nvidia-smi reads them, not the whole box's.

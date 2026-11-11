@@ -57,6 +57,21 @@ class NoneIsTheDefaultAndEachCapSaysWhatItCost(unittest.TestCase):
         self.assertIsNone(r["why"])
         self.assertEqual(r["disabled"], [False] * 4)
 
+    def test_the_clock_read_is_said_to_be_the_one_the_gpu_last_ran_at(self):
+        # Measured on the reference box, 2026-11-11, with the cap the cockpit's own code set: idle, nvidia-smi
+        # read 2,502 MHz under a cap of 2,000 just set, 1,989 MHz through the next generation, and 1,989 MHz
+        # still once the cap was lifted. A page that called the reading "now" showed a clock above its cap.
+        html = (REPO / "dashboard" / "static" / "index.html").read_text()
+        self.assertNotIn("Clock now", html)
+        self.assertIn('<dt>Clock last run at</dt><dd class="num" id="gc-mhz">', html)
+        said = re.search(r'<p class="faint" id="gc-read"[^>]*>([^<]+)</p>', html).group(1)
+        for words in ("the clock the GPU last ran at", "Idle, it does not move",
+                      "shows a cap only once the GPU has worked under it", "after the cap is lifted"):
+            self.assertIn(words, said)
+        doc = (REPO / "docs" / "cockpit.md").read_text()
+        self.assertIn("a reading\nabove the cap on an idle box is not a cap that failed".replace("\n", " "),
+                      " ".join(doc.split()))
+
     def test_each_cap_says_its_throughput_its_watts_and_its_degrees(self):
         r = page(self, "gpu(); report({titles: panel().titles, rows: [...$('gc-table').tBodies[0].rows].map(tr => [...tr.cells].map(c => c.textContent)), note: txt('gc-note')});")
         self.assertEqual(r["titles"], [

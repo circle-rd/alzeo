@@ -593,7 +593,9 @@ def gpu_clock_run(cap: str):
 
 
 def gpu_clock_state(mhz) -> dict:
-    """What the Machine view says of the cap: the clock read now (MHz, None when unread), whether this
+    """What the Machine view says of the cap: the clock nvidia-smi reads (MHz, None when unread), which is the one
+    the GPU last ran at (idle, it does not move: on the reference box, 2026-11-11, it read 2,502 MHz with a cap of
+    2,000 just set, then 1,989 once a generation had run, and 1,989 still after the cap was lifted), whether this
     machine has the nvidia-smi the sudoers lines name, the cap kept for the cockpit's next start, and what
     this cockpit last did with it (GPU_CLOCK)."""
     kept, bad = gpu_clock_kept()

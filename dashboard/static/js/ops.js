@@ -301,7 +301,7 @@ function wireGpuCap(){
     + `(48 answers of 1,200 tokens). One stream and the prefill moved little, ${none.tps1.toFixed(2)} to ${low.tps1.toFixed(2)} tok/s `
     + `and ${fmtN(none.prefill)} to ${fmtN(low.prefill)} tok/s from no cap to ${gpuCapName(low.cap)}. ${GPU_CAP_LIMITS}`);
 }
-// What the server says of the cap (cockpit.py, gpu_clock_state): the clock read now, whether this machine has the
+// What the server says of the cap (cockpit.py, gpu_clock_state): the clock the GPU last ran at, whether this machine has the
 // nvidia-smi the sudoers lines name, the cap kept for the cockpit's next start, and what the cockpit last did with
 // it. The cap lit is the one in effect as far as the cockpit knows: the one it set last, else the one it keeps.
 on('gpu', d => {

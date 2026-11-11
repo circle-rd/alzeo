@@ -297,9 +297,10 @@
                 <p class="pick-line" id="gc-line">…</p>
               </div>
               <dl class="facts">
-                <dt>Clock now</dt><dd class="num" id="gc-mhz">…</dd>
+                <dt>Clock last run at</dt><dd class="num" id="gc-mhz">…</dd>
                 <dt>Cap in effect</dt><dd class="wrap" id="gc-state">…</dd>
               </dl>
+              <p class="faint" id="gc-read" style="font-size:var(--t-13)">nvidia-smi reads the clock the GPU last ran at. Idle, it does not move: it shows a cap only once the GPU has worked under it, and stays there after the cap is lifted until the GPU works again.</p>
               <p class="why-off" id="gc-why" hidden></p>
             </div>
             <div>
