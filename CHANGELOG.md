@@ -52,6 +52,20 @@ the "about" of a download.
 **What an update does.** Scripts, documentation and tests only: no unit template, no file of the proxy and none of the
 cockpit changes. The cockpit restarts, as at every release: it reads the release's number in CHANGELOG.md at its start.
 
+**After the push.** The pull request ran GitHub's CI on its runners before `main` moved: 95 steps, none skipped, in 10
+min 41 s. Merged as a fast-forward, `main` failed its first run on ecf0c33, on two tests of
+`tests/test_proxy_pair_one_model_inprocess.py`, which this version does not touch and which had passed eleven minutes
+earlier on the pull request: in `single`, a proxy of the test could not open its pair port ("Address already in use"),
+and in `suite`, a test of a stream that dies while its client reads did not find the engine's error in what the client
+had read. The failed jobs were run again and passed: 95 steps, none skipped. The two tests are unstable on the runners:
+a defect of the tests, to be fixed in a later version, not of this one. On the reference box the final tree passed the
+CI in 564 s (53 steps, none skipped) and, beside it, the pass in one process in 1,827 s. The reference box updated in 1
+min 35 s by the README's command (get.alzeo.ai): the 27B and the proxy kept running, the cockpit restarted and serves
+v1.46.3, no unit changed, and of the configuration only the record of what is installed. On the 27B the production
+checks passed, and so did the eight real clients: Claude Code, opencode, Hermes, pi, the OpenAI and Anthropic SDKs,
+fetch under Node and under Bun, and LiteLLM. The cockpit showed no banner on any of its views, and no JavaScript error.
+Nothing that serves changed, so the client matrix was not run again.
+
 ## v1.46.2 (2026-11-10): the CI of a push takes a little over nine minutes where it took thirty, and the pass it no longer makes runs every night and before a release
 
 **Thirty minutes, and where they went.** A full run of the CI took 30 minutes on the reference box and 32 on GitHub,
