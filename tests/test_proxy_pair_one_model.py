@@ -652,7 +652,18 @@ class TwoBoxesServeOneModel(PairFixture, unittest.TestCase):
         self.assertEqual(st, 200, out[:300])
         self.assertIn(b"from spark1", out, "a request the other box's TLS refused was said lost")
         self.assertEqual(Peer.seen, [])
-        self.assert_said("spark1-tls", "refused this box's certificate")
+        # what this box says of it: the alert read ("refused this box's certificate"), or, when that box had closed the
+        # connection before this box's request went out, the end of the connection ("does not answer (EOF occurred in
+        # violation of protocol"): under TLS 1.3 the refusal comes after this box's side of the handshake, and which
+        # of the two this box meets first is a race (the second on GitHub, main, 2026-11-11). Never a box that "had
+        # the request": that one is bound there, and this request ran here
+        said = ("refused this box's certificate", "pair: spark2 does not answer (")
+        by = time.monotonic() + 8
+        while not any(s in self.journal_of("spark1-tls") for s in said) and time.monotonic() < by:
+            time.sleep(0.1)
+        journal = self.journal_of("spark1-tls")
+        self.assertTrue(any(s in journal for s in said), f"neither of {said} in the journal: ...{journal[-1200:]}")
+        self.assertNotIn("had the request and closed the connection", journal)
         for th in held:
             th.join(30)
 
