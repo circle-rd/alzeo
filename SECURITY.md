@@ -6,7 +6,7 @@ What this box trusts, what it does not, and how to report a hole in that line.
 
 A serving stack one operator installs on a machine they own and administer:
 a Docker engine behind a Python proxy, a cockpit web UI that reaches systemd
-through an exact-argv sudo allowlist, and a relay, installed with the cockpit
+(and the GPU clock cap of nvidia-smi) through an exact-argv sudo allowlist, and a relay, installed with the cockpit
 when opencode is there, that puts opencode's web interface behind the cockpit
 login. There is no telemetry and no
 phone-home: every byte that leaves the box is a download the installer names

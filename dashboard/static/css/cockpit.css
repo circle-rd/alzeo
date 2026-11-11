@@ -594,6 +594,9 @@ button.bay.soon:hover{border-color:rgba(120,150,255,.45)}
 .pick .opt.served::after{content:''; display:inline-block; width:7px; height:7px; margin-left:8px; border-radius:50%; vertical-align:middle;
   background:var(--ok); box-shadow:0 0 8px var(--ok)}
 .pick-line{font-size:var(--t-13); color:var(--fg-2)}
+/* the GPU clock cap's choices are its action buttons (Machine view): off, while a job runs or on a machine
+   without nvidia-smi, they dim as every action button does (.btn:disabled, .seg button:disabled) */
+#gc-pick .opt:disabled{opacity:.4}
 
 /* ── now: activity and timeline ── */
 .activity .headline{display:flex; align-items:baseline; gap:var(--s-3); flex-wrap:wrap}

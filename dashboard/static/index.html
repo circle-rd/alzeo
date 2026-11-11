@@ -232,7 +232,7 @@
     <!-- ══ MACHINE ══════════════════════════════════════════════════════════ -->
     <section class="view" id="view-machine" aria-labelledby="h-machine">
       <div class="vhead">
-        <div class="vhead-title"><h1 id="h-machine">Machine</h1><p>The GB10 underneath: memory, CPU, GPU, disks, and what the driver refused.</p></div>
+        <div class="vhead-title"><h1 id="h-machine">Machine</h1><p>The GB10 underneath: memory, CPU, GPU and its clock cap, disks, and what the driver refused.</p></div>
       </div>
       <div class="grid g2 wide4">
         <section class="panel" data-src="machine,engine_fast">
@@ -278,6 +278,36 @@
           <details class="why"><summary>What a driver refusal is</summary>
             <div><p>The GPU driver logs an out-of-memory refusal when an allocation lands on the edge of the unified pool, typically during a large prefill or a lane's warmup. A few per boot are normal on this box; a steady stream during serving is the sign to look at the pool.</p></div>
           </details>
+        </section>
+        <!-- the GPU clock cap (decision of 2026-11-11): none by default, each cap with what it cost and gave on the
+             reference box (ops.js); the server keeps the choice and sets it again at its start (cockpit.py) -->
+        <section class="panel span2" data-src="gpu" id="gc-panel">
+          <header><h2>GPU clock cap</h2><span class="cap" id="gc-cap">…</span></header>
+          <div class="grid g2">
+            <div class="stack" style="gap:var(--s-4)">
+              <p class="muted">A ceiling on the GPU's clock: on the reference box a cap gave about the same tokens per second for fewer watts and degrees. None, the factory setting, is the default. A reboot loses a cap, and the cockpit sets it again at its start.</p>
+              <div class="pickbox">
+                <p class="pick-label" id="gc-label">Cap</p>
+                <div class="pick" role="radiogroup" aria-labelledby="gc-label" id="gc-pick">
+                  <button class="opt" type="button" role="radio" aria-checked="true" data-cap="none">None</button>
+                  <button class="opt" type="button" role="radio" aria-checked="false" data-cap="2400">2,400 MHz</button>
+                  <button class="opt" type="button" role="radio" aria-checked="false" data-cap="2200">2,200 MHz</button>
+                  <button class="opt" type="button" role="radio" aria-checked="false" data-cap="2000">2,000 MHz</button>
+                </div>
+                <p class="pick-line" id="gc-line">…</p>
+              </div>
+              <dl class="facts">
+                <dt>Clock now</dt><dd class="num" id="gc-mhz">…</dd>
+                <dt>Cap in effect</dt><dd class="wrap" id="gc-state">…</dd>
+              </dl>
+              <p class="why-off" id="gc-why" hidden></p>
+            </div>
+            <div>
+              <div class="scroll-x"><table class="tbl dense stack" id="gc-table">
+                <thead><tr><th>Cap</th><th class="r">Clock read</th><th class="r">4 streams</th><th class="r">GPU</th><th class="r">Hottest zone</th></tr></thead><tbody></tbody></table></div>
+              <p class="faint" id="gc-note" style="margin-top:var(--s-3); font-size:var(--t-13)"></p>
+            </div>
+          </div>
         </section>
       </div>
     </section>

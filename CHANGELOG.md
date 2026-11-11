@@ -1,5 +1,51 @@
 # Changelog
 
+## v1.47.0 (2026-11-11): a GPU clock cap in the cockpit's Machine view: about the same tokens per second for fewer watts and degrees
+
+**What it is.** The Machine view has a new setting, the GPU clock cap: None, the factory setting and the default, or a
+ceiling of 2,400, 2,200 or 2,000 MHz on the GPU's clock. Measured on the reference box on 2026-11-11, on the Qwen3.8
+Flash-Next FP4-Local lane at 4 streams, the same work at each cap (48 answers of 1,200 tokens), with no cap measured
+again at the end:
+
+| Cap | Clock read | tok/s, 4 streams | GPU watts | Hottest zone | tok/s, 1 stream | Prefill, tok/s |
+|---|---|---|---|---|---|---|
+| None | 2,502 MHz | 105.74 | 46.6 W | 92.6 °C | 56.20 | 2,077 |
+| 2,400 MHz | 2,387 MHz | 105.87 | 35.9 W | 90.2 °C | 56.22 | 2,073 |
+| 2,200 MHz | 2,190 MHz | 103.77 | 28.1 W | 86.6 °C | 55.50 | 2,027 |
+| 2,000 MHz | 1,989 MHz | 103.15 | 22.8 W | 84.4 °C | 54.62 | 2,004 |
+| None, again at the end | 2,494 MHz | 105.02 | 47.7 W | 93.2 °C | 56.38 | 2,080 |
+
+At 2,400 MHz the lane answered as fast as with no cap for 10.7 W less on the GPU. At 2,000 MHz it gave up 2.4 % of its
+tokens per second for less than half the GPU's watts and 8.2 °C less at the box's hottest zone. The limits of the
+measurement are said in the view and here: one lane, a text one. The image, video and 27B lanes are not measured yet,
+and the watts are the GPU's alone, as nvidia-smi reads them. Nothing is capped unless the setting is used.
+
+**How it works.** A cap is `nvidia-smi -lgc 0,<MHz>` (no floor, that ceiling) and None is `nvidia-smi -rgc`. The
+cockpit runs them through `sudo -n`, by exact argv: its sudoers allowlist (`dashboard/sudoers-cockpit.template`) gains
+four lines, the three caps and the reset, and nothing else of nvidia-smi. The setting is an action like the others
+(`gpu_clock` of `/api/action`): a session, the CSRF token, one job at a time, the sheet that shows the exact command
+before it runs, the audit log. It takes the four values and refuses any other. nvidia-smi applies a cap at once, a
+generation in flight included. A cap does not survive a reboot of the machine, so the cockpit keeps the choice in
+`~/.config/qwen38/cockpit-gpu-clock.json` and sets it again at its start, which is at boot, as a job the dock shows.
+Until that job has run, or when it fails, the view says the cap is kept and not set, never that it holds. A machine
+with no `/usr/bin/nvidia-smi` offers no cap and says why, and a box whose sudoers file has no line for the call yet is
+told to run the installer again. `./uninstall.sh` lifts a cap the cockpit keeps before it removes the sudoers file, and
+the cockpit's "Remove with" line does the same. A cap set by hand outside the cockpit is not read back (nvidia-smi
+gives the clock and the GPU's maximum, not the cap) and is left alone.
+
+**Tests.** `dashboard/tests/test_cockpit_gpu_clock.py`: the four values and no other (a value with an option after it,
+a pair, spaces, five digits), the exact argv called, with a sudo and an nvidia-smi of the test's own on the PATH, the
+file written and removed, the cap set again at the cockpit's start, a machine without nvidia-smi, a sudo that refuses,
+an nvidia-smi that refuses or does not answer, and the sudoers template rendered: its lines are the argv the cockpit
+calls and `visudo -cf` accepts them. `dashboard/tests/test_gpu_clock_page.py`: the panel, its figures (the ones of
+docs/cockpit.md), its states and its sheet. `tests/test_gpu_clock_removal.py`: the uninstall lifts the cap before the
+sudoers lines go. `dashboard/tests/touch-check.mjs`: nothing overflows at 375 px. Each new test fails without the code,
+checked with 44 broken versions of it, one behavior at a time.
+
+**What an update does.** The cockpit's sudoers file is written again with its four new lines, by the update's own sudo,
+checked by `visudo` before it lands, as at every update. No cap is set: the setting starts at None, and nothing changes
+for a box that does not use it. The cockpit restarts, as at every release. Engines, lanes and the proxy do not change.
+
 ## v1.46.4 (2026-11-11): the Qwen3.8 Flash-Next FP4-Local lane answers at the lean effort by default, as the other Qwen lanes do
 
 **At `xhigh`, the lane often answered nothing.** A request that names no reasoning effort got `xhigh` on the Qwen3.8

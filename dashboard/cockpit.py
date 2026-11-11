@@ -3,7 +3,7 @@
 
 Single-file stdlib backend: no pip, no venv, nothing to break. Collectors, an
 SSE stream, a static UI, and a supervised action surface that runs one job at a
-time: unit start/stop/restart, lane switch, cache flush, abort, smoke probe.
+time: unit start/stop/restart, lane switch, cache flush, abort, smoke probe, GPU clock cap.
 Belts on top of that: a real generation canary (a wedged engine still answers
 /health), a host memory floor, and an NVRM allocation-refusal counter.
 
@@ -233,6 +233,8 @@ def job_phrase(action: str, params: dict) -> str:
         t = p.get("target", "")
         lane = target_lane(t) if t else ""
         return f"build the {lane} lane's runtime" + (f" for {t}" if lane in ("flash", "27b") else "")
+    if action == "gpu_clock" and p.get("cap") in GPU_CLOCK_CAPS:
+        return "lift the GPU clock cap" if p["cap"] == "none" else f"cap the GPU clock at {gpu_clock_mhz(p['cap'])}"
     return action + (" " + ", ".join(f"{k} {v}" for k, v in p.items()) if p else "")
 
 
@@ -500,13 +502,115 @@ def collect_machine():
             "load": [load1, load5, load15], "disks": disks, "box": box_info(), "ts": time.time()}
 
 
+# ── The GPU clock cap (decision of 2026-11-11) ─────────────────────────────────
+# A ceiling on the GPU's clock, set from the Machine view: none (the factory setting, the default),
+# 2,400, 2,200 or 2,000 MHz. On the reference box (2026-11-11, the Qwen3.8 Flash-Next FP4-Local lane,
+# 4 streams, the same 48 answers of 1,200 tokens at each cap) 2,400 MHz gave 105.87 tok/s for 35.9 W
+# of GPU and 90.2 °C at the hottest zone, against 105.74 tok/s, 46.6 W and 92.6 °C with no cap, and
+# 2,000 MHz 103.15 tok/s for 22.8 W and 84.4 °C (docs/cockpit.md has the whole table). nvidia-smi sets
+# it (-lgc 0,<MHz>: no floor, that ceiling) and lifts it (-rgc), each through its exact line of
+# sudoers-cockpit.template, and a reboot loses it: the cockpit keeps the choice in CONFIG_DIR and sets
+# it again at its start, which is at boot (gpu_clock_at_start), or it would say a cap that is gone.
+NVIDIA_SMI = "/usr/bin/nvidia-smi"          # the path the sudoers lines name, the one the calls run
+GPU_CLOCK_ARGV = {"none": ["sudo", "-n", NVIDIA_SMI, "-rgc"],
+                  "2400": ["sudo", "-n", NVIDIA_SMI, "-lgc", "0,2400"],
+                  "2200": ["sudo", "-n", NVIDIA_SMI, "-lgc", "0,2200"],
+                  "2000": ["sudo", "-n", NVIDIA_SMI, "-lgc", "0,2000"]}
+GPU_CLOCK_CAPS = tuple(GPU_CLOCK_ARGV)       # the only values the action takes
+GPU_CLOCK_FILE = CONFIG_DIR / "cockpit-gpu-clock.json"
+GPU_CLOCK_TIMEOUT_S = 20                     # nvidia-smi answers in well under a second on the reference box
+# What this cockpit did with the cap since it started: set, the cap it set last and that holds as far as
+# it knows ("none" once lifted; None while it set nothing), at and origin (ui, boot) when and from where;
+# tried, error and said, its last attempt (error None when it held). Written by the gpu_clock job alone.
+GPU_CLOCK: dict = {"set": None, "at": None, "origin": None, "tried": None, "error": None, "said": None}
+GPU_CLOCK_LOCK = threading.Lock()
+
+
+def gpu_clock_kept():
+    """(the cap kept for the cockpit's next start, what is wrong with its file or None): "none" with no
+    file. A file that names no cap the cockpit offers (edited by hand, cut short) keeps nothing, and says
+    so: the cockpit never sets a clock it does not offer."""
+    try:
+        raw = GPU_CLOCK_FILE.read_text(errors="replace")
+    except FileNotFoundError:
+        return "none", None
+    except OSError as e:
+        return "none", f"it cannot be read ({e.strerror or e})"
+    try:
+        cap = json.loads(raw).get("cap")
+    except (ValueError, AttributeError, RecursionError):
+        cap = None
+    if isinstance(cap, str) and cap in GPU_CLOCK_CAPS:
+        return cap, None
+    return "none", "it names no cap the cockpit offers"
+
+
+def gpu_clock_keep(cap: str):
+    """Keep the cap for the cockpit's next start, or forget it when it is none (the file goes): None when
+    done, else why not. One temp file, then one rename, as the recovery marks are written."""
+    tmp = GPU_CLOCK_FILE.with_name(GPU_CLOCK_FILE.name + ".tmp")
+    try:
+        if cap == "none":
+            GPU_CLOCK_FILE.unlink(missing_ok=True)
+        else:
+            tmp.write_text(json.dumps({"cap": cap}) + "\n")
+            os.replace(tmp, GPU_CLOCK_FILE)
+        return None
+    except OSError as e:
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+        return e.strerror or str(e)
+
+
+def gpu_clock_mhz(cap: str) -> str:
+    return "no cap" if cap == "none" else f"{int(cap):,} MHz"
+
+
+def gpu_clock_run(cap: str):
+    """Run the cap's exact argv: (ok, what failed or None, the sentence that says it, the lines sudo and
+    nvidia-smi wrote). What failed: absent (no nvidia-smi where the sudoers lines name it), sudo (sudo
+    refused: its last line is its own, "sudo: ...", in the box's language), failed (nvidia-smi's own
+    refusal, or no answer)."""
+    if not os.access(NVIDIA_SMI, os.X_OK):
+        return False, "absent", f"this machine has no {NVIDIA_SMI}: the cockpit cannot cap its GPU clock", []
+    t0 = time.monotonic()
+    out = run(GPU_CLOCK_ARGV[cap], timeout=GPU_CLOCK_TIMEOUT_S, merge_err=True, errors="replace")
+    lines = [ln.rstrip() for ln in str(out).splitlines() if ln.strip()]
+    if answered(out):
+        return True, None, ("GPU clock cap lifted: the GPU runs at its own clocks" if cap == "none"
+                            else f"GPU clock capped at {gpu_clock_mhz(cap)}"), lines
+    if lines and lines[-1].startswith("sudo:"):
+        return False, "sudo", ("sudo refused the call: the cockpit's sudoers allowlist on this box has no line for it "
+                               f"yet, which the installer writes (cd {REPO_DIR} && ./install.sh)"), lines
+    if lines:
+        return False, "failed", f"nvidia-smi refused: {lines[-1][:200]}", lines
+    # nothing said: the deadline, or a call that could not even start (run() keeps no exit code)
+    return False, "failed", (f"nvidia-smi did not answer within {GPU_CLOCK_TIMEOUT_S} s"
+                             if time.monotonic() - t0 >= GPU_CLOCK_TIMEOUT_S * 0.9
+                             else "sudo or nvidia-smi failed and said nothing"), lines
+
+
+def gpu_clock_state(mhz) -> dict:
+    """What the Machine view says of the cap: the clock read now (MHz, None when unread), whether this
+    machine has the nvidia-smi the sudoers lines name, the cap kept for the cockpit's next start, and what
+    this cockpit last did with it (GPU_CLOCK)."""
+    kept, bad = gpu_clock_kept()
+    with GPU_CLOCK_LOCK:
+        last = dict(GPU_CLOCK)
+    return {"mhz": mhz, "nvidia_smi": os.access(NVIDIA_SMI, os.X_OK), "kept": kept, "kept_bad": bad, **last}
+
+
 @guard
 def collect_gpu():
     # GB10 traps (measured): memory.used/total report [N/A]; utilization.gpu can
     # freeze stale. Power draw, temperature and compute-apps are trustworthy.
-    q = run(["nvidia-smi", "--query-gpu=power.draw,temperature.gpu",
+    # The graphics clock rides the same query (the cap's panel says it), read as a whole number of MHz or
+    # not at all: "[N/A]" or anything else is no reading, and power and temperature stay as they were.
+    q = run(["nvidia-smi", "--query-gpu=power.draw,temperature.gpu,clocks.current.graphics",
              "--format=csv,noheader,nounits"]).strip()
-    power, temp = (q.split(", ") + ["", ""])[:2] if q else ("", "")
+    power, temp, mhz = (q.split(", ") + ["", "", ""])[:3] if q else ("", "", "")
     # None when nvidia-smi did not answer: an empty list is a GPU with nothing on it, and the
     # page said "No process on the GPU" of a query that timed out (found 2026-10-02)
     apps = run(["nvidia-smi", "--query-compute-apps=pid,used_memory", "--format=csv,noheader"])
@@ -519,8 +623,10 @@ def collect_gpu():
         except OSError:
             pass
         procs.append({"pid": int(pid), "mem": memtxt, "name": name})
+    mhz = mhz.strip()
     return {"node_id": "local", "power_w": float(power) if power else None,
-            "temp_c": float(temp) if temp else None, "procs": procs}
+            "temp_c": float(temp) if temp else None, "procs": procs,
+            "clock": gpu_clock_state(int(mhz) if mhz.isascii() and mhz.isdigit() and len(mhz) <= 5 else None)}
 
 
 @guard
@@ -3163,6 +3269,8 @@ STATE["config"] = {"data": {"usable_frac": USABLE_FRAC, "version": VERSION, "dry
                             # install that is nothing: it promised the belt's restart regardless
                             "autoheal": AUTOHEAL, "autoheal_grace_s": AUTOHEAL_GRACE,
                             "zombie_restart": ZOMBIE_RESTART,
+                            # the exact command of each GPU clock cap, which the sheet shows before it runs
+                            "gpu_clock_argv": GPU_CLOCK_ARGV,
                             # update_stack runs the installer again (the Agent view's hint);
                             # update is the README's one command, run from this checkout so that
                             # get.sh updates this clone: install.sh alone fetches nothing, and
@@ -3301,6 +3409,15 @@ ACTIONS = {
         "argv": None,
         "timeout": 300,
     },
+    # the GPU clock cap (Machine view): a python job, which runs the cap's argv from GPU_CLOCK_ARGV
+    # (privileged: its exact sudoers lines), then keeps the choice for the cockpit's next start. No
+    # argv template here: "0,2400" carries the value inside one argument, which the table spells whole.
+    "gpu_clock": {
+        "danger": "low",
+        "params": {"cap": list(GPU_CLOCK_CAPS)},
+        "argv": None,
+        "timeout": 60,
+    },
 }
 
 # Library's Download: the switch's own target list, and its argv with --fetch, which fetches
@@ -3396,7 +3513,7 @@ class Job:
         self.argv = argv
         self.fn = fn                     # python job (flush, abort, smoke, bundle)
         self.params = params or {}
-        self.origin = origin             # ui | autoheal | autofit
+        self.origin = origin             # ui | autoheal | autofit | zombie | boot (the GPU clock cap)
         self.timeout = timeout
         self.lines: list[str] = []
         self.status = "running"
@@ -5322,9 +5439,54 @@ def job_delete_strays(job: Job):
     return True, lines, {"ok": True, "deleted": gone, "bytes": freed}
 
 
+def job_gpu_clock(job: Job):
+    """Cap the GPU clock at one of the caps the cockpit offers, or lift the cap: the cap's exact argv
+    (GPU_CLOCK_ARGV), then, once nvidia-smi has done it, the choice kept for the cockpit's next start
+    (none: the file goes). A refusal changes nothing kept: the cap set before still holds. The job's log
+    names the command it ran, and the Machine view reads the outcome before the job is seen to end."""
+    cap = job.params["cap"]
+    job.argv = list(GPU_CLOCK_ARGV[cap])
+    ok, error, said, lines = gpu_clock_run(cap)
+    if ok:
+        why = gpu_clock_keep(cap)
+        if why:
+            # set, and not kept: what holds now is said, and that a reboot loses it with nothing to set it again
+            ok, error = False, "keep"
+            said += (f", but the cockpit could not keep it for its next start ({why}): it holds until the next "
+                     "reboot, and nothing sets it again then")
+    now = time.time()
+    with GPU_CLOCK_LOCK:
+        GPU_CLOCK.update(tried=cap, error=error, said=said)
+        if ok or error == "keep":
+            GPU_CLOCK.update({"set": cap, "at": now, "origin": job.origin})
+    audit({"kind": "gpu_clock", "cap": cap, "argv": job.argv, "origin": job.origin, "ok": ok, "error": error})
+    snap = collect_gpu()
+    with STATE_LOCK:
+        STATE["gpu"] = {"data": snap, "ts": time.time()}
+    return ok, lines + [said], {"ok": ok, "cap": cap, "error": error, "said": said}
+
+
+def gpu_clock_at_start():
+    """The cap the cockpit keeps, set again: a reboot lost it, and this cockpit starts at boot. Nothing
+    when none is kept, the factory clocks needing no call (a cap set by hand outside the cockpit is left
+    alone). A job like every other, audited, in the dock and in the timeline; none can run before it, as
+    this runs before the samplers start. The start code of the job, or None when there was nothing to set."""
+    cap, _ = gpu_clock_kept()
+    if cap == "none":
+        return None
+    try:
+        code, out = start_action("gpu_clock", {"cap": cap}, origin="boot")
+    except Exception as e:  # noqa: BLE001 (the cockpit starts whatever happens here: systemd would restart it forever)
+        code, out = 500, {"error": f"{type(e).__name__}: {e}"}
+    if code != 202:
+        add_event("error", f"the GPU clock cap kept by the cockpit ({gpu_clock_mhz(cap)}) could not be set "
+                           f"again at its start: {out.get('message') or out.get('error')}")
+    return code
+
+
 JOB_FUNCS = {"flush_cache": job_flush_cache, "abort_all": job_abort_all,
              "smoke": job_smoke, "diag_bundle": job_diag_bundle,
-             "delete_strays": job_delete_strays}
+             "delete_strays": job_delete_strays, "gpu_clock": job_gpu_clock}
 
 
 
@@ -6149,6 +6311,8 @@ def main():
     _sweep_staged_frames()
     if not shutil.which("nvidia-smi"):
         print("note: nvidia-smi not found, GPU panel will degrade")
+    # the GPU clock cap kept from the Machine view, set again (a reboot lost it), before any other job can run
+    gpu_clock_at_start()
     start_samplers()
     if AGENT_PORT > 0:
         threading.Thread(target=agent_relay_thread, daemon=True).start()

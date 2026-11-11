@@ -3,7 +3,7 @@
 # Since v1.12 install.sh runs this as its step 10/10, so a plain install leaves a
 # cockpit you can open; --no-cockpit is how you opt out of that.
 # Installs: qwen38-dashboard.service (DASH_BIND:DASH_PORT) and the narrow sudoers
-# allowlist for the unit start/stop/restart buttons.
+# allowlist for the unit start/stop/restart buttons and the GPU clock cap.
 # DASH_BIND defaults to 127.0.0.1 on a first install (install.sh passes the box's
 # tailnet address instead when it has one, so the page opens from a laptop). Set it to reach the cockpit
 # from another machine, e.g. DASH_BIND=0.0.0.0 (every interface) or
@@ -139,6 +139,11 @@ fi
 if [ "$AGENT_PORT" != "0" ]; then
   echo "Agent relay: $AGENT_BIND:$AGENT_PORT -> $AGENT_UPSTREAM (Agent view; a cockpit session is required)"
 fi
-REMOVE="sudo systemctl disable --now $UNIT; sudo rm -f $INSTALLED /etc/sudoers.d/qwen38-cockpit /usr/local/bin/qwen38-pyspy-scheduler"
+# A GPU clock cap the cockpit keeps (its Machine view) is lifted once the cockpit is stopped and before its
+# sudoers lines go: left, it held until the next reboot, with nothing left to say it.
+GPU_CAP_FILE="$HOME/.config/qwen38/cockpit-gpu-clock.json"
+LIFT=""
+[ -f "$GPU_CAP_FILE" ] && LIFT="sudo /usr/bin/nvidia-smi -rgc; rm -f $GPU_CAP_FILE; "
+REMOVE="sudo systemctl disable --now $UNIT; ${LIFT}sudo rm -f $INSTALLED /etc/sudoers.d/qwen38-cockpit /usr/local/bin/qwen38-pyspy-scheduler"
 [ -f /etc/systemd/system/opencode-web.service ] && REMOVE="$REMOVE; sudo systemctl disable --now opencode-web.service; sudo rm -f /etc/systemd/system/opencode-web.service"
 [ "$QUIET" = "1" ] || echo "Remove with: $REMOVE"
