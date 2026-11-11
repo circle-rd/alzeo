@@ -214,31 +214,58 @@ class PiGen(unittest.TestCase):
         self.assertEqual(level("lean"), "minimal")
         self.assertEqual(level(None), "minimal")          # no template there: the patched default
 
-    def test_the_flash_local_lane_starts_at_xhigh_in_omp(self):
-        # its template's default is Qwen's own, xhigh (Hasan's choice for this lane, 2026-10-19), which
-        # its provider lists first: omp took "lean" in its tiers for the patched template's default
-        # and started it at minimal, sent as lean (found in review, 2026-10-20)
+    def test_the_flash_local_lane_starts_in_omp_at_the_level_its_template_serves(self):
+        # its template's default is lean since v1.46.4, as on the other Qwen lanes, or Qwen's xhigh where its installer
+        # keeps FLASH_LOCAL_EFFORT=xhigh, and its provider lists that level first. omp took "lean" in its tiers for the
+        # patched template's default and started an xhigh lane at minimal, sent as lean (found in review, 2026-10-20);
+        # the template decides where it is there, as install.sh writes the artifact before the lane's installer writes
+        # the template, and a Load keeps an entry already there (v1.46.4)
         import importlib.util
         spec = importlib.util.spec_from_file_location("oc_flash_local", REPO / "oc-flash-local.py")
         ocf = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(ocf)
-        art = json.loads(json.dumps(ARTIFACT))
-        art["provider"]["flash-local"] = ocf.provider("http://127.0.0.1:30001/v1", "/keys/api-key", 205000, 32000,
-                                                      "Qwen3.8-Flash-Next FP4-Local (local, 262K)")
-        art["model"] = "flash-local/qwen3.8-flash-next-fp4"
-        with open(self.art, "w") as f:
-            f.write(json.dumps(art))
-        self.gen()
-        _, settings = self.read_pi()
-        # pi sends no effort, so the template's own default, xhigh
-        self.assertEqual(settings["modelThinkingLevels"]["flash-local/qwen3.8-flash-next-fp4"], "off")
-        omp_models, _ = self.read_omp()
-        entry = omp_models["providers"]["flash-local"]["models"][0]
-        self.assertEqual(entry["thinking"], {"mode": "effort", "efforts": ["xhigh", "minimal", "low", "medium"],
-                                             "defaultLevel": "xhigh"})
-        self.assertEqual(entry["compat"]["reasoningEffortMap"], {"minimal": "lean"})
-        self.assertEqual(omp_models["providers"]["qwen38"]["models"][0]["thinking"]["defaultLevel"], "minimal",
-                         "the patched template's default, lean, for the lanes that keep it")
+        os.makedirs(self.out, exist_ok=True)
+        # the box's layout: the key, the lane's template and the choice its installer keeps, side by side
+        template = pathlib.Path(self.out, "chat-template-flash-local.jinja")
+        choice = pathlib.Path(self.out, "flash-local-effort")
+
+        def omp(default, kept, listed=None):
+            """omp's thinking block for the lane, with the template's default (None: no template there yet), the choice
+            its installer kept (None: none), and the artifact's levels in another order (listed)."""
+            for path, body in ((template, default and "{%- set e = reasoning_effort|default('" + default + "') %}\n"),
+                               (choice, kept and kept + "\n")):
+                if body:
+                    path.write_text(body)
+                elif path.exists():
+                    path.unlink()
+            art = json.loads(json.dumps(ARTIFACT))
+            art["provider"]["flash-local"] = ocf.provider("http://127.0.0.1:30001/v1", os.path.join(self.out, "api-key"),
+                                                          205000, 32000, "Qwen3.8-Flash-Next FP4-Local (local, 262K)")
+            model = art["provider"]["flash-local"]["models"]["qwen3.8-flash-next-fp4"]
+            if listed:
+                model["variants"] = {lvl: model["variants"][lvl] for lvl in listed}
+            art["model"] = "flash-local/qwen3.8-flash-next-fp4"
+            with open(self.art, "w") as f:
+                f.write(json.dumps(art))
+            self.gen()
+            _, settings = self.read_pi()
+            # pi sends no effort, so the template's own default, whichever it is
+            self.assertEqual(settings["modelThinkingLevels"]["flash-local/qwen3.8-flash-next-fp4"], "off")
+            omp_models, _ = self.read_omp()
+            entry = omp_models["providers"]["flash-local"]["models"][0]
+            self.assertEqual(entry["compat"]["reasoningEffortMap"], {"minimal": "lean"})
+            self.assertEqual(omp_models["providers"]["qwen38"]["models"][0]["thinking"]["defaultLevel"], "minimal",
+                             "the patched template's default, lean, for the lanes that keep it")
+            return entry["thinking"]
+        lean_first, xhigh_first = ["minimal", "low", "medium", "xhigh"], ["xhigh", "minimal", "low", "medium"]
+        self.assertEqual(omp("lean", None), {"mode": "effort", "efforts": lean_first, "defaultLevel": "minimal"})
+        self.assertEqual(omp("xhigh", "xhigh"), {"mode": "effort", "efforts": xhigh_first, "defaultLevel": "xhigh"})
+        # an artifact that lists first the level the template served before: the template decides
+        self.assertEqual(omp("lean", None, listed=["xhigh", "lean", "low", "medium"])["defaultLevel"], "minimal")
+        self.assertEqual(omp("xhigh", None, listed=["lean", "low", "medium", "xhigh"])["defaultLevel"], "xhigh")
+        # installed and never loaded, no template yet: the level its provider lists first, its installer's choice
+        self.assertEqual(omp(None, None), {"mode": "effort", "efforts": lean_first, "defaultLevel": "minimal"})
+        self.assertEqual(omp(None, "xhigh"), {"mode": "effort", "efforts": xhigh_first, "defaultLevel": "xhigh"})
 
     def test_nemotron_is_sent_its_effort_starts_at_high_and_takes_images(self):
         # Bolt reasons at its full depth unasked, as Kolibri does at high; the proxy turns the effort

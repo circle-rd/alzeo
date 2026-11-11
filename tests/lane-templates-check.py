@@ -41,9 +41,11 @@ SHAPES = REPO / "tests" / "fixtures" / "client-shapes.json"
 # runs patch-template.py ("patches": its --patches option, the rest its environment). lane_specs()
 # checks this against the installers themselves.
 # A target, not a lane: the Kolibri lane's two checkpoints each have their pin, and the check read only
-# the NVFP4's while the FP8 is the lane's default (found in review, 2026-10-24).
+# the NVFP4's while the FP8 is the lane's default (found in review, 2026-10-24). The Qwen3.8 Flash-Next
+# FP4-Local lane's line is its default, lean (v1.46.4); its option FLASH_LOCAL_EFFORT=xhigh gives the
+# same template Qwen's xhigh as its default, the one this check rendered until then.
 VLLM_LANES = {
-    "flash-local": ("install-flash-local.sh", "FLASH_LOCAL", {"LEAN_DEFAULT": "0"}),
+    "flash-local": ("install-flash-local.sh", "FLASH_LOCAL", {"LEAN_DEFAULT": "1"}),
     "ornith-122b": ("install-ornith-122b.sh", "ORNITH_122B", {"patches": "system-reminder,tool-reference"}),
     "kolibri": ("install-kolibri.sh", "KOLIBRI_FP8", None),
     "kolibri-nvfp4": ("install-kolibri.sh", "KOLIBRI_NVFP4", None),

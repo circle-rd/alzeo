@@ -7,7 +7,8 @@ stored inside seven of the checkpoint's own files. Its NVFP4 scales are in a new
 that upstream vLLM does not read yet, so its model card serves it with community vLLM images that
 carry NVIDIA's b12x kernels, `eugr/spark-vllm-b12x` on a DGX Spark. This lane serves it on the text
 lanes' port, behind the same proxy and key, as model `qwen3.8-flash-next-fp4`, with its MTP head
-drafting 4 tokens and the reasoning effort its chat template defaults to, `xhigh`. It is a lane of
+drafting 4 tokens and, as on the other Qwen lanes, `lean` as the reasoning effort a request that
+names none gets (`FLASH_LOCAL_EFFORT=xhigh` gives it its model card's `xhigh`, below). It is a lane of
 its own beside the flash lane (`docs/flash-lane.md`), which serves the same model on SGLang from
 RadixArk's export.
 
@@ -46,10 +47,10 @@ on GPQA Diamond and 88.7 % on ToolEvalBench against its BF16 teacher's 92.2 % an
 at the agents' sampling" is GSM8K's first 128 questions 8 at a time and 16 alone, at temperature 1.0,
 top_p 0.95 and the checkpoint's top_k 20, as `real.sh` sends them, measured on both lanes on
 2026-10-20. The random prompts are `vllm bench serve`'s, from a client in a container of its own. No
-request named a reasoning effort, so each lane's template gave its default, `lean` on both then. This
-lane's template now defaults to the card's `xhigh`: at it, on the same questions, answers ran longer
-(427 tokens on average against 237), the MTP head's tokens a step fell from 3.7 to 2.85, and eight
-requests at a time decoded 99.4 tok/s (one run, 2026-10-20).
+request named a reasoning effort, so each lane's template gave its default, `lean` on both, this
+lane's default again since v1.46.4 (from v1.37.0 to v1.46.3 it was the card's `xhigh`). At `xhigh`,
+on the same questions, answers ran longer (427 tokens on average against 237), the MTP head's tokens a
+step fell from 3.7 to 2.85, and eight requests at a time decoded 99.4 tok/s (one run, 2026-10-20).
 
 Alone on real text this lane decodes faster, 47.4 tok/s against 43.8. Eight requests at a time, the
 flash lane does, by 16 % at the agents' sampling and by 15 % on GSM8K at temperature 0. Random prompts,
@@ -97,8 +98,8 @@ Measured with the filter and without it, everything else equal: 23.34 against 23
 
 The unit runs the model card's command for a DGX Spark, flag for flag and variable for variable
 (`qwen38-flash-local.service.template` lists them), with this box's port, key, cache and sandbox,
-the template patched as the other Qwen lanes' are (`patch-template.py`, the default effort left at
-the card's `xhigh`), its own caches, so that only the first boot compiles and tunes, and one setting
+the template patched as the other Qwen lanes' are (`patch-template.py`, with their default effort,
+`lean`, since v1.46.4: below), its own caches, so that only the first boot compiles and tunes, and one setting
 of PyTorch's allocator that the card does not give, for its boot (Memory, below). Then each
 setting that could do better was measured against it, one at a time, on the same boot recipe
 (`~/qa-tools/pr55/recipe/`: a drop-in per variant, the engine restarted, the same probes in the
@@ -180,8 +181,8 @@ in service (its weights, KV cache, activations and CUDA graphs). A test holds th
 unit gives vLLM. Two boots with it, on the same box and checkpoint, the second from the unit as an
 update puts it in and restarted from the cockpit: MemAvailable at 19.1 and 18.7 GiB at their lowest,
 no refusal from the driver, ready in 322 s both times against 329 to 336 before, and the same KV cache
-(932,991 and 933,806 tokens). The engine serves as fast with it: `bench.sh`, at the lane's default
-effort, measured a greedy median of 55.4 tok/s with it and 55.1 without it (2026-10-20).
+(932,991 and 933,806 tokens). The engine serves as fast with it: `bench.sh`, at `xhigh`, the lane's
+default effort then, measured a greedy median of 55.4 tok/s with it and 55.1 without it (2026-10-20).
 
 Five more boots with it on 2026-10-20 say what it does not do. The driver still refused allocations
 in three of them, 233, 130 and 5 times, every one from `_memdescAllocInternal`: each time from about
@@ -240,6 +241,40 @@ ceiling it keeps on this lane at its native window is for that window. The Load 
 and `claude-local` a context of 840,000 tokens and 32,000 for the answer, which fit a pool 10 %
 smaller than the one measured, and the cockpit's Lanes and Now views say 1M tokens of context.
 It is not the default: its makers ship 262,144, and the 1M window is measured here on retrieval and on GSM8K only.
+
+## The reasoning effort: lean by default, FLASH_LOCAL_EFFORT=xhigh
+
+A request that names no reasoning effort gets `lean` since v1.46.4, as on the 27B and flash lanes
+([LEAN.md](../LEAN.md)); from v1.37.0 to v1.46.3 it got `xhigh`, the default the model card ships. A
+request still names any of `lean`, `low`, `medium` and `xhigh` (`reasoning_effort`, top-level or in
+`chat_template_kwargs`). Measured on the reference box on 2026-11-11, through the proxy, 4 requests at a
+time, at the card's sampling (temperature 1.0, top_p 0.95, top_k 20):
+
+- **A short story of about 800 characters**, asked in English and in French, within 5,000 tokens: at
+  `xhigh` no answer 24 times of 32 (12 of 16 at the lane's default, `xhigh` then, and 12 of 16 asked by
+  name), every token spent reasoning, the model counting the letters one by one; at `lean`, `medium` and
+  `low`, an answer 24 times of 24.
+- **Exactly 300 characters**: no answer at every level that reasons, 13 times of 16 at `xhigh` and 11 of
+  12 at `lean`, `medium` and `low`. A limit of the model that no level lifts.
+- **A long JSON answer** (a drug's interactions): at the lane's default, `xhigh` then, 4 answers of 4, but
+  21,260 tokens out in median, 19,145 of them reasoning, in 1,007 s; at `lean`, 8 of 8 in readable JSON,
+  1,427 tokens, 819 of them reasoning, in 59 s; at `medium` 97 s, at `low` 87 s.
+- **What the level does not change**: listing the release headings of the first 6,000 to 48,000
+  characters of this repository's CHANGELOG (1,828 to 13,681 tokens of prompt), right 24 times of 24, 16
+  at `xhigh` and 8 at `medium`, with 129 to 345 tokens of reasoning: the runaway comes with the kind of
+  request (counting, enumerating), not with the length of the prompt.
+
+```bash
+cd ~/dgx-spark-qwen38 && FLASH_LOCAL_EFFORT=xhigh ./install-flash-local.sh --units-only   # then Load the lane
+cd ~/dgx-spark-qwen38 && FLASH_LOCAL_EFFORT=lean ./install-flash-local.sh --units-only    # back to lean
+```
+
+`--units-only` writes the choice, and the lane's chat template when its checkpoint is in the cache, and
+downloads and starts nothing: a lane that serves answers at its new default once it starts again, at its
+next Load. The choice is kept for the Loads and the updates after (a Load from the cockpit runs with none
+of your environment), in `~/.config/qwen38/flash-local-effort`. opencode's generated config lists the
+lane's default level first from the next `./install.sh`, and omp starts at its template's (`pi-gen.py`, which
+a Load runs again). `LEAN_DEFAULT`, the 27B and flash lanes' setting, does not reach this lane.
 
 ## Installing, loading, removing
 

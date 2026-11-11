@@ -8,7 +8,7 @@ from [BENCHMARKS.md](../../BENCHMARKS.md) and the lane pages it links, nothing h
 |---|---|---|---|---|
 | Qwen3.8 27B NVFP4 · RadixArk, with its DFlash2 draft | SGLang 0.5.22 | [qwen38-27b.md](qwen38-27b.md) | `./switch-model.sh stock` | 44.0 tok/s alone and 80.6 at 4 on 8K-token prompts, 1M window |
 | Qwen3.8 Flash-Next NVFP4 · RadixArk (176B) | SGLang nightly 53295c6 | [qwen38-flash-next.md](qwen38-flash-next.md) | `./switch-model.sh flash` | 47.9 tok/s on code, on one box |
-| Qwen3.8 Flash-Next FP4-Local · NVIDIA | vLLM b12x build 8244d1c | [qwen38-flash-next-fp4-local.md](qwen38-flash-next-fp4-local.md) | `./switch-model.sh flash-local` | 55.4 tok/s, twice the flash lane's KV cache |
+| Qwen3.8 Flash-Next FP4-Local · NVIDIA | vLLM b12x build 8244d1c | [qwen38-flash-next-fp4-local.md](qwen38-flash-next-fp4-local.md) | `./switch-model.sh flash-local` | 55.4 tok/s at `xhigh`, twice the flash lane's KV cache |
 | Nemotron 3.5 Bolt 24GB · NVIDIA | vLLM nightly 77154ca6 + b12x 1.5.1 | [nemotron-35-bolt.md](nemotron-35-bolt.md) | `./switch-model.sh nemotron` | 140 tok/s on code alone, the default of a 64 GB box |
 | Nemotron 3.5 Super VL NVFP4 · NVIDIA | vLLM nightly 77154ca6 + b12x 1.5.1 | [nemotron-35-super-vl.md](nemotron-35-super-vl.md) | `./switch-model.sh nemotron-super` | 69.5 tok/s on code alone, a 1M window with images and video |
 | Kolibri-1 FP8 · Aleph Alpha (German) | vLLM 0.29.0 + Aleph Alpha plugin 1.0.0 | [kolibri-1.md](kolibri-1.md) | `./switch-model.sh kolibri` | 48 tok/s alone, German-first |

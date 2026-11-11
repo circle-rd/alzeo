@@ -24,6 +24,11 @@
 # included (FLASH_LOCAL_PLE_DIR= brings the default back). The copies the lane made are listed in
 # their folder, and they alone are ever removed there.
 #
+# THE REASONING EFFORT a request that names none gets is lean, as on the other Qwen lanes (LEAN.md):
+# FLASH_LOCAL_EFFORT=xhigh gives it the one its model card ships, xhigh, the lane's default until
+# v1.46.4, and the choice holds for every run after, a Load from the cockpit included
+# (FLASH_LOCAL_EFFORT=lean brings the default back). A request still names any level it wants.
+#
 # install.sh puts this lane's unit in on every plain install, like the other lanes, and its first
 # Load from the cockpit pulls its image and fetches its checkpoint; ./install.sh --no-flash-local
 # leaves it out of the run that passes it. It takes a checkpoint of 102 GB and an image
@@ -137,7 +142,7 @@ if [ "$ACTION" = uninstall ]; then
   vlane_uninstall_runtime qwen38-flash-local "$FLASH_LOCAL_IMAGE" "$FLASH_LOCAL_REPO"
   pin_untag flash-local
   rm -f "$CONFIG_DIR/chat-template-flash-local.jinja" "$CONFIG_DIR/flash-local-ple-dir" "$CONFIG_DIR/flash-local-files.sh" \
-        "$CONFIG_DIR/flash-local-context" "$CONFIG_DIR/flash-local-yarn.json"
+        "$CONFIG_DIR/flash-local-context" "$CONFIG_DIR/flash-local-yarn.json" "$CONFIG_DIR/flash-local-effort"
   # The seccomp profile is the Ornith lane's too: it stays while that lane's unit reads it.
   if [ -f "$LANES_UNIT_DIR/qwen38-ornith-122b.service" ]; then
     echo "seccomp-io-uring.json kept: the Ornith 1.5 122B lane reads it too"
@@ -157,14 +162,6 @@ if [ "$ACTION" = uninstall ]; then
   done <<< "$TABLE_DIRS"
   exit 0
 fi
-
-# The checkpoint's own chat template, with this box's fixes (patch-template.py) and the default its
-# model card ships, xhigh: Hasan's choice for this lane (2026-10-19), the lean level offered beside
-# it. Written again at every install and every switch; left as it is, mtime included, when nothing
-# changed.
-TEMPLATE="$CONFIG_DIR/chat-template-flash-local.jinja"
-TEMPLATE_FIXES=(LEAN_DEFAULT=0)
-lane_template(){ vlane_template "$TEMPLATE" "${TEMPLATE_FIXES[@]}"; }
 
 # The n-gram table: where the engine reads it, copied first when the cache is on another disk than
 # the home directory's (ple-table.py). TABLE_MOUNTS is the unit's -v arguments for the copies, empty
@@ -210,9 +207,41 @@ elif [ "$(head -1 "$CONTEXT_CHOICE" 2>/dev/null)" = 1m ]; then
 else
   FLASH_LOCAL_CONTEXT=native
 fi
-# The choice given, kept for the runs after (a Load stages the unit with none of the user's environment): by the render
-# that takes it, and by --prepare, which renders nothing. A refused one is not kept (render_unit).
+# FLASH_LOCAL_EFFORT: the reasoning effort a request that names none gets. lean (or empty), the default since v1.46.4,
+# as on the other Qwen lanes; xhigh, the one the model card ships, the lane's default from v1.37.0 to v1.46.3 (Hasan's
+# choice of 2026-10-19). Measured on the reference box (2026-11-11, 4 requests at a time through the proxy, the card's
+# sampling): asked for a short story of about 800 characters within 5,000 tokens, the lane answered nothing 24 times of
+# 32 at xhigh, every token spent reasoning, and 0 times of 24 at lean, medium and low; a long JSON answer took a median
+# of 1,007 s and 21,260 tokens at xhigh, 59 s and 1,427 at lean (CHANGELOG, v1.46.4). Kept for the runs after in a file
+# of its own, as the window is: the template is written again at every install and every Load, which runs with none of
+# the user's environment. lean (or empty) removes it. Read here, kept with the window's choice (keep_choice).
+EFFORT_CHOICE="$CONFIG_DIR/flash-local-effort"; EFFORT_GIVEN=""
+if [ -n "${FLASH_LOCAL_EFFORT+set}" ]; then
+  case "$FLASH_LOCAL_EFFORT" in
+    xhigh) ;;
+    ""|lean) FLASH_LOCAL_EFFORT=lean ;;
+    *) die "FLASH_LOCAL_EFFORT=$FLASH_LOCAL_EFFORT: lean (the default, as on the other Qwen lanes) or xhigh (its model card's default)" ;;
+  esac
+  EFFORT_GIVEN=1
+elif [ "$(head -1 "$EFFORT_CHOICE" 2>/dev/null)" = xhigh ]; then
+  FLASH_LOCAL_EFFORT=xhigh
+else
+  FLASH_LOCAL_EFFORT=lean
+fi
+# The checkpoint's own chat template, with this box's fixes (patch-template.py) and the effort chosen above as its
+# default, the other levels offered beside it. LEAN_DEFAULT is always given: unset, patch-template.py keeps the default
+# of the template installed, and every box this lane served at xhigh would have stayed at xhigh. Written again at every
+# install and every switch; left as it is, mtime included, when nothing changed.
+TEMPLATE="$CONFIG_DIR/chat-template-flash-local.jinja"
+TEMPLATE_FIXES=(LEAN_DEFAULT=1)
+if [ "$FLASH_LOCAL_EFFORT" = xhigh ]; then TEMPLATE_FIXES=(LEAN_DEFAULT=0); fi
+lane_template(){ vlane_template "$TEMPLATE" "${TEMPLATE_FIXES[@]}"; }
+# The choices given, kept for the runs after (a Load stages the unit with none of the user's environment): by the render
+# that takes them, after the template, and by --prepare, which renders nothing. A refused one is not kept (render_unit).
 keep_choice(){
+  if [ -n "$EFFORT_GIVEN" ]; then
+    if [ "$FLASH_LOCAL_EFFORT" = xhigh ]; then mkdir -p "$CONFIG_DIR" && echo xhigh > "$EFFORT_CHOICE"; else rm -f "$EFFORT_CHOICE"; fi
+  fi
   [ -n "$CONTEXT_GIVEN" ] || return 0
   if [ "$FLASH_LOCAL_CONTEXT" = 1m ]; then mkdir -p "$CONFIG_DIR" && echo 1m > "$CONTEXT_CHOICE"; else rm -f "$CONTEXT_CHOICE"; fi
 }

@@ -20,8 +20,9 @@ system prompt as "system": the served template refuses "developer");
 pi's settings.json adds the default model,
 modelThinkingLevels "off" for the Qwen models (unset sends no effort field: the
 installed template's default, lean, or xhigh on a box installed with LEAN_DEFAULT=0
-and on the Qwen3.8 Flash-Next FP4-Local lane) and "high" for Kolibri-1, the two
-Nemotron lanes and Ornith 1.5 122B, which are sent their effort (EFFORT_FIELD),
+and on the Qwen3.8 Flash-Next FP4-Local lane installed with FLASH_LOCAL_EFFORT=xhigh)
+and "high" for Kolibri-1, the two Nemotron lanes and Ornith 1.5 122B, which are
+sent their effort (EFFORT_FIELD),
 keepRecentTokens from the artifact's compaction block and per-lane reserveTokens =
 the lane's output cap. omp
 gets the same values re-serialized: the same models array, thinking block
@@ -29,7 +30,8 @@ added, inputLimits and pi's compat dropped (its schema has no room for them);
 default provider + model id -> modelRoles.default. The thinking block lists
 the template's own tiers (the artifact's variants, lean included, what pi's
 fixed enum cannot offer) with defaultLevel the installed template's default (lean, or xhigh on a
-box installed with LEAN_DEFAULT=0); compat carries
+box installed with LEAN_DEFAULT=0 and on the FP4-Local lane with FLASH_LOCAL_EFFORT=xhigh; xhigh
+too when no template is there yet and the artifact lists xhigh first); compat carries
 thinkingFormat qwen-chat-template, qwenTemplateReasoningEffort and a
 reasoningEffortMap, which route the pick onto
 chat_template_kwargs.reasoning_effort alone, what the patched template reads
@@ -241,9 +243,9 @@ OMP_LEVEL = {"lean": "minimal", "low": "low", "medium": "medium", "minimal": "mi
 
 # The patched template each Qwen lane reads, beside the configs this writes (patch-template.py). Its
 # default is the effort a request that names none gets: lean on a box installed as is, Qwen's xhigh on
-# one installed with LEAN_DEFAULT=0. omp sends its default level on every request, so it starts there:
-# it took lean for every patched template, and a LEAN_DEFAULT=0 box got lean in omp alone (found in
-# review, 2026-10-20).
+# one installed with LEAN_DEFAULT=0, and on the FP4-Local lane installed with FLASH_LOCAL_EFFORT=xhigh.
+# omp sends its default level on every request, so it starts there: it took lean for every patched
+# template, and a LEAN_DEFAULT=0 box got lean in omp alone (found in review, 2026-10-20).
 LANE_TEMPLATE = {"qwen38": "chat-template-sglang.jinja", "flashnext": "chat-template-flashnext.jinja",
                  "flash-local": "chat-template-flash-local.jinja"}
 TEMPLATE_DEFAULT = re.compile(r"reasoning_effort\s*\|\s*default\(\s*['\"]([a-z]+)['\"]\s*\)")
@@ -274,8 +276,13 @@ def omp_thinking(tiers, default_effort=None):
     compat = {"thinkingFormat": "qwen-chat-template"}
     if not levels:
         return None, compat
-    if (tiers and tiers[0] == "xhigh") or (default_effort == "xhigh" and "xhigh" in levels):
-        default = "xhigh"             # Qwen's own default: listed first (oc-flash-local.py), or kept by the template
+    # The installed template decides where it is there, the first tier only where it is not: install.sh writes the
+    # opencode config before the FP4-Local lane's installer writes its template again, and a Load keeps the variants of
+    # an entry already there, so the artifact can list first another level than the one the template serves (v1.46.4).
+    if default_effort == "xhigh" and "xhigh" in levels:
+        default = "xhigh"             # Qwen's own default, kept by the template (LEAN_DEFAULT=0, FLASH_LOCAL_EFFORT=xhigh)
+    elif default_effort is None and tiers and tiers[0] == "xhigh":
+        default = "xhigh"             # no template there yet: its provider lists its default first (oc-flash-local.py)
     elif "lean" in tiers and "minimal" in levels:
         default = "minimal"           # the patched Qwen template's own default
     elif "none" in tiers and "high" in levels:

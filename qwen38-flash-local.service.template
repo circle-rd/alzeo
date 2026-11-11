@@ -27,9 +27,10 @@ ExecStartPre=/bin/bash __HOME__/.config/qwen38/engine-preflight.sh qwen38-flash-
 # the NVFP4 experts and MXFP8 layers read by b12x, the n-gram embedding table read from the
 # checkpoint's own files over io_uring with no table written beside it, the KV cache in FP8, a
 # window of 262,144 tokens, MTP drafting 4 tokens, 8 requests at a time, a memory share of 0.8),
-# with this box's port and key and the reasoning effort the card's chat template defaults to
-# (xhigh), served under a name of its own, and one setting the card does not give, PyTorch's
-# allocator (below). docs/flash-local-lane.md says what was measured.
+# with this box's port and key and the card's chat template patched as the other Qwen lanes' are
+# (lean as its default effort, or the card's xhigh: install-flash-local.sh), served under a name of
+# its own, and one setting the card does not give, PyTorch's allocator (below).
+# docs/flash-local-lane.md says what was measured.
 # PYTORCH_CUDA_ALLOC_CONF: vLLM loads the weights with PyTorch's allocator splitting no block above
 # 20 MiB, so the blocks b12x frees while it lays out the experts' NVFP4 scales are not used again,
 # and the allocator's cache grows until the GPU's driver refuses it memory, then drops it at once.

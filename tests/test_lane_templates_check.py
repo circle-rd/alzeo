@@ -27,6 +27,10 @@ class TheLanesItKnows(unittest.TestCase):
         self.assertEqual(specs["ornith-122b"], {"patches": "system-reminder,tool-reference"})
         self.assertEqual(specs["stock"], {})
         self.assertIsNone(specs["kolibri"])
+        # the Qwen3.8 Flash-Next FP4-Local lane at its default, lean (v1.46.4), given as such: left unset, the patcher
+        # keeps the default of the template installed, xhigh on every box this lane served until then. The line that
+        # moves it to xhigh is FLASH_LOCAL_EFFORT's, below the one this check reads.
+        self.assertEqual(specs["flash-local"], {"LEAN_DEFAULT": "1"})
 
     def test_each_kolibri_checkpoint_at_its_own_pin(self):
         # the check read only the NVFP4's pin, while the FP8 is the lane's default (2026-10-24)

@@ -95,10 +95,10 @@ class TheStagedUnit(unittest.TestCase):
         self.assertIn("--host 127.0.0.1 --port 30000", unit)
         r = subprocess.run(["bash", "-n", "-c", exec_command(unit)], capture_output=True, text=True)
         self.assertEqual(r.returncode, 0, r.stderr)
-        # what the unit reads at its start is there: the filter, the template with xhigh as its default
+        # what the unit reads at its start is there: the filter, the template with lean as its default (v1.46.4)
         cfg = self.box.home / ".config" / "qwen38"
         self.assertEqual((cfg / "seccomp-io-uring.json").read_bytes(), (REPO / "seccomp-io-uring.json").read_bytes())
-        self.assertIn("reasoning_effort|default('xhigh')", (cfg / "chat-template-flash-local.jinja").read_text())
+        self.assertIn("reasoning_effort|default('lean')", (cfg / "chat-template-flash-local.jinja").read_text())
 
     def test_its_boot_leaves_the_box_its_memory(self):
         # vLLM loads the weights with PyTorch's allocator splitting no block above 20 MiB: the blocks b12x
@@ -539,6 +539,122 @@ class TheMillionTokenWindow(unittest.TestCase):
         self.assertEqual({k: t["rope_parameters"][k] for k in self.CONFIG["text_config"]["rope_parameters"]},
                          self.CONFIG["text_config"]["rope_parameters"])
 
+
+class TheEffortARequestThatNamesNoneGets(unittest.TestCase):
+    """v1.46.4: the lane answers at lean when a request names no effort, as the other Qwen lanes do, and
+    FLASH_LOCAL_EFFORT=xhigh gives it its model card's xhigh, its default from v1.37.0 to v1.46.3: at xhigh it answered
+    nothing 24 times of 32 to a request for a text of about 800 characters, every token spent reasoning (the reference
+    box, 2026-11-11). The choice is kept for the Loads after, which stage the unit with none of the user's environment."""
+
+    def setUp(self):
+        self.box = Box()
+        self.cfg = self.box.home / ".config" / "qwen38"
+        self.template = self.cfg / "chat-template-flash-local.jinja"
+        self.choice = self.cfg / "flash-local-effort"
+
+    def tearDown(self):
+        shutil.rmtree(self.box.t, ignore_errors=True)
+
+    def default(self):
+        """The effort the written template gives a request that names none."""
+        m = re.search(r"reasoning_effort\|default\('([a-z]+)'\)", self.template.read_text())
+        return m.group(1) if m else None
+
+    def test_lean_by_default_xhigh_when_asked_and_kept_for_the_loads_after(self):
+        rc, out = self.box.stage(FLASH_LOCAL_PLE_DIR="none")
+        self.assertEqual((rc, self.default()), (0, "lean"), out)
+        self.assertIn("Supported types are lean (default), xhigh, medium, and low.", self.template.read_text())
+        self.assertFalse(self.choice.exists())
+        # the 27B and flash lanes' LEAN_DEFAULT, left in a shell, does not reach this lane: its own setting does
+        rc, out = self.box.stage(FLASH_LOCAL_PLE_DIR="none", LEAN_DEFAULT="0")
+        self.assertEqual((rc, self.default()), (0, "lean"), out)
+        rc, out = self.box.stage(FLASH_LOCAL_PLE_DIR="none", FLASH_LOCAL_EFFORT="xhigh")
+        self.assertEqual((rc, self.default()), (0, "xhigh"), out)
+        self.assertIn("Supported types are lean, xhigh (default), medium, and low.", self.template.read_text())
+        self.assertEqual(self.choice.read_text(), "xhigh\n")
+        rc, out = self.box.stage(FLASH_LOCAL_PLE_DIR="none")          # a Load: none of the user's environment
+        self.assertEqual((rc, self.default()), (0, "xhigh"), out)
+        for back in ("lean", ""):                                    # lean, or empty, brings the default back
+            with self.subTest(given=back):
+                rc, out = self.box.stage(FLASH_LOCAL_PLE_DIR="none", FLASH_LOCAL_EFFORT="xhigh")
+                self.assertEqual((rc, self.default()), (0, "xhigh"), out)
+                rc, out = self.box.stage(FLASH_LOCAL_PLE_DIR="none", FLASH_LOCAL_EFFORT=back)
+                self.assertEqual((rc, self.default()), (0, "lean"), out)
+                self.assertFalse(self.choice.exists())
+                rc, out = self.box.stage(FLASH_LOCAL_PLE_DIR="none")
+                self.assertEqual((rc, self.default()), (0, "lean"), out)
+
+    def test_an_unknown_value_is_refused_and_changes_nothing(self):
+        rc, out = self.box.stage(FLASH_LOCAL_PLE_DIR="none", FLASH_LOCAL_EFFORT="xhigh")
+        self.assertEqual(rc, 0, out)
+        written = self.template.read_text()
+        for bad in ("max", "high", "medium", "XHIGH", "lean "):
+            with self.subTest(value=bad):
+                rc, out = self.box.stage(FLASH_LOCAL_PLE_DIR="none", FLASH_LOCAL_EFFORT=bad)
+                self.assertNotEqual(rc, 0, out)
+                self.assertIn(f"FLASH_LOCAL_EFFORT={bad}: lean (the default, as on the other Qwen lanes) or xhigh", out)
+                self.assertEqual(self.template.read_text(), written)
+                self.assertEqual(self.choice.read_text(), "xhigh\n")
+
+    def test_a_box_served_xhigh_by_v1_46_3_answers_at_lean_once_updated(self):
+        # v1.46.3 wrote the template with LEAN_DEFAULT=0. Left unset, the patcher keeps the default of the template
+        # installed, so the installer says LEAN_DEFAULT=1, or every such box would have stayed at xhigh
+        def patch(**env):
+            r = subprocess.run([sys.executable, str(REPO / "patch-template.py"), str(self.box.hf), str(self.template),
+                                PINS["FLASH_LOCAL_REV"], PINS["FLASH_LOCAL_REPO"]], capture_output=True, text=True,
+                               timeout=60, env={"PATH": "/usr/bin:/bin", **env})
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        patch(LEAN_DEFAULT="0")                                       # as install-flash-local.sh of v1.46.3 did
+        self.assertEqual(self.default(), "xhigh")
+        patch()
+        self.assertEqual(self.default(), "xhigh", "the patcher kept the installed default: the installer must say lean")
+        rc, out = self.box.stage(FLASH_LOCAL_PLE_DIR="none")          # the update's run, or the lane's next Load
+        self.assertEqual((rc, self.default()), (0, "lean"), out)
+        self.assertFalse(self.choice.exists())
+
+    def run_lines(self, mode, tail, **env):
+        """The installer's own lines from the end of its --uninstall to the render (the template, the choices kept, the
+        unit), with vllm-lane.sh's, then `tail`, as `mode` runs them: no sudo, no docker."""
+        text = (REPO / "install-flash-local.sh").read_text()
+        uninstall = text.index('if [ "$ACTION" = uninstall ]; then')
+        part = text[text.index("\n  exit 0\nfi\n", uninstall) + len("\n  exit 0\nfi\n"):
+                    text.index("# Step 4, the one part that needs root")]
+        script = "\n".join(["set -euo pipefail", 'die(){ echo "die: $*"; exit 1; }', "step(){ :; }", f'HERE="{REPO}"',
+                            f'. "{REPO}/vllm-lane.sh"', "UNIT=qwen38-flash-local.service", f'CONFIG_DIR="{self.cfg}"',
+                            f'HF_CACHE="{self.box.hf}"', f'MODEL="{PINS["FLASH_LOCAL_REPO"]}"',
+                            f'MODEL_REV="{PINS["FLASH_LOCAL_REV"]}"', f"MODE={mode}",
+                            "LOCAL_IMAGE=img GMU=0.8 SEQS=8 ENGINE_BIND=127.0.0.1 PORT=30000", part, tail])
+        r = subprocess.run(["bash", "-c", script], capture_output=True, text=True, timeout=60,
+                           env={"PATH": "/usr/bin:/bin", "HOME": str(self.box.home), **env})
+        return r.returncode, r.stdout + r.stderr
+
+    def test_units_only_and_prepare_keep_the_choice_for_the_load(self):
+        # FLASH_LOCAL_EFFORT=xhigh ./install-flash-local.sh --units-only: its lines (the template when the checkpoint is
+        # in the cache, then the unit), before the checkpoint is there and once it is, then --prepare's
+        units = ('vlane_template_if_cached "$TEMPLATE" "${TEMPLATE_FIXES[@]}"\n'
+                 f'render_unit "{self.box.t}/units-only.service"')
+        source = self.box.hf / "hub" / HUB / "snapshots" / PINS["FLASH_LOCAL_REV"] / "chat_template.jinja"
+        source.rename(source.with_name("away.jinja"))
+        rc, out = self.run_lines("units", units, FLASH_LOCAL_EFFORT="xhigh")
+        self.assertEqual(rc, 0, out)
+        self.assertFalse(self.template.exists(), "a template written with no checkpoint")
+        self.assertEqual(self.choice.read_text(), "xhigh\n")
+        source.with_name("away.jinja").rename(source)
+        rc, out = self.box.stage(FLASH_LOCAL_PLE_DIR="none")          # its Load, the checkpoint fetched
+        self.assertEqual((rc, self.default()), (0, "xhigh"), out)
+        rc, out = self.run_lines("units", units, FLASH_LOCAL_EFFORT="lean")
+        self.assertEqual((rc, self.default(), self.choice.exists()), (0, "lean", False), out)
+        rc, out = self.run_lines("units", units, FLASH_LOCAL_EFFORT="xhigh")
+        self.assertEqual((rc, self.default(), self.choice.read_text()), (0, "xhigh", "xhigh\n"), out)
+        text = (REPO / "install-flash-local.sh").read_text()
+        block = text[text.index('if [ "$MODE" = prepare ]; then'):]
+        block = block[:block.index("\nfi\n") + 4].replace("exit 0", ":")
+        rc, out = self.run_lines("prepare", block, FLASH_LOCAL_EFFORT="")
+        self.assertEqual((rc, self.choice.exists()), (0, False), out)
+        rc, out = self.run_lines("prepare", block, FLASH_LOCAL_EFFORT="xhigh")
+        self.assertEqual((rc, self.choice.read_text()), (0, "xhigh\n"), out)
+
+
 class TheLoadSetsTheClientsForTheWindow(unittest.TestCase):
     """A Load of the FP4-Local lane gives opencode (and through its config pi and claude-local) the pair of the window its
     unit runs (FLASH_LOCAL_CONTEXT=1m, v1.45.2). It added the provider when it was missing and never touched one already
@@ -599,6 +715,23 @@ class TheLoadSetsTheClientsForTheWindow(unittest.TestCase):
                     self.assertEqual(c["compaction"]["preserve_recent_tokens"], keep)
                     self.assertLess(keep, ctx - 20000, "a compaction keeps less than its threshold")
 
+    def test_the_provider_a_load_adds_lists_first_the_level_its_template_serves(self):
+        # lean since v1.46.4, or xhigh where the lane's installer keeps FLASH_LOCAL_EFFORT=xhigh beside the key: a picker
+        # lists first what a request that names no level gets
+        choice = self.cfg / "flash-local-effort"
+        for kept, first in ((None, "lean"), ("xhigh", "xhigh")):
+            with self.subTest(kept=kept):
+                for c in self.configs:
+                    d = json.loads(c.read_text())
+                    del d["provider"]["flash-local"]
+                    c.write_text(json.dumps(d, indent=2) + "\n")
+                if kept:
+                    choice.write_text(kept + "\n")
+                for c in self.load(262144):
+                    variants = c["provider"]["flash-local"]["models"]["qwen3.8-flash-next-fp4"]["variants"]
+                    self.assertEqual(list(variants)[0], first)
+                    self.assertEqual(sorted(variants), ["lean", "low", "medium", "xhigh"])
+
 
 class TheInstallSetsTheClientsForTheWindow(unittest.TestCase):
     """install.sh's own blocks: the user's opencode config gets the FP4-Local pair of the unit's window, as the compaction
@@ -635,6 +768,17 @@ class TheInstallSetsTheClientsForTheWindow(unittest.TestCase):
         r = subprocess.run(["bash", "-c", block + 'echo "after=${FLASH_LOCAL_CONTEXT-unset}"'], capture_output=True,
                            text=True, timeout=30, env={"PATH": "/usr/bin:/bin", "FLASH_LOCAL_CONTEXT": "1m"})
         self.assertIn("FLASH_LOCAL_CONTEXT=1m ./install-flash-local.sh --units-only", r.stdout)
+        self.assertIn("after=unset", r.stdout)
+
+    def test_flash_local_effort_is_not_read_by_the_install(self):
+        # the same for the lane's default effort (v1.46.4): the opencode config is written before the lane's installer
+        # runs, so a level given to install.sh would have reached the template a run before the clients' list
+        start = self.TEXT.index('if [ -n "${FLASH_LOCAL_EFFORT+set}" ]; then')
+        block = self.TEXT[start:self.TEXT.index("\nfi\n", start) + 4]
+        self.assertLess(start, self.TEXT.index("install-flash-local.sh\" \"$(side_mode"))
+        r = subprocess.run(["bash", "-c", block + 'echo "after=${FLASH_LOCAL_EFFORT-unset}"'], capture_output=True,
+                           text=True, timeout=30, env={"PATH": "/usr/bin:/bin", "FLASH_LOCAL_EFFORT": "xhigh"})
+        self.assertIn("FLASH_LOCAL_EFFORT=xhigh ./install-flash-local.sh --units-only", r.stdout)
         self.assertIn("after=unset", r.stdout)
 
 

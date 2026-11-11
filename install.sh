@@ -90,6 +90,13 @@ if [ -n "${FLASH_LOCAL_CONTEXT+set}" ]; then
   printf 'NOTE: FLASH_LOCAL_CONTEXT is not read by ./install.sh: run FLASH_LOCAL_CONTEXT=%s ./install-flash-local.sh --units-only,\n      then Load the lane (docs/flash-local-lane.md). This run keeps the window chosen before.\n' "$FLASH_LOCAL_CONTEXT"
   unset FLASH_LOCAL_CONTEXT
 fi
+# FLASH_LOCAL_EFFORT, that lane's default reasoning effort (v1.46.4), is its own installer's to set too: this run writes
+# the opencode config before it runs that installer, so a level chosen here would have reached the lane's template and
+# not the clients' list of its levels before the run after. Not read, the lane keeps the level chosen before.
+if [ -n "${FLASH_LOCAL_EFFORT+set}" ]; then
+  printf 'NOTE: FLASH_LOCAL_EFFORT is not read by ./install.sh: run FLASH_LOCAL_EFFORT=%s ./install-flash-local.sh --units-only,\n      then Load the lane (docs/flash-local-lane.md). This run keeps the level chosen before.\n' "$FLASH_LOCAL_EFFORT"
+  unset FLASH_LOCAL_EFFORT
+fi
 # the side lanes' checkpoints, which their installers read from the environment (2026-10-17)
 _ENV_KOLIBRI_VARIANT="${KOLIBRI_VARIANT:-}"; _ENV_IMAGE_MODEL="${IMAGE_MODEL:-}"; _ENV_VIDEO_VARIANT="${VIDEO_VARIANT:-}"
 # A run installs the text lane that does not serve as well, beside the one it serves: it

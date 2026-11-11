@@ -115,8 +115,9 @@ has no vision. `/v1/systemone` needs one of the SGLang Qwen lanes and says so th
 
 The Qwen3.8 Flash-Next FP4-Local lane (vLLM, [docs/flash-local-lane.md](flash-local-lane.md)) serves the flash
 model with the flash lane's chat template, so a client sees the Qwen levels below, `lean`, `low`,
-`medium` and `xhigh`, with one difference: a request that names no level gets `xhigh`, its model
-card's default. `none` turns the reasoning off there too (the proxy says it in the template's words,
+`medium` and `xhigh`, and a request that names no level gets `lean` there too since v1.46.4 (`xhigh`,
+its model card's default, on a box that installed the lane with `FLASH_LOCAL_EFFORT=xhigh`, and on
+every box until then). `none` turns the reasoning off there too (the proxy says it in the template's words,
 v6.43). Its reasoning comes in the `reasoning` field (vLLM's name), it reads images sent inside the
 request (a data URL) and fetches no URL, and its window is 262,144 tokens (1,048,576 with `FLASH_LOCAL_CONTEXT=1m`, docs/flash-local-lane.md). `/v1/systemone` is not
 served on it: the endpoint says which lanes serve it.

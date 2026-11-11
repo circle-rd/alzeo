@@ -15,8 +15,8 @@ Dimitris Kontokostas's pull request #55.
 
 ## Measured on our box (ASUS Ascent GX10, 128 GB)
 
-- **55.4 tok/s** greedy median on `./bench.sh`, at its default reasoning effort, `xhigh`.
-- At the `lean` effort: **47.4 tok/s alone** and **106.6 in all at 8 requests** on real text at the
+- **55.4 tok/s** greedy median on `./bench.sh`, at the `xhigh` reasoning effort, its default until v1.46.4.
+- At its default effort, `lean`: **47.4 tok/s alone** and **106.6 in all at 8 requests** on real text at the
   agents' sampling, **GSM8K 97.64%** (1,314 questions) and **HumanEval 98.17%** (164).
 - A KV cache of **921,090 to 984,833 tokens** in FP8, three and a half times its 262,144-token window.
 - **Reads images**: a solid red and a solid blue test image, each named right (2026-11-06).

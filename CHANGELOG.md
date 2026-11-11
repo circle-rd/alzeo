@@ -1,5 +1,81 @@
 # Changelog
 
+## v1.46.4 (2026-11-11): the Qwen3.8 Flash-Next FP4-Local lane answers at the lean effort by default, as the other Qwen lanes do
+
+**At `xhigh`, the lane often answered nothing.** A request that names no reasoning effort got `xhigh` on the Qwen3.8
+Flash-Next FP4-Local lane, the default its model card ships and the one it served since v1.37.0 (Hasan's choice of
+2026-10-19), where the 27B and flash lanes give `lean` (LEAN.md). Measured on the reference box on 2026-11-11, through
+the proxy, 4 requests at a time, at the card's sampling (temperature 1.0, top_p 0.95, top_k 20): asked for a short story
+of about 800 characters, in English and in French, within 5,000 tokens, the lane answered nothing 12 times of 16 at its
+default and 12 of 16 with `xhigh` asked by name, 24 of 32 in all, every token spent reasoning, where the model counts
+the letters one by one; at `lean`, `medium` and `low`, it answered 24 times of 24. A long JSON answer (a drug's
+interactions) came back 4 times of 4 at the default, but with 21,260 tokens out in median, 19,145 of them reasoning, in
+1,007 s; at `lean` 8 times of 8 in readable JSON, with 1,427 tokens, 819 of them reasoning, in 59 s, and in 97 s at
+`medium`, 87 s at `low`. One limit stays at every level that reasons: a story of exactly 300 characters came back empty
+13 times of 16 at `xhigh` or at the default, and 11 of 12 at `lean`, `medium` and `low`. The length of a prompt is not
+the cause: listing the release headings of the first 6,000 to 48,000 characters of this CHANGELOG (1,828 to 13,681
+tokens of prompt), the lane was right 24 times of 24, 16 at `xhigh` and 8 at `medium`, with 129 to 345 tokens of
+reasoning.
+
+**`lean` by default, `xhigh` an option.** `install-flash-local.sh` writes the lane's chat template with `lean` as its
+default, as on the other Qwen lanes, and says so to the patcher (`LEAN_DEFAULT=1`): left unset, `patch-template.py`
+keeps the default of the template already installed, and every box would have stayed at `xhigh`.
+`FLASH_LOCAL_EFFORT=xhigh` gives the template the card's `xhigh` back, `lean` or empty the default, and any other value
+is refused with the two it takes. The choice is kept for the runs after in `~/.config/qwen38/flash-local-effort`, as
+the window of `FLASH_LOCAL_CONTEXT` is in a file of its own, by the same function at the same moments (a render that
+took it, and `--prepare`): a Load from the cockpit writes the template again with none of the user's environment.
+`--uninstall` removes it with the lane's other files. `./install.sh` does not read the variable, says so and names the
+command, as it does for the window: it writes the opencode config before it runs the lane's installer. opencode's
+provider for the lane (`oc-flash-local.py`) lists the four levels in the other Qwen lanes' order, the lane's default
+first, read from that choice and not from the template, which `install.sh` writes after the opencode config.
+`pi-gen.py` starts omp at the default of the installed template wherever it is there, and at the level the artifact
+lists first only where it is not: that level decided first, and the two can differ for a while (an update writes the
+artifact before the lane's installer writes the template, and a Load keeps an entry already there). The CI's check of
+every lane's template (`tests/lane-templates-check.py`) renders this one at `lean`. The lane's page, its model page,
+the README, BENCHMARKS.md, `docs/clients.md`, `docs/opencode.md`, `docs/pi.md` and the cockpit's note on the lane say
+`lean` where they said `xhigh`, and the lane's page has a section on the level, with these measures. The figures
+measured at `xhigh` keep their numbers and say their level: `bench.sh`'s reference for the lane, a greedy median of
+55.1 to 55.4 tok/s (2026-10-20), was measured at `xhigh`, and a run of `bench.sh`, which names no level, now measures
+`lean` and says it compares with that reference only on a box that keeps `xhigh`. The lane's measures at `lean` (47.4
+tok/s alone and 106.6 in all at 8 requests on real text, GSM8K and HumanEval) are its default's again.
+
+**Tests.** `tests/test_flash_local_stage.py`: the template a stage writes has `lean` as its default, and a
+`LEAN_DEFAULT=0` left in the shell does not change it; `FLASH_LOCAL_EFFORT=xhigh` writes `xhigh`, kept for the stage
+after with no variable, and `lean` or empty takes it back; an unknown value is refused and changes neither the template
+nor the choice; a template written as v1.46.3 wrote it goes to `lean` at the next run (the patcher alone keeps it at
+`xhigh`); `--units-only` keeps the choice before the checkpoint is in the cache, for the Load that writes the template,
+and `--prepare` keeps it too; the provider a Load adds lists the level kept first. `tests/test_install_oc_artifact.py`:
+the generator of `install.sh` lists `lean` first, `xhigh` where the choice is kept. `tests/test_pi_gen.py`: omp starts
+at the installed template's level whatever the artifact lists first, and at the level it lists first before the
+template is there. `tests/test_flash_local_uninstall.py`: `--uninstall` removes the choice.
+`tests/test_lane_templates_check.py`: the check reads the lane at `LEAN_DEFAULT=1`. `install.sh` unsets
+`FLASH_LOCAL_EFFORT` and names the command. Each of these tests, new or changed, fails on v1.46.3 and passes here.
+
+**Two tests of the pair, steadied.** The first run of `main` on v1.46.3 failed on two tests of
+`tests/test_proxy_pair_one_model_inprocess.py` that had passed eleven minutes earlier. One sends two requests in a row
+to a box whose engine dies: a handler leaves the pair's count a moment after its client read the last byte, and sent in
+that moment the second request went to the other box, whose answer has no death in it. The test waits for the count to
+be 0 before each read: with a generation counted 0.5 s longer, the test as it was fails as on the runner and this one
+passes. The other waited for "refused this box's certificate" in the journal of a box whose certificate the other box
+refuses. Under TLS 1.3 the refusal comes after this box's side of the handshake, and when the other box had closed the
+connection before the request went out, this box said "does not answer (EOF occurred in violation of protocol)": the
+request ran here either way, as it must. The test takes either line and still refuses a box said to have had the
+request. Saying the refusal in that case too is left to a version that changes the proxy.
+
+**What an update does.** The lane's chat template is written again with `lean` as its default where its checkpoint is
+in the cache (elsewhere its first Load writes it), and its unit is written again for one comment, which named `xhigh`.
+A vLLM lane that serves is not restarted by an update: it serves the template it started with, `xhigh` by default, until
+its next start, which the installer says ("NOTE: Qwen3.8 Flash-Next FP4-Local runs older files than the ones installed
+now (its unit, its runtime or its start scripts); it runs these after: sudo systemctl restart
+qwen38-flash-local.service   (or Load it again from the cockpit)") and the cockpit shows. `FLASH_LOCAL_EFFORT=xhigh
+./install-flash-local.sh --units-only`, then a Load of the lane, keeps the card's level, and an update keeps the level
+chosen. A box installed with `LEAN_DEFAULT=0` keeps `xhigh` on the 27B and flash lanes; that setting never reached this
+lane, whose own is `FLASH_LOCAL_EFFORT`. A client can always name a level per request (`reasoning_effort`). The
+generated opencode config lists `lean` first for the lane; an entry already in the user's own opencode config keeps
+its order, which changes no request: a turn that picks no variant names no level. omp, whose config an update writes
+before the lane's template, starts the lane at `lean` from its next Load at the latest, the one that starts its new
+template. The proxy does not change; the cockpit restarts, as at every release, and its note on the lane says `lean`.
+
 ## v1.46.3 (2026-11-11): a room check says GiB where it counts in GiB, and each vLLM lane's installer names its lane by its official name
 
 **A room check counted in GiB and said GB.** Every room check of the installers, of a lane's first Load and of the

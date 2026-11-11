@@ -32,7 +32,7 @@ class TheUninstall(unittest.TestCase):
         self.cfg.mkdir(parents=True)
         (self.cfg / "vllm-auth").mkdir()
         for f in ("chat-template-flash-local.jinja", "seccomp-io-uring.json", "flash-local-files.sh",
-                  "flash-local-context", "flash-local-yarn.json"):
+                  "flash-local-context", "flash-local-yarn.json", "flash-local-effort"):
             (self.cfg / f).write_text("x\n")
         self.sd = self.d / "systemd"
         self.sd.mkdir()
@@ -91,9 +91,9 @@ class TheUninstall(unittest.TestCase):
         self.run_block()
         self.assertFalse(f.exists())
         # the 1M window's choice and overrides too: kept, a later install came back to it unasked (code review of
-        # v1.45.2)
+        # v1.45.2); and the effort chosen, for the same reason (v1.46.4)
         for gone in ("chat-template-flash-local.jinja", "seccomp-io-uring.json", "flash-local-files.sh",
-                     "flash-local-context", "flash-local-yarn.json"):
+                     "flash-local-context", "flash-local-yarn.json", "flash-local-effort"):
             self.assertFalse((self.cfg / gone).exists(), gone)
 
     def test_a_folder_with_no_list_is_left_alone(self):
