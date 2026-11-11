@@ -649,11 +649,39 @@ class TheEffortARequestThatNamesNoneGets(unittest.TestCase):
                            env={"PATH": "/usr/bin:/bin", "HOME": str(self.box.home), **env})
         return r.returncode, r.stdout + r.stderr
 
+    def units_lines(self):
+        """--units-only's own lines for the template, as the installer has them, then the render of its unit."""
+        text = (REPO / "install-flash-local.sh").read_text()
+        start = text.index("  lane_table mounts\n", text.index("the image and the checkpoint come with the lane's first Load"))
+        lines = text[start + len("  lane_table mounts\n"):text.index("  install_service\n", start)]
+        self.assertIn("lane_template_if_cached", lines)
+        return lines + f'render_unit "{self.box.t}/units-only.service"'
+
+    def test_units_only_keeps_a_level_given_with_a_window_that_is_refused(self):
+        # the command the note and the lane's page give: its template was written apart from lane_template, and its
+        # choice kept by the render after it only, which a window refused never reached (second review of v1.46.4)
+        moved = json.loads(json.dumps(TheMillionTokenWindow.CONFIG))
+        moved["text_config"]["rope_parameters"]["mrope_section"] = [16, 24, 24]
+        (self.box.hf / "hub" / HUB / "snapshots" / PINS["FLASH_LOCAL_REV"] / "config.json").write_text(json.dumps(moved))
+        rc, out = self.run_lines("units", self.units_lines(), FLASH_LOCAL_EFFORT="xhigh", FLASH_LOCAL_CONTEXT="1m")
+        self.assertNotEqual(rc, 0, out)
+        self.assertEqual((self.default(), self.choice.read_text()), ("xhigh", "xhigh\n"), out)
+        rc, out = self.box.stage(FLASH_LOCAL_PLE_DIR="none")          # the Load after: the level kept
+        self.assertEqual((rc, self.default()), (0, "xhigh"), out)
+
+    def test_a_level_asked_for_by_name_is_not_told_the_lane_went_to_lean(self):
+        # the note is for a box that asked nothing: FLASH_LOCAL_EFFORT=lean on a lane kept at xhigh said "(xhigh until
+        # v1.46.3) ... keeps xhigh" (second review of v1.46.4)
+        rc, out = self.box.stage(FLASH_LOCAL_PLE_DIR="none", FLASH_LOCAL_EFFORT="xhigh")
+        self.assertEqual((rc, self.default()), (0, "xhigh"), out)
+        rc, out = self.box.stage(FLASH_LOCAL_PLE_DIR="none", FLASH_LOCAL_EFFORT="lean")
+        self.assertEqual((rc, self.default()), (0, "lean"), out)
+        self.assertNotIn("from now on", out)
+
     def test_units_only_and_prepare_keep_the_choice_for_the_load(self):
         # FLASH_LOCAL_EFFORT=xhigh ./install-flash-local.sh --units-only: its lines (the template when the checkpoint is
         # in the cache, then the unit), before the checkpoint is there and once it is, then --prepare's
-        units = ('vlane_template_if_cached "$TEMPLATE" "${TEMPLATE_FIXES[@]}"\n'
-                 f'render_unit "{self.box.t}/units-only.service"')
+        units = self.units_lines()
         source = self.box.hf / "hub" / HUB / "snapshots" / PINS["FLASH_LOCAL_REV"] / "chat_template.jinja"
         source.rename(source.with_name("away.jinja"))
         rc, out = self.run_lines("units", units, FLASH_LOCAL_EFFORT="xhigh")

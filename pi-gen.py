@@ -262,7 +262,7 @@ def template_default(out_dir, prov):
     template's; None when unknown."""
     choice = EFFORT_CHOICE.get(prov)
     if choice:
-        kept = (read_text(os.path.join(out_dir, choice)) or "").split("\n", 1)[0].strip()
+        kept = (read_text(os.path.join(out_dir, choice)) or "").split("\n", 1)[0]     # as the installer's head -1
         return "xhigh" if kept == "xhigh" else "lean"
     name = LANE_TEMPLATE.get(prov)
     m = TEMPLATE_DEFAULT.search((read_text(os.path.join(out_dir, name)) if name else None) or "")

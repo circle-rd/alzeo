@@ -257,7 +257,8 @@ time, at the card's sampling (temperature 1.0, top_p 0.95, top_k 20):
 - **Exactly 300 characters**: no answer at every level that reasons, 13 times of 16 at `xhigh` and 11 of
   12 at `lean`, `medium` and `low`. A limit of the model that no level lifts.
 - **A long JSON answer** (a drug's interactions): at the lane's default, `xhigh` then, 4 answers of 4, but
-  21,260 tokens out in median, 19,145 of them reasoning, in 1,007 s; at `lean`, 8 of 8 in readable JSON,
+  21,260 tokens out in median, 19,145 of them reasoning, in 1,007 s, and with `xhigh` asked by name 2
+  answers of 4 empty at 32,000 tokens, 3 of 3 at temperature 0; at `lean`, 8 of 8 in readable JSON,
   1,427 tokens, 819 of them reasoning, in 59 s; at `medium` 97 s, at `low` 87 s.
 - **What the level does not change**: listing the release headings of the first 6,000 to 48,000
   characters of this repository's CHANGELOG (1,828 to 13,681 tokens of prompt), right 24 times of 24, 16

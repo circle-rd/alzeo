@@ -20,19 +20,20 @@ prompt), the lane was right 24 times of 24, 16 at `xhigh` and 8 at `medium`, wit
 **`lean` by default, `xhigh` an option.** `install-flash-local.sh` writes the lane's chat template with `lean` as its
 default, as on the other Qwen lanes, and says so to the patcher (`LEAN_DEFAULT=1`): left unset, `patch-template.py`
 keeps the default of the template already installed, and every box would have stayed at `xhigh`. Where a template that
-defaulted to `xhigh` is about to default to `lean`, the installer says it once, with the command that keeps `xhigh`.
-`FLASH_LOCAL_EFFORT=xhigh` gives the template the card's `xhigh` back, `lean` or empty the default, and any other value
-is refused with the two it takes. The choice is kept for the runs after in `~/.config/qwen38/flash-local-effort`, as
-the window of `FLASH_LOCAL_CONTEXT` is in a file of its own: a Load from the cockpit writes the template again with
-none of the user's environment. It is kept with the template that took it, so a run refused after its template was
-written (a window refused) does not leave a template without its choice, and by `--units-only` and `--prepare`, which
-write no template before the checkpoint is there. `--uninstall` removes it with the lane's other files. `./install.sh`
-does not read the variable, says so and names the command, as it does for the window. opencode's provider for the lane
-(`oc-flash-local.py`) keeps the order of its four levels, `xhigh` first as since v1.37.0: opencode sends no level when
-none is picked, so the order decides no request, and another one would have rewritten the generated config and
-restarted the Agent view's server on every box at its update. `pi-gen.py` starts omp, which sends its level with every
-request, at the lane's default as its installer chose it (`lean`, or the `xhigh` kept), read in that choice and not in
-the template, which an update writes after omp's config. The CI's check of every lane's template
+defaulted to `xhigh` is about to default to `lean`, the installer says it once, with the command that keeps `xhigh`,
+and says nothing to a run that names a level. `FLASH_LOCAL_EFFORT=xhigh` gives the template the card's `xhigh` back,
+`lean` or empty the default, and any other value is refused with the two it takes. The choice is kept for the runs
+after in `~/.config/qwen38/flash-local-effort`, as the window of `FLASH_LOCAL_CONTEXT` is in a file of its own: a Load
+from the cockpit writes the template again with none of the user's environment. It is kept with the template that took
+it, by a stage and by `--units-only` alike, so a run refused after its template was written (a window refused) does not
+leave a template without its choice, and where no template is written (`--prepare`, and `--units-only` before the
+checkpoint is in the cache) by the render of the unit. `--uninstall` removes it with the lane's other files.
+`./install.sh` does not read the variable, says so and names the command, as it does for the window. opencode's
+provider for the lane (`oc-flash-local.py`) keeps the order of its four levels, `xhigh` first as since v1.37.0:
+opencode sends no level when none is picked, so the order decides no request, and another one would have rewritten the
+generated config and restarted the Agent view's server on every box at its update. `pi-gen.py` starts omp, which sends
+its level with every request, at the lane's default as its installer chose it (`lean`, or the `xhigh` kept), read in
+that choice and not in the template, which an update writes after omp's config. The CI's check of every lane's template
 (`tests/lane-templates-check.py`) renders this one at `lean`. The lane's page, its model page, the README,
 BENCHMARKS.md, `docs/clients.md`, `docs/opencode.md`, `docs/pi.md` and the cockpit's note on the lane say `lean` where
 they said `xhigh`, and the lane's page has a section on the level, with these measures. The figures measured at `xhigh`
@@ -45,12 +46,14 @@ compares with that reference only on a box that keeps `xhigh`. The lane's measur
 `LEAN_DEFAULT=0` left in the shell does not change it; `FLASH_LOCAL_EFFORT=xhigh` writes `xhigh`, kept for the stage
 after with no variable, and `lean` or empty takes it back; an unknown value is refused and changes neither the template
 nor the choice; a template written as v1.46.3 wrote it goes to `lean` at the next run (the patcher alone keeps it at
-`xhigh`), which says so once; a level given with a window that is refused is kept with its template; `--units-only`
-keeps the choice before the checkpoint is in the cache, and `--prepare` keeps it too; the provider a Load adds keeps
-the order of its levels; `install.sh` unsets `FLASH_LOCAL_EFFORT` and names the command. `tests/test_pi_gen.py`: omp
-starts at the level the lane's installer chose, whatever the template installed says and whatever order the artifact
-lists. `tests/test_flash_local_uninstall.py`: `--uninstall` removes the choice. `tests/test_lane_templates_check.py`:
-the check reads the lane at `LEAN_DEFAULT=1`. Each of these tests, new or changed, fails on v1.46.3 and passes here.
+`xhigh`), which says so once; a level given with a window that is refused is kept with its template, by a stage and by
+`--units-only`; a run that names a level is not told the lane went to `lean`; `--units-only` keeps the choice before
+the checkpoint is in the cache, and `--prepare` keeps it too; the provider a Load adds keeps the order of its levels;
+`install.sh` unsets `FLASH_LOCAL_EFFORT` and names the command. `tests/test_pi_gen.py`: omp starts at the level the
+lane's installer chose, whatever the template installed says and whatever order the artifact lists.
+`tests/test_flash_local_uninstall.py`: `--uninstall` removes the choice. `tests/test_lane_templates_check.py`: the
+check reads the lane at `LEAN_DEFAULT=1`. Each of these tests, new or changed, fails on v1.46.3 and passes here, but
+the one of the order, which guards what v1.46.3 did.
 
 **Two tests of the pair, steadied.** The first run of `main` on v1.46.3 failed on two tests of
 `tests/test_proxy_pair_one_model_inprocess.py` that had passed eleven minutes earlier. One sends two requests in a row
@@ -69,15 +72,16 @@ in the cache, and the installer says so once (elsewhere, and on a box updated wi
 Load writes it), and its unit is written again for one comment, which named `xhigh`. A vLLM lane that serves is not
 restarted by an update: it serves the template it started with, `xhigh` by default, until its next start, which the
 installer says ("NOTE: Qwen3.8 Flash-Next FP4-Local runs older files than the ones installed now (its unit, its runtime
-or its start scripts); it runs these after: sudo systemctl restart qwen38-flash-local.service (or Load it again from
+or its start scripts); it runs these after: sudo systemctl restart qwen38-flash-local.service   (or Load it again from
 the cockpit)") and the cockpit shows. `FLASH_LOCAL_EFFORT=xhigh ./install-flash-local.sh --units-only`, then a Load of
 the lane, keeps the card's level, and an update keeps the level chosen. A box installed with `LEAN_DEFAULT=0` keeps
 `xhigh` on the 27B and flash lanes; that setting never reached this lane, whose own is `FLASH_LOCAL_EFFORT`, and it
 goes to `lean` there too. A client can always name a level per request (`reasoning_effort`). The generated opencode
 config does not change, so the Agent view's server is not restarted for this lane, and a turn that picks no variant
-names no level, as before. omp's config is written with `lean` for the lane at the update itself: omp names its level
-with every request, so its turns are at `lean` from then on, on a lane that still serves its old template too. The
-proxy does not change; the cockpit restarts, as at every release, and its note on the lane says `lean`.
+names no level, as before. omp's generated config is written with `lean` for the lane at the update itself: omp names
+its level with every request, so its turns are at `lean` once that config is copied again where omp reads it
+(docs/pi.md), on a lane that still serves its old template too. The proxy does not change; the cockpit restarts, as at
+every release, and its note on the lane says `lean`.
 
 ## v1.46.3 (2026-11-11): a room check says GiB where it counts in GiB, and each vLLM lane's installer names its lane by its official name
 

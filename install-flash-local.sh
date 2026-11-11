@@ -238,6 +238,7 @@ if [ "$FLASH_LOCAL_EFFORT" = xhigh ]; then TEMPLATE_FIXES=(LEAN_DEFAULT=0); fi
 # Said where a template that defaulted to xhigh (v1.37.0 to v1.46.3) is about to default to lean: once, as the template
 # written after it says lean.
 effort_note(){
+  [ -z "$EFFORT_GIVEN" ] || return 0             # a level asked for by name needs no telling
   [ "$FLASH_LOCAL_EFFORT" = lean ] || return 0
   grep -q "reasoning_effort|default('xhigh')" "$TEMPLATE" 2>/dev/null || return 0
   echo "NOTE: Qwen3.8 Flash-Next FP4-Local answers at the lean effort by default from now on (xhigh until v1.46.3): FLASH_LOCAL_EFFORT=xhigh ./install-flash-local.sh --units-only, then a Load of the lane, keeps xhigh"
@@ -252,6 +253,15 @@ lane_template(){
   effort_note
   vlane_template "$TEMPLATE" "${TEMPLATE_FIXES[@]}"
   keep_effort
+}
+# The same when the units alone are installed (--units-only), if the pinned checkpoint is in the cache already
+# (vlane_template_if_cached's own condition): with its note and its choice, as --units-only is the command the note
+# and the lane's page give, and its template written apart left the choice to the render after it, which a window
+# refused never reached (found in the second review of v1.46.4). Without the checkpoint, nothing is written or said
+# here: the lane's first Load writes the template, and --units-only keeps the choice for it (keep_choice).
+lane_template_if_cached(){
+  [ -f "$HF_CACHE/hub/models--${MODEL//\//--}/snapshots/$MODEL_REV/chat_template.jinja" ] || return 0
+  lane_template
 }
 # The choices given, kept for the runs after (a Load stages the unit with none of the user's environment): by the render
 # that takes them, after the template, and by --prepare, which renders nothing. A refused one is not kept (render_unit).
@@ -313,7 +323,7 @@ lane_table(){  # $1 copy: make the copies whole first; mounts: only name the cop
 # The unit, rendered for this box: written to $1. Its start checks what the engine reads before it runs: the
 # checkpoint's index at the pinned revision, and each copy of the table its mounts name.
 refuse_window(){
-  die "the 1M window's overrides could not be written (the line above says why). Nothing was changed: the lane keeps" \
+  die "the 1M window's overrides could not be written (the line above says why). The unit was not changed: the lane keeps" \
       "its window, and FLASH_LOCAL_CONTEXT=native ./install-flash-local.sh --units-only sets the native one"
 }
 render_unit(){
@@ -412,8 +422,7 @@ if [ "$MODE" = units ]; then
   echo "OK: $(uname -m), key present; the image and the checkpoint come with the lane's first Load"
   # a checkpoint already in the cache (an install.sh run after a Load) keeps the table's mounts
   lane_table mounts
-  effort_note
-  vlane_template_if_cached "$TEMPLATE" "${TEMPLATE_FIXES[@]}"
+  lane_template_if_cached
   install_service
   step "Done: the Qwen3.8 Flash-Next FP4-Local lane is installed; its first Load prepares it"
   echo "  the cockpit: Load on Qwen3.8 Flash-Next FP4-Local in the Lanes view pulls its image (about 18 GB, 10 to"

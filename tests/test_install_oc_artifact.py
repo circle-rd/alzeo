@@ -264,8 +264,9 @@ class ABoxBootingNemotronSuper(unittest.TestCase):
 class ABoxBootingFlashLocal(unittest.TestCase):
     """The Qwen3.8 Flash-Next FP4-Local lane, its own provider (its own served model): serving at boot it is
     opencode's default, its compaction sized from its window; installed beside another lane it is
-    offered; with no unit, absent. Its levels are the flash lane's Qwen levels, xhigh first: its
-    template's default (Hasan's choice, 2026-10-19)."""
+    offered; with no unit, absent. Its levels are the flash lane's Qwen levels, xhigh first as since
+    v1.37.0, whatever the lane's default (lean since v1.46.4): the order decides no request, and the
+    generated config stays as it was."""
 
     def test_the_default_the_compaction_and_the_provider_are_flash_locals(self):
         d = generate("27b", "1m", unit_ctx=1010000, flash_unit=True, pair=("551000", "160000"),
