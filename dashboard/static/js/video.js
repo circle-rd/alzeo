@@ -170,7 +170,7 @@ function vidRenderLane(){
   else if (ready){ sig = 'ready'; build = () => {}; }
   else if (TRANSITIONAL.has(e.state)){
     sig = 'boot'; build = () => {
-      const card = el('div', 'progress-card'); card.style.marginBottom = 'var(--s-5)';
+      const card = el('div', 'progress-card');
       const top = el('div', 'top'); top.append(el('b', null, 'Loading MiniMax-H3'), el('span', 'eta', ''));
       const m = el('div', 'meter'); m.append(el('i')); card.append(top, m, el('span', 'help', '')); box.append(card); };
   } else {
