@@ -267,7 +267,7 @@ function imgRenderLane(){
     box.dataset.sig = sig; clear(box);
     // on a 64 GB box the command would be refused: the lane needs a 128 GB one (review, 2026-10-23)
     if (sig.startsWith('absent')){ const b = el('div', 'banner info'); b.append(el('span', 'lamp')); const d = el('div'); d.append(el('b', null, 'The image lane is not installed. '), el('span', null, sig === 'absent' ? 'On the box: ./install.sh --with-image (46 GB, about 25 min).' : `It ${NEEDS_128}, and this box is a 64 GB one.`)); b.append(d); box.append(b); }
-    if (sig === 'boot'){ const card = el('div', 'progress-card'); card.style.marginBottom = 'var(--s-5)'; const top = el('div', 'top'); top.append(el('b', null, 'Loading Qwen-Image'), el('span', 'eta'));
+    if (sig === 'boot'){ const card = el('div', 'progress-card'); const top = el('div', 'top'); top.append(el('b', null, 'Loading Qwen-Image'), el('span', 'eta'));
       const m = el('div', 'meter'); m.append(el('i')); card.append(top, m); box.append(card); }
     if (sig.startsWith('down')){ const card = el('div', 'banner info'); card.style.alignItems = 'center'; card.append(el('span', 'lamp' + (e.state === 'failed' ? ' err' : '')));
       const d = el('div'); d.style.cssText = 'display:flex; flex-wrap:wrap; align-items:center; gap:var(--s-3)';

@@ -1189,6 +1189,23 @@ class TheVitalsWearTheirReading(unittest.TestCase):
                 self.assertEqual(r["silent"][name]["kind"], "none")
 
 
+class TheLaneCalloutKeepsItsDistance(unittest.TestCase):
+    """Decide, Agent, Image and Video each say which lane they need just above their studio.
+    The banner or boot card sat flush against the block below it, so the sentence that told
+    someone what to load ran into the form it belonged to (2026-11-12)."""
+
+    def test_each_callout_adds_the_same_step_below_itself(self):
+        rule = next(((sel, decl) for sel, media, decl in css_rules()
+                     if not media and "#ag-note:not([hidden])" in sel), None)
+        self.assertIsNotNone(rule, "the lane callout spacing rule is gone")
+        selectors, decl = rule
+        for wanted in ("#ag-note:not([hidden])", "#s1-note:not([hidden])",
+                       "#img-lane:not(:empty)", "#vid-lane:not(:empty)"):
+            with self.subTest(selector=wanted):
+                self.assertIn(wanted, selectors)
+        self.assertIn("margin-bottom:var(--s-5)", decl.replace(" ", ""))
+
+
 class EachVersionIsNamedOnce(unittest.TestCase):
     """The Now view's card of a lane says the official name of the version it loads (decision 1180), its model said
     once: the lane's name with a version after it read "Nemotron 3.5 Bolt Bolt" on the reference box (2026-10-16),

@@ -425,6 +425,12 @@ img,svg,video,canvas{display:block; max-width:100%}
 .banner.err{border-color:color-mix(in srgb, var(--bad) 50%, transparent); background:color-mix(in srgb, var(--bad) 10%, var(--ink-1))}
 .banner.info{border-color:var(--rule-2); background:var(--pip-bg); color:var(--fg-2)}
 .banner.orange{border-color:color-mix(in srgb, var(--orange) 50%, transparent); background:color-mix(in srgb, var(--orange) 10%, var(--ink-1))}
+/* the callout that says which lane a create view needs sits directly over its studio: it keeps
+   the studio's top edge one step away, whether it is a banner, a boot card or nothing at all */
+#ag-note:not([hidden]),
+#s1-note:not([hidden]),
+#img-lane:not(:empty),
+#vid-lane:not(:empty){margin-bottom:var(--s-5)}
 
 /* ── panels: one frame, used when a group needs one ── */
 .panel{position:relative; border:1px solid var(--surface-border); border-radius:var(--r-panel);
