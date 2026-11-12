@@ -127,7 +127,7 @@
   color-scheme:dark;
   --ink-0:#09090b; --ink-1:rgba(255,255,255,.035); --ink-2:rgba(255,255,255,.06); --ink-3:rgba(255,255,255,.10); --ink-4:rgba(255,255,255,.14);
   --rule-1:rgba(255,255,255,.06); --rule-2:rgba(255,255,255,.10); --rule-3:rgba(255,255,255,.18);
-  --fg-1:#fafafa; --fg-2:#a1a1aa; --fg-3:#82828b;
+  --fg-1:#fafafa; --fg-2:#bcbcc4; --fg-3:#a6a6b1;
   --brand:#22d3ee; --brand-hi:#67e8f9; --brand-lo:#0891b2; --brand-ink:#041016;
   --ok:#34d399; --ok-hi:#a7f3d0; --warn:#fbbf24; --warn-hi:#fde68a; --bad:#f87171; --bad-hi:#fecaca; --idle:rgba(255,255,255,.4);
   --orange:#fb923c; --orange-hi:#fed7aa;
@@ -136,7 +136,7 @@
   --raised:#111113; --raised-hi:#18181b;
   --shadow-1:0 1px 0 rgba(255,255,255,.03) inset, 0 18px 40px -24px rgba(0,0,0,.8);
   --shadow-2:0 1px 0 rgba(255,255,255,.04) inset, 0 28px 60px -30px rgba(0,0,0,.9);
-  --ground:#09090b; --ground-a:rgba(34,211,238,.05); --ground-b:rgba(34,211,238,.02);
+  --ground:#09090b; --ground-a:rgba(34,211,238,.16); --ground-b:rgba(20,184,166,.10);
   --spine-bg:rgba(9,9,11,.82); --rail-bg:rgba(9,9,11,.55); --rail-border:rgba(255,255,255,.06);
   --surface:#111113; --surface-hover:#18181b; --surface-border:rgba(255,255,255,.06); --surface-border-hover:rgba(255,255,255,.12);
   --tint-1:rgba(0,0,0,.24); --tint-2:rgba(0,0,0,.30); --tint-3:rgba(0,0,0,.36); --tint-4:rgba(0,0,0,.42);
@@ -180,7 +180,7 @@
   color-scheme:light;
   --ink-0:#f6f7fb; --ink-1:rgba(9,9,11,.03); --ink-2:rgba(9,9,11,.055); --ink-3:rgba(9,9,11,.09); --ink-4:rgba(9,9,11,.14);
   --rule-1:rgba(9,9,11,.08); --rule-2:rgba(9,9,11,.12); --rule-3:rgba(9,9,11,.20);
-  --fg-1:#18181b; --fg-2:#52525b; --fg-3:#71717a;
+  --fg-1:#18181b; --fg-2:#52525b; --fg-3:#5b5b65;
   --brand:#0e7490; --brand-hi:#155e75; --brand-lo:#0f766e; --brand-ink:#ffffff;
   --ok:#059669; --ok-hi:#065f46; --warn:#b45309; --warn-hi:#92400e; --bad:#dc2626; --bad-hi:#991b1b; --idle:rgba(24,24,27,.35);
   --orange:#c2410c; --orange-hi:#9a3412;
@@ -188,7 +188,7 @@
   --raised:#ffffff; --raised-hi:#fafafa;
   --shadow-1:0 1px 0 rgba(255,255,255,.9) inset, 0 18px 40px -24px rgba(24,24,27,.14);
   --shadow-2:0 1px 0 rgba(255,255,255,.9) inset, 0 28px 60px -30px rgba(24,24,27,.18);
-  --ground:#f6f7fb; --ground-a:rgba(14,116,144,.08); --ground-b:rgba(15,118,110,.05);
+  --ground:#f6f7fb; --ground-a:rgba(14,116,144,.14); --ground-b:rgba(15,118,110,.09);
   --spine-bg:rgba(246,247,251,.86); --rail-bg:rgba(246,247,251,.72); --rail-border:rgba(9,9,11,.08);
   --surface:#ffffff; --surface-hover:#f8f8fa; --surface-border:rgba(9,9,11,.10); --surface-border-hover:rgba(9,9,11,.20);
   --tint-1:rgba(9,9,11,.03); --tint-2:rgba(9,9,11,.05); --tint-3:rgba(9,9,11,.06); --tint-4:rgba(9,9,11,.08);
