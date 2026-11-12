@@ -1576,6 +1576,12 @@ jobs:
           node-version: '24'
 
       - name: Google Chrome for arm64 (the arm64 runner has none)
+        # On 2026-11-11 this step hung four times in apt-get, on a name the runner could not resolve
+        # (ports.ubuntu.com), until each attempt was cancelled by hand. It now ends by itself after 10
+        # minutes, and the download of Google's key has a deadline and three tries. apt's own tries and
+        # timeouts (3, and 30 s) are the runner's already and bound no name that does not resolve, so
+        # none is set here. tests/test_chrome_step.py holds the two guards.
+        timeout-minutes: 10
         run: |
           # The headless browser steps read CHROME, or the first of google-chrome, chromium and
           # chromium-browser. GitHub's arm64 image ships none: Chrome comes from Google's own arm64
@@ -1588,7 +1594,7 @@ jobs:
             || browser="$(command -v google-chrome || command -v chromium || command -v chromium-browser || true)"
           if [ -z "$browser" ]; then
             key="${RUNNER_TEMP:-${TMPDIR:-.}}/google-linux-signing-key.pub"
-            curl -fsSL https://dl.google.com/linux/linux_signing_key.pub -o "$key"
+            curl -fsSL --retry 3 --max-time 60 https://dl.google.com/linux/linux_signing_key.pub -o "$key"
             fpr=$(gpg --show-keys --with-colons "$key" | awk -F: '$1 == "fpr" { print $10; exit }')
             [ "$fpr" = EB4C1BFD4F042F6DDDCCEC917721F63BD38B4796 ] || { echo "Google's signing key is $fpr, not the one the box trusts"; exit 1; }
             sudo gpg --dearmor -o /usr/share/keyrings/google-chrome.gpg < "$key"

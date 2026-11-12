@@ -77,6 +77,14 @@ sudoers lines go, and the "Remove with" line, run, lifts a cap kept after it was
 `dashboard/tests/touch-check.mjs`: nothing overflows at 375 px. Each test of the three new files fails without the
 code, checked with 76 broken versions of it, one behavior at a time.
 
+**The CI.** On 2026-11-11 the step that installs Chrome on GitHub's arm64 runner hung four times in apt-get, on a name
+the runner could not resolve (ports.ubuntu.com), until each attempt was cancelled by hand. The fifth passed in 29 s. It
+now ends by itself after 10 minutes, and the download of Google's key has a deadline and three tries
+(`curl --retry 3 --max-time 60`). apt's own tries and timeouts (3, and 30 s) were already the runner's, and bound no
+name that does not resolve: none is added. `tests/test_chrome_step.py` holds the two guards, and fails when either is
+removed: the step's `timeout-minutes`, a whole number of at most 15, and on the curl line a `--max-time` and a
+`--retry` of 1 or more.
+
 **What an update does.** The cockpit's sudoers file is written again with its four new lines, by the update's own sudo,
 checked by `visudo` before it lands, as at every update that installs the cockpit (`--no-cockpit`, `--no-service` and
 `--no-start` leave it as it was: a cockpit that runs there anyway says so when sudo refuses, and names
