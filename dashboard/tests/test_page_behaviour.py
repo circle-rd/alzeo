@@ -1127,7 +1127,8 @@ class RunningIsWhatTheEngineRuns(unittest.TestCase):
 class TheNowViewStartsWithThePool(unittest.TestCase):
     """Hasan, 2026-11-08 (capture, MacBook): "Now" in 40 px over a sentence that said the capsule again (« 27B stock
     holds the box and has served for 22 h 22. No request is running. ») took 100 px above the memory pool for
-    nothing: the rail already says Now, the capsule says what serves, its state, its load and how long it has been up."""
+    nothing: the rail already says Now, the capsule says what serves, its state, its load and how long it has been up.
+    The machine vitals then moved to the top (2026-11-12): the box's own numbers answer before the pool does."""
 
     def test_its_title_is_for_screen_readers_and_no_sentence_repeats_the_capsule(self):
         r = run(self, r"""
@@ -1141,10 +1142,51 @@ class TheNowViewStartsWithThePool(unittest.TestCase):
         self.assertEqual(r["labelled"], "h-now")
         self.assertFalse(r["head"], r)
         self.assertFalse(r["lede"], r)
-        self.assertEqual(r["kids"][:2], ["h-now", "pool"], "the pool comes first on screen")
+        self.assertEqual(r["kids"][:3], ["h-now", "vitals", "pool"], "the vitals come first on screen, then the pool")
         # what the sentence said, the capsule says: idle, up 10 min
         self.assertIn("idle", r["sub"])
         self.assertIn("up 10 min", r["sub"])
+
+
+class TheVitalsWearTheirReading(unittest.TestCase):
+    """Each vital carries a glyph at the right of its value: five bars for the CPU, and a
+    fill icon for power, temperature, disk, swap and driver refusals. The glyph follows
+    the reading, and a collector that did not answer leaves an empty outline, never a
+    plausible green."""
+
+    def test_the_glyphs_follow_value_thresholds_and_unread_is_empty(self):
+        r = run(self, r"""
+        const glyph = id => { const g = $(id); return {kind: g.dataset.kind, pct: g.dataset.pct,
+          lit: g.querySelectorAll('i.on').length}; };
+        feed({machine: {cpu_pct: {cpu: 60}, load: [0.5], disks: {home: {total: 1000 * GIB, free: 5 * GIB}},
+                        mem: {SwapTotal: 10 * GIB, SwapFree: 1 * GIB}},
+              gpu: {power_w: 95, temp_c: 90, procs: []},
+              kernel: {nvrm_oom_1h: 250, nvrm_last: '2026-11-12T10:00:00Z'}});
+        const read = {cpu: glyph('vt-cpu-glyph'), gpu: glyph('vt-gpu-glyph'), temp: glyph('vt-temp-glyph'),
+                      disk: glyph('vt-disk-glyph'), swap: glyph('vt-swap-glyph'), nvrm: glyph('vt-nvrm-glyph')};
+        feed({machine: {cpu_pct: {cpu: 10}, load: [0], disks: {home: {total: 31 * GIB, free: 28 * GIB}},
+                        mem: {SwapTotal: 8 * GIB, SwapFree: 8 * GIB}}, gpu: {}, kernel: {}});
+        const small = glyph('vt-disk-glyph');
+        feed({machine: {cpu_pct: {cpu: null}, load: [], disks: {}, mem: {SwapTotal: 0, SwapFree: 0}},
+              gpu: {power_w: null, temp_c: null, procs: null}, kernel: {nvrm_oom_1h: null, nvrm_last: null}});
+        const silent = {cpu: glyph('vt-cpu-glyph'), gpu: glyph('vt-gpu-glyph'), temp: glyph('vt-temp-glyph'),
+                        disk: glyph('vt-disk-glyph'), swap: glyph('vt-swap-glyph'), nvrm: glyph('vt-nvrm-glyph')};
+        report({read, small, silent});
+        """)
+        self.assertEqual(r["read"]["cpu"], {"kind": "bars", "pct": "60", "lit": 3})
+        self.assertEqual(r["read"]["gpu"], {"kind": "bad", "pct": "95", "lit": 0})
+        self.assertEqual(r["read"]["temp"], {"kind": "bad", "pct": "90", "lit": 0})
+        self.assertEqual(r["read"]["disk"], {"kind": "bad", "pct": "1", "lit": 0})
+        self.assertEqual(r["small"], {"kind": "ok", "pct": "90", "lit": 0}, "a small volume that is 90 % free stays green")
+        self.assertEqual(r["read"]["swap"], {"kind": "bad", "pct": "90", "lit": 0})
+        self.assertEqual(r["read"]["nvrm"], {"kind": "bad", "pct": "100", "lit": 0})
+        for name in ("cpu", "gpu", "temp", "disk", "swap", "nvrm"):
+            with self.subTest(glyph=name):
+                self.assertEqual(r["silent"][name]["pct"], "none")
+                self.assertEqual(r["silent"][name]["lit"], 0)
+        for name in ("gpu", "temp", "disk", "swap", "nvrm"):
+            with self.subTest(glyph=name):
+                self.assertEqual(r["silent"][name]["kind"], "none")
 
 
 class EachVersionIsNamedOnce(unittest.TestCase):

@@ -90,6 +90,67 @@
       <!-- no title on screen: the rail says Now, and the capsule above says what serves, its state and its load. "Now"
            in 40 px and a sentence saying the capsule again took 100 px above the pool (Hasan, 2026-11-08) -->
       <h1 id="h-now" class="sr">Now</h1>
+      <div class="vitals" id="vitals">
+        <div class="vital" id="vt-cpu">
+          <span class="k">CPU</span><span class="v">…</span><span class="s"></span>
+          <span class="vital-glyph" id="vt-cpu-glyph" aria-hidden="true"><span class="vital-bars"><i></i><i></i><i></i><i></i><i></i></span></span>
+        </div>
+        <div class="vital" id="vt-gpu">
+          <span class="k">GPU power</span><span class="v">…</span><span class="s"></span>
+          <span class="vital-glyph" id="vt-gpu-glyph" aria-hidden="true">
+            <svg viewBox="0 0 24 24">
+              <defs><clipPath id="vt-gpu-clip"><rect class="gauge-fill-rect" x="0" y="24" width="24" height="0"/></clipPath></defs>
+              <path class="glyph-base" d="M13 2 3 14h9l-1 8 10-12h-9l1-8Z"/>
+              <path class="glyph-fill" clip-path="url(#vt-gpu-clip)" d="M13 2 3 14h9l-1 8 10-12h-9l1-8Z"/>
+            </svg>
+          </span>
+        </div>
+        <div class="vital" id="vt-temp">
+          <span class="k">GPU temperature</span><span class="v">…</span><span class="s"></span>
+          <span class="vital-glyph" id="vt-temp-glyph" aria-hidden="true">
+            <svg viewBox="0 0 24 24">
+              <defs><clipPath id="vt-temp-clip"><rect class="gauge-fill-rect" x="0" y="24" width="24" height="0"/></clipPath></defs>
+              <path class="glyph-base" d="M14 4v10.54a4 4 0 1 1-4 0V4a2 2 0 0 1 4 0Z"/>
+              <path class="glyph-fill" clip-path="url(#vt-temp-clip)" d="M14 4v10.54a4 4 0 1 1-4 0V4a2 2 0 0 1 4 0Z"/>
+            </svg>
+          </span>
+        </div>
+        <div class="vital" id="vt-disk">
+          <span class="k">Disk free</span><span class="v">…</span><span class="s"></span>
+          <span class="vital-glyph" id="vt-disk-glyph" aria-hidden="true">
+            <svg viewBox="0 0 24 24">
+              <defs><clipPath id="vt-disk-clip"><rect class="gauge-fill-rect" x="0" y="24" width="24" height="0"/></clipPath></defs>
+              <ellipse class="glyph-base" cx="12" cy="5" rx="9" ry="3"/>
+              <path class="glyph-base" d="M3 5v14a9 3 0 0 0 18 0V5"/>
+              <path class="glyph-base" d="M3 12a9 3 0 0 0 18 0"/>
+              <path class="glyph-fill" clip-path="url(#vt-disk-clip)" d="M3 5v14a9 3 0 0 0 18 0V5a9 3 0 0 1-18 0Z"/>
+            </svg>
+          </span>
+        </div>
+        <div class="vital" id="vt-swap">
+          <span class="k">Swap in use</span><span class="v">…</span><span class="s"></span>
+          <span class="vital-glyph" id="vt-swap-glyph" aria-hidden="true">
+            <svg viewBox="0 0 24 24">
+              <defs><clipPath id="vt-swap-clip"><rect class="gauge-fill-rect" x="0" y="24" width="24" height="0"/></clipPath></defs>
+              <path class="glyph-base" d="M2 7a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2z"/>
+              <path class="glyph-base" d="M6 19v-3M10 19v-3M14 19v-3M18 19v-3M8 11V9M12 11V9M16 11V9"/>
+              <path class="glyph-base" d="M2 15h20"/>
+              <path class="glyph-fill" clip-path="url(#vt-swap-clip)" d="M2 7a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2z"/>
+            </svg>
+          </span>
+        </div>
+        <div class="vital" id="vt-nvrm">
+          <span class="k">Driver refusals, 1 h</span><span class="v">…</span><span class="s"></span>
+          <span class="vital-glyph" id="vt-nvrm-glyph" aria-hidden="true">
+            <svg viewBox="0 0 24 24">
+              <defs><clipPath id="vt-nvrm-clip"><rect class="gauge-fill-rect" x="0" y="24" width="24" height="0"/></clipPath></defs>
+              <path class="glyph-base" d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/>
+              <path class="glyph-base" d="M12 9v4M12 17h.01"/>
+              <path class="glyph-fill" clip-path="url(#vt-nvrm-clip)" d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/>
+            </svg>
+          </span>
+        </div>
+      </div>
       <section class="pool" id="pool" aria-labelledby="h-pool" data-src="machine,gpu">
         <div class="pool-top">
           <div class="pool-title">
@@ -129,14 +190,6 @@
         <dl class="facts" id="api-facts"></dl>
         <div class="btn-row" id="api-copy" style="margin-top:var(--s-4)"></div>
       </section>
-      <div class="vitals" id="vitals" style="margin-top:var(--s-5)">
-        <div class="vital" id="vt-cpu"><span class="k">CPU</span><span class="v">…</span><span class="s"></span></div>
-        <div class="vital" id="vt-gpu"><span class="k">GPU power</span><span class="v">…</span><span class="s"></span></div>
-        <div class="vital" id="vt-temp"><span class="k">GPU temperature</span><span class="v">…</span><span class="s"></span></div>
-        <div class="vital" id="vt-disk"><span class="k">Disk free</span><span class="v">…</span><span class="s"></span></div>
-        <div class="vital" id="vt-swap"><span class="k">Swap in use</span><span class="v">…</span><span class="s"></span></div>
-        <div class="vital" id="vt-nvrm"><span class="k">Driver refusals, 1 h</span><span class="v">…</span><span class="s"></span></div>
-      </div>
       <!-- the other box of a pair (docs/pair.md): what its own proxy says of it, through the pair -->
       <section class="panel" data-src="pair" id="now-pair" style="margin-top:var(--s-5)" hidden>
         <header><h2 id="pair-title">The other box</h2><span class="aside age"></span></header>

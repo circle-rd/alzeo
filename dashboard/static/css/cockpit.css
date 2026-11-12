@@ -794,16 +794,33 @@ button.bay.soon:hover{border-color:var(--bay-soon-border)}
 .timeline .dot.cool{background:var(--mem)}
 .timeline .m{color:var(--fg-1)}
 .timeline .m small{display:block; color:var(--fg-3); font-size:var(--t-12)}
-.vitals{display:grid; grid-template-columns:repeat(6, minmax(0,1fr)); gap:0; border-radius:var(--r-panel); border:1px solid var(--surface-border); overflow:hidden;
+.vitals{display:grid; grid-template-columns:repeat(6, minmax(0,1fr)); gap:0; margin-bottom:var(--s-5);
+  border-radius:var(--r-panel); border:1px solid var(--surface-border); overflow:hidden;
   background:var(--surface);
   box-shadow:var(--shadow-1)}
-.vital{padding:var(--s-4); display:flex; flex-direction:column; gap:4px; background:var(--ink-1)}
+.vital{padding:var(--s-4); display:grid; grid-template-columns:minmax(0,1fr) auto; grid-template-areas:"k k" "v icon" "s s";
+  align-items:center; column-gap:var(--s-3); row-gap:4px; background:var(--ink-1)}
 .vital + .vital{border-left:1px solid var(--rule-1)}
-.vital .k{font-size:var(--t-12); color:var(--fg-3)}
-.vital .v{font-size:var(--t-20); font-weight:600; font-variant-numeric:tabular-nums}
-.vital .s{font-size:var(--t-12); color:var(--fg-2)}
+.vital .k{grid-area:k; font-size:var(--t-12); color:var(--fg-3)}
+.vital .v{grid-area:v; font-size:var(--t-20); font-weight:600; font-variant-numeric:tabular-nums}
+.vital .s{grid-area:s; font-size:var(--t-12); color:var(--fg-2)}
 .vital.warn .v{color:var(--warn-hi)}
 .vital.err .v{color:var(--bad-hi)}
+.vital-glyph{grid-area:icon; justify-self:end; align-self:center; display:grid; place-items:center; width:34px; height:34px; color:var(--fg-3)}
+.vital-glyph svg{width:28px; height:28px; overflow:visible}
+.vital-glyph .glyph-base{fill:none; stroke:currentColor; stroke-width:1.5; stroke-linecap:round; stroke-linejoin:round; opacity:.6}
+.vital-glyph .glyph-fill{fill:var(--gauge-color, var(--fg-3)); stroke:none}
+.vital-glyph[data-kind="ok"]{--gauge-color:var(--ok); color:var(--ok)}
+.vital-glyph[data-kind="warn"]{--gauge-color:var(--warn); color:var(--warn)}
+.vital-glyph[data-kind="orange"]{--gauge-color:var(--orange); color:var(--orange)}
+.vital-glyph[data-kind="bad"]{--gauge-color:var(--bad); color:var(--bad)}
+.vital-glyph[data-kind="none"]{--gauge-color:var(--fg-3); color:var(--fg-3)}
+.vital-bars{display:flex; flex-direction:column-reverse; gap:3px; width:30px}
+.vital-bars i{display:block; height:4px; border-radius:2px; background:var(--ink-3)}
+.vital-bars i.on:nth-child(1), .vital-bars i.on:nth-child(2){background:var(--ok)}
+.vital-bars i.on:nth-child(3){background:var(--warn)}
+.vital-bars i.on:nth-child(4){background:var(--orange)}
+.vital-bars i.on:nth-child(5){background:var(--bad)}
 
 /* ── the lane journey: loading a lane is one path with steps ── */
 .journey{list-style:none; padding:0; display:flex; flex-direction:column; gap:var(--s-3); counter-reset:step}

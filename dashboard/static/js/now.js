@@ -381,6 +381,24 @@ function renderEvents(box, n){
 
 // ── vitals ────────────────────────────────────────────────────────────────────
 function vital(id, v, s, kind){ const e = $(id); if (!e) return; setText(e.children[1], v); setText(e.children[2], s || ''); e.className = 'vital' + (kind ? ' ' + kind : ''); }
+// A fill icon reads from the bottom: the clip rectangles are 24 units tall, so a ratio
+// becomes a height and a top edge. Null is no reading, and the glyph stays an empty outline.
+function setGauge(id, ratio, kind){
+  const e = $(id); if (!e) return;
+  const pct = ratio == null || isNaN(ratio) ? null : Math.max(0, Math.min(1, ratio));
+  e.dataset.kind = pct == null ? 'none' : (kind || 'ok');
+  e.dataset.pct = pct == null ? 'none' : String(Math.round(pct * 100));
+  const rect = e.querySelector('.gauge-fill-rect');
+  if (rect){ const h = pct == null ? 0 : 24 * pct; rect.setAttribute('y', String(24 - h)); rect.setAttribute('height', String(h)); }
+}
+function setBars(id, ratio){
+  const e = $(id); if (!e) return;
+  const pct = ratio == null || isNaN(ratio) ? null : Math.max(0, Math.min(1, ratio));
+  e.dataset.kind = pct == null ? 'none' : 'bars';
+  e.dataset.pct = pct == null ? 'none' : String(Math.round(pct * 100));
+  const lit = pct == null ? 0 : Math.ceil(pct * 5);
+  [...e.querySelectorAll('i')].forEach((b, i) => b.classList.toggle('on', i < lit));
+}
 // '…' until the collector first answers; after that, a reading it could not take is 'n/a' (the
 // Machine view's word), and the line under it says nothing that was not read: with
 // nvidia-smi silent, the GPU vitals read '…' for good, the temperature "cool" and the
@@ -390,16 +408,30 @@ function renderVitals(){
   const m = F.machine || {}, g = F.gpu || {};
   const cpu = (m.cpu_pct || {}).cpu;
   vital('vt-cpu', cpu != null ? cpu.toFixed(0) + ' %' : unread(F.machine), (m.load || []).length ? `load ${m.load[0].toFixed(2)}` : '', cpu > 85 ? 'warn' : '');
+  setBars('vt-cpu-glyph', cpu == null ? null : cpu / 100);
   const procs = Array.isArray(g.procs) ? g.procs : null;
-  vital('vt-gpu', g.power_w != null ? g.power_w.toFixed(0) + ' W' : unread(F.gpu), procs ? `${procs.length} process${procs.length === 1 ? '' : 'es'}` : '');
+  const pw = g.power_w, pwRatio = pw == null ? null : pw / 100;
+  vital('vt-gpu', pw != null ? pw.toFixed(0) + ' W' : unread(F.gpu), procs ? `${procs.length} process${procs.length === 1 ? '' : 'es'}` : '');
+  setGauge('vt-gpu-glyph', pwRatio, pwRatio == null ? 'none' : pwRatio >= .9 ? 'bad' : pwRatio >= .7 ? 'orange' : pwRatio >= .5 ? 'warn' : 'ok');
   const t = g.temp_c;
   vital('vt-temp', t != null ? t.toFixed(0) + ' °C' : unread(F.gpu), t == null ? '' : t > 85 ? 'hot: give it air' : t > 75 ? 'warm' : 'cool', t > 85 ? 'err' : t > 75 ? 'warn' : '');
+  setGauge('vt-temp-glyph', t == null ? null : t / 100, t == null ? 'none' : t >= 85 ? 'bad' : t >= 80 ? 'orange' : t >= 75 ? 'warn' : 'ok');
   const dk = (m.disks || {}).home;
-  vital('vt-disk', dk ? fmtGiB(dk.free, 0) : unread(F.machine), dk ? `of ${fmtGiB(dk.total, 0)}` : '', dk && dk.free < 60 * GIB ? 'warn' : '');
+  const diskRatio = dk && dk.total ? dk.free / dk.total : null;
+  // a small volume is not a full one: the warning line follows the smaller of the 60 GiB the box
+  // has always watched and a fifth of the volume, so a 31 GiB container with 28 GiB free stays green
+  const diskLow = dk ? dk.free < Math.min(60 * GIB, dk.total * .2) : false;
+  const diskVeryLow = dk ? dk.free < Math.min(30 * GIB, dk.total * .1) : false;
+  vital('vt-disk', dk ? fmtGiB(dk.free, 0) : unread(F.machine), dk ? `of ${fmtGiB(dk.total, 0)}` : '', diskLow ? 'warn' : '');
+  setGauge('vt-disk-glyph', diskRatio, !dk ? 'none' : diskVeryLow ? 'bad' : diskLow ? 'orange' : 'ok');
   const mem = m.mem || {}; const sw = (mem.SwapTotal || 0) - (mem.SwapFree || 0);
+  const swapRatio = mem.SwapTotal ? sw / mem.SwapTotal : null;
   vital('vt-swap', mem.SwapTotal != null ? fmtGiB(sw) : unread(F.machine), mem.SwapTotal ? `of ${fmtGiB(mem.SwapTotal, 0)}` : '', sw > 8 * GIB ? 'warn' : '');
+  setGauge('vt-swap-glyph', swapRatio, swapRatio == null ? 'none' : swapRatio >= .75 ? 'bad' : swapRatio >= .5 ? 'orange' : swapRatio >= .25 ? 'warn' : 'ok');
   const k = F.kernel || {}, n = k.nvrm_oom_1h;
   vital('vt-nvrm', n != null ? String(n) : unread(F.kernel), n == null ? '' : k.nvrm_last ? `last ${String(k.nvrm_last).slice(11, 16)}` : 'none', n > 200 ? 'warn' : '');
+  setGauge('vt-nvrm-glyph', n == null ? null : n === 0 ? 0 : n <= 10 ? .25 : n <= 50 ? .5 : n <= 200 ? .75 : 1,
+    n == null ? 'none' : n === 0 ? 'ok' : n <= 10 ? 'warn' : n <= 200 ? 'orange' : 'bad');
 }
 on('kernel', d => { F.kernel = d; });
 
