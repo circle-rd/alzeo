@@ -233,7 +233,9 @@ first and last), and the image, video and 27B lanes are not measured. The watts 
 alone, as nvidia-smi reads them, not the whole box's. nvidia-smi warns, at each cap it sets, that
 the persistence mode is disabled: on a box where nothing holds the GPU any more, the driver may
 lose the cap, and the view would still say it is set. Not verified: the reference box keeps its
-GPU active with its desktop.
+GPU active with its desktop. The cap set again at the cockpit's start was run from a start of the
+cockpit, not from a cold boot of the box: if nvidia-smi cannot answer yet when the cockpit starts,
+that try fails, the view says the kept cap is not set, and a click sets it.
 
 An image model under study, MiniMax-H3-Image, which is not a lane yet, was measured the same day,
 one image at a time (10 at 2048x2048 and 3 at 4736x3552 per cap, no cap again at the end): 2,400

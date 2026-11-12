@@ -5533,8 +5533,13 @@ def gpu_clock_at_start():
     except Exception as e:  # noqa: BLE001 (the cockpit starts whatever happens here: systemd would restart it forever)
         code, out = 500, {"error": f"{type(e).__name__}: {e}"}
     if code != 202:
+        why = out.get("message") or out.get("error")
+        # the job that sets it never ran, so nothing said how it ended: the view kept "being set" for good. Said as
+        # a try that failed (the code review of v1.47.0, 2026-11-12)
+        with GPU_CLOCK_LOCK:
+            GPU_CLOCK.update(tried=cap, error="failed", said=f"the cockpit could not start the job that sets it again: {why}")
         add_event("error", f"the GPU clock cap kept by the cockpit ({gpu_clock_mhz(cap)}) could not be set "
-                           f"again at its start: {out.get('message') or out.get('error')}")
+                           f"again at its start: {why}")
     return code
 
 

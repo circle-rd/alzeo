@@ -81,7 +81,7 @@ once the start's try failed, a lamp live only while the start sets the cap, a ca
 keys and its name for a screen reader. `tests/test_gpu_clock_removal.py`: the uninstall lifts the cap before the
 sudoers lines go, and the "Remove with" line, run, lifts a cap kept after it was printed.
 `dashboard/tests/touch-check.mjs`: nothing overflows at 375 px. Each test of the three new files fails without the
-code, checked with 88 broken versions of it, one behavior at a time, all run again after the final review.
+code, checked with 89 broken versions of it, one behavior at a time, all run again after the final review.
 
 **The CI.** On 2026-11-11 the step that installs Chrome on GitHub's arm64 runner hung four times in apt-get, on a name
 the runner could not resolve (ports.ubuntu.com), until each attempt was cancelled by hand. The fifth passed in 29 s. It
@@ -100,6 +100,13 @@ read "failed (exit code 0)" in the dock and the Logs view: the job ends 1, and t
 cap whose try failed at the start stayed lit while the GPU ran at its own clocks: None is lit then, and the state still
 says the kept cap is not set. And the CI's fix above is brought back to what bounds the step: the options it gave apt
 were the runner's own. The review added 4 tests and changed 5 others.
+
+**The code review.** A code review of the branch followed. Its first finding, that the cockpit could not end a `sudo
+nvidia-smi` that hangs and would wait for it for good, was tried on the reference box and does not hold: sudo 1.9.15p5
+keeps its caller's real user ID, and the cockpit's user ended a `sudo sleep` it had started. One finding is fixed: when
+the job that sets the kept cap again cannot be started at the cockpit's start, the view said "being set" for good, and
+now says the kept cap is not set and that its last try failed. One limit is added to docs/cockpit.md: that start was
+run from a start of the cockpit, not from a cold boot of the box. One test is new.
 
 **What an update does.** The cockpit's sudoers file is written again with its four new lines, by the update's own sudo,
 checked by `visudo` before it lands, as at every update that installs the cockpit (`--no-cockpit`, `--no-service` and

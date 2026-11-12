@@ -444,6 +444,19 @@ class TheKeptCapIsSetAgainAtTheStart(Base):
         st = self.cp.gpu_clock_state(None)
         self.assertEqual((st["kept"], st["set"], st["error"]), ("2400", None, "sudo"))
 
+    def test_a_start_whose_job_cannot_be_started_reads_as_a_try_that_failed(self):
+        # the job never ran (start_action refused it), so nothing said how it ended: the view said "being set" for
+        # good (the code review of v1.47.0)
+        self.cp.GPU_CLOCK_FILE.write_text('{"cap": "2400"}\n')
+        real = self.cp.start_action
+        self.cp.start_action = lambda *a, **k: (409, {"error": "busy", "message": "another job is running"})
+        self.addCleanup(setattr, self.cp, "start_action", real)
+        self.assertEqual(self.cp.gpu_clock_at_start(), 409)
+        st = self.cp.gpu_clock_state(None)
+        self.assertEqual((st["kept"], st["set"], st["error"]), ("2400", None, "failed"))
+        self.assertEqual(st["said"], "the cockpit could not start the job that sets it again: another job is running")
+        self.assertEqual(self.calls(), [], "a call was made")
+
     def test_main_sets_it_again_before_anything_else_can_run(self):
         src = (DASH / "cockpit.py").read_text()
         body = src[src.index("\ndef main():"):src.index('\nif __name__ == "__main__":')]
