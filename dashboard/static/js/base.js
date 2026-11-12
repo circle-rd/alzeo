@@ -1501,6 +1501,11 @@ function wireShell(){
   });
   // the actions menu
   $('actbtn').addEventListener('click', openMenu);
+  $('logoutbtn').addEventListener('click', async () => {
+    try { await postJSON('/api/logout', {}); } catch { /* already signed out */ }
+    leavingForLogin = true;
+    location.href = '/';
+  });
   $('menu-close').addEventListener('click', closeMenu);
   $('menu').addEventListener('click', e => { if (e.target === $('menu')) closeMenu(); });
 }

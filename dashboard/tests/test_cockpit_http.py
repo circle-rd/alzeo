@@ -393,6 +393,32 @@ class Csrf(Base):
         self.assertEqual(st, 400)
 
 
+class Logout(Base):
+    """The session cookie is the login: signing out expires it on the browser, and the
+    next visit to / is the login page. A logout without the CSRF token is refused like
+    every other mutating POST."""
+
+    def test_logout_expires_the_cookie(self):
+        cookie = self.login()
+        token = self.csrf(cookie)
+        st, hdrs, data = self.req("POST", "/api/logout", {"csrf": token}, cookie=cookie)
+        self.assertEqual(st, 200)
+        self.assertEqual(json.loads(data), {"ok": True})
+        raw = hdrs.get("Set-Cookie", "")
+        self.assertTrue(raw.startswith("cockpit=;"), raw)
+        self.assertIn("Max-Age=0", raw)
+        self.assertIn("Path=/", raw)
+        self.assertIn("HttpOnly", raw)
+        self.assertIn("SameSite=Strict", raw)
+
+    def test_logout_without_its_token_is_refused(self):
+        cookie = self.login()
+        st, hdrs, data = self.req("POST", "/api/logout", {}, cookie=cookie)
+        self.assertEqual(st, 403)
+        self.assertEqual(json.loads(data)["error"], "csrf")
+        self.assertNotIn("Set-Cookie", hdrs)
+
+
 class MalformedJson(Base):
     """Valid JSON of the wrong SHAPE.
 
