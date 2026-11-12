@@ -492,6 +492,8 @@ async function copyText(txt){
 }
 
 // ── actions: one sheet, the exact command, the warnings, one job at a time ─────
+// a GPU clock cap as the page says it: "2,400 MHz", or "no cap" (the Machine view, ops.js)
+const gpuCapName = cap => cap === 'none' ? 'no cap' : `${fmtN(Number(cap))} MHz`;
 // Same vocabulary as the server's event feed: an action reads as a sentence.
 const ACTION_PHRASE = {
   unit: p => `${p.verb || 'act on'} ${laneLabel(String(p.unit || ''))}`,
@@ -501,7 +503,8 @@ const ACTION_PHRASE = {
   fit_opencode: () => 'fit the opencode limits to this engine',
   delete_strays: () => 'delete the stray revisions from the model caches',
   fetch: p => `download the checkpoint of ${TARGET_NAME[p.target] || p.target || 'a target'}`,
-  prepare: p => `build the runtime of the ${laneOfTarget(p.target) || ''} lane`};
+  prepare: p => `build the runtime of the ${laneOfTarget(p.target) || ''} lane`,
+  gpu_clock: p => p.cap === 'none' ? 'lift the GPU clock cap' : `cap the GPU clock at ${gpuCapName(p.cap)}`};
 function actionPhrase(action, params){
   const f = ACTION_PHRASE[action]; if (f) return f(params || {});
   const p = params || {}; return action + (Object.keys(p).length ? ' ' + Object.entries(p).map(([k, v]) => `${k} ${v}`).join(', ') : '');
@@ -577,7 +580,9 @@ const EXPLAIN = {
   abort_all: () => 'Every running or queued generation stops now, and each client is cut: an agent retries its request (end its turn in the agent).',
   smoke: () => 'One real 200-token generation through the proxy, the way a client uses it.',
   diag_bundle: () => 'Collects logs, state and versions into a tarball in your home; the API key is masked everywhere.',
-  fit_opencode: () => 'Reads the KV pool of the engine serving now and rewrites only opencode’s context and output limits, so a conversation can never outgrow it. A dated backup is written first. If the Agent server runs, it restarts to read them: a reply it is writing then is cut short.'};
+  fit_opencode: () => 'Reads the KV pool of the engine serving now and rewrites only opencode’s context and output limits, so a conversation can never outgrow it. A dated backup is written first. If the Agent server runs, it restarts to read them: a reply it is writing then is cut short.',
+  // what the cap cost and gave on the reference box, and its limits (ops.js, the Machine view)
+  gpu_clock: p => gpuCapExplain(p.cap)};
 // the stray revisions the last scan of the checkpoints offered to delete (Library, scanRegistry)
 const REG_STRAYS = {list: [], bytes: 0};
 // the lane a Load's target belongs to, by prepare-lane.sh's names (the cockpit's target_lane)
@@ -601,13 +606,19 @@ const TITLE = {unit: p => `${cap1(p.verb)} ${laneLabel(p.unit)}`, switch: p => `
   diag_bundle: () => 'Write a diagnostics bundle', fit_opencode: () => 'Fit the opencode limits',
   delete_strays: () => 'Delete the stray revisions',
   fetch: p => `Download ${TARGET_NAME[p.target] || p.target}`,
-  prepare: p => `Build the ${laneOfTarget(p.target)} lane's runtime`};
+  prepare: p => `Build the ${laneOfTarget(p.target)} lane's runtime`,
+  gpu_clock: p => p.cap === 'none' ? 'Lift the GPU clock cap' : `Cap the GPU clock at ${gpuCapName(p.cap)}`};
 const VERB = {unit: p => cap1(p.verb) + ' ' + (LANE_NAME[p.unit] || laneLabel(p.unit)), switch: () => 'Point the boot', flush_cache: () => 'Flush',
   abort_all: () => 'Abort all', smoke: () => 'Run the probe', diag_bundle: () => 'Write the bundle', fit_opencode: () => 'Fit the limits',
-  delete_strays: () => 'Delete them', fetch: () => 'Download', prepare: () => 'Build it'};
+  delete_strays: () => 'Delete them', fetch: () => 'Download', prepare: () => 'Build it',
+  gpu_clock: p => p.cap === 'none' ? 'Lift the cap' : `Cap at ${gpuCapName(p.cap)}`};
+// the GPU clock cap runs as a python job on the server, which hands the page each cap's exact command (its
+// config); the sheet shows that command, not the job's name, unless this machine has no nvidia-smi (ops.js, GC),
+// where None runs nothing and only forgets the cap kept
 const argvFor = (name, p) => name === 'unit' ? ['sudo', '-n', '/usr/bin/systemctl', p.verb, p.unit]
   : name === 'switch' ? ['bash', 'switch-model.sh', p.target] : name === 'fetch' ? ['bash', 'switch-model.sh', p.target, '--fetch']
   : name === 'prepare' ? ['bash', 'prepare-lane.sh', laneOfTarget(p.target)].concat(['flash', '27b'].includes(laneOfTarget(p.target)) ? [p.target] : [])
+  : name === 'gpu_clock' && GC.has !== false && ((F.config || {}).gpu_clock_argv || {})[p.cap] ? F.config.gpu_clock_argv[p.cap]
   : ['cockpit', name];
 
 let SHEET = null;   // {mode: 'one'|'journey', ...}
@@ -984,7 +995,8 @@ function jobLog(j, lines, ended){
   const none = !ended ? '(nothing printed yet)' : j && JOBLINES.read === j.id ? '(it printed nothing)' : '(reading its log…)';
   return head.concat(lines.length ? lines : [none]).join('\n');
 }
-function describeJob(j){ return cap1(actionPhrase(j.action, j.params)) + (j.origin === 'autoheal' ? ', by the autoheal belt' : '') + (j.dry_run ? ' (dry run)' : ''); }
+function describeJob(j){ return cap1(actionPhrase(j.action, j.params)) + (j.origin === 'autoheal' ? ', by the autoheal belt' : '')
+  + (j.origin === 'boot' ? ', again at the cockpit’s start' : '') + (j.dry_run ? ' (dry run)' : ''); }
 function renderJob(d){
   F.job = d;
   const dock = $('dock'), cur = d.current, recent = (d.recent || [])[0];

@@ -239,6 +239,129 @@ on('gpu', d => {
 on('kernel', d => { const n = d.nvrm_oom_1h;
   setText('dk-nvrm', n == null ? 'n/a (the kernel log did not answer)' : n ? `${n}, the last at ${(d.nvrm_last || '').slice(11, 19)}` : 'none'); });
 
+// ── the GPU clock cap (decision of 2026-11-11) ─────────────────────────────────
+// What each cap cost and gave on the reference box, 2026-11-11: the Qwen3.8 Flash-Next FP4-Local lane at 4 streams,
+// the same work at each cap (48 answers of 1,200 tokens), no cap measured again at the end. docs/cockpit.md carries
+// the same numbers, which a test holds to these.
+const GPU_CAPS = [
+  {cap: 'none', mhz: 2502, tps4: 105.74, w: 46.6, hot: 92.6, tps1: 56.20, prefill: 2078},
+  {cap: '2400', mhz: 2387, tps4: 105.87, w: 35.9, hot: 90.2, tps1: 56.22, prefill: 2073},
+  {cap: '2200', mhz: 2190, tps4: 103.77, w: 28.1, hot: 86.6, tps1: 55.50, prefill: 2027},
+  {cap: '2000', mhz: 1989, tps4: 103.15, w: 22.8, hot: 84.4, tps1: 54.62, prefill: 2004}];
+const GPU_CAP_AGAIN = {cap: 'none', mhz: 2494, tps4: 105.02, w: 47.7, hot: 93.2, tps1: 56.38, prefill: 2080};
+const GPU_CAP_LIMITS = 'One lane measured, a text one, and one run per cap (None twice, first and last): the image, video and 27B lanes '
+  + 'are not measured yet. The watts are the GPU’s alone, as nvidia-smi reads them, not the whole box’s.';
+// the hottest zone is the box's, the hottest of all its thermal zones, not the GPU's (review of v1.47.0)
+const gpuCapFigures = m => `${m.tps4.toFixed(2)} tok/s at 4 streams, the GPU at ${m.w.toFixed(1)} W, the box’s hottest zone at ${m.hot.toFixed(1)} °C`;
+// a sentence ends once: nvidia-smi's own words often end with their period
+const gpuCapEnd = s => /[.!?]$/.test(s) ? s : s + '.';
+// a try that failed, in the server's own words: a cap set and not kept (keep) says it was set, and a call that did
+// not answer (timeout) is not said to have failed, since it may still apply
+const gpuCapFailed = (error, tried, said) => gpuCapEnd(error === 'keep' ? said
+  : `${tried === 'none' ? 'Lifting the GPU clock cap' : `Capping the GPU clock at ${gpuCapName(tried)}`}${error === 'timeout' ? '' : ' failed'}: ${said}`);
+// the sheet's words for a cap (EXPLAIN.gpu_clock in base.js): what it does now and at a reboot, what it cost and
+// gave, the limits of that measurement
+function gpuCapExplain(cap){
+  const m = GPU_CAPS.find(x => x.cap === cap), none = GPU_CAPS[0];
+  if (!m) return '';
+  // no nvidia-smi here: None runs nothing, and forgets the cap the cockpit keeps (job_gpu_clock)
+  if (cap === 'none' && GC.has === false) return `This machine has no /usr/bin/nvidia-smi, so nothing is run: the cockpit forgets the cap it `
+    + `keeps for its next start${GC.kept && GC.kept !== 'none' ? ` (${gpuCapName(GC.kept)})` : ''}, which it cannot set here.`;
+  if (cap === 'none') return 'nvidia-smi lifts the cap now: the GPU runs at its own clocks again, the factory setting, and the cockpit '
+    + `forgets the cap it kept for its next start. On the reference box, with no cap: ${gpuCapFigures(none)}. ${GPU_CAP_LIMITS}`;
+  return `nvidia-smi caps the GPU’s clock at ${gpuCapName(cap)} now, a generation in flight included, until the next reboot; the `
+    + 'cockpit keeps the cap and sets it again at its start, which is at boot. '
+    + `On the reference box: ${gpuCapFigures(m)}, against ${none.tps4.toFixed(2)} tok/s, ${none.w.toFixed(1)} W and `
+    + `${none.hot.toFixed(1)} °C with no cap. ${GPU_CAP_LIMITS}`;
+}
+// what the last state said: the reason the caps are off (blocked), whether None stays on for a kept cap (freeNone),
+// whether this machine has nvidia-smi (has) and the cap kept (kept), which the sheet reads
+const GC = {blocked: null, freeNone: false, has: null, kept: null};
+function wireGpuCap(){
+  const opts = [...$('gc-pick').querySelectorAll('button')];
+  opts.forEach(b => {
+    const m = GPU_CAPS.find(x => x.cap === b.dataset.cap);
+    b.dataset.act = 'gpu_clock';
+    b.dataset.title = `${b.dataset.cap === 'none' ? 'No cap' : gpuCapName(b.dataset.cap)}: ${gpuCapFigures(m)} on the reference box`;
+    b.addEventListener('click', () => askAction('gpu_clock', {cap: b.dataset.cap}, []));
+  });
+  // the arrow keys move the focus over the caps, and Enter or Space asks for the one it is on: a cap is a
+  // privileged change that asks first, so the arrows never ask by themselves
+  $('gc-pick').addEventListener('keydown', ev => {
+    const step = {ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1}[ev.key];
+    if (!step || ev.altKey || ev.ctrlKey || ev.metaKey) return;
+    ev.preventDefault();
+    const live = opts.filter(b => !b.disabled); if (!live.length) return;
+    const i = live.indexOf(document.activeElement);
+    live[(Math.max(0, i) + step + live.length) % live.length].focus();
+  });
+  const tb = $('gc-table').tBodies[0]; clear(tb);
+  GPU_CAPS.concat([GPU_CAP_AGAIN]).forEach((m, i) => {
+    const tr = tb.insertRow();
+    tr.insertCell().textContent = m.cap === 'none' ? (i ? 'None, again at the end' : 'None') : gpuCapName(m.cap);
+    [`${fmtN(m.mhz)} MHz`, `${m.tps4.toFixed(2)} tok/s`, `${m.w.toFixed(1)} W`, `${m.hot.toFixed(1)} °C`].forEach(v => {
+      const c = tr.insertCell(); c.className = 'r num sz'; c.textContent = v; });
+  });
+  labelCells($('gc-table'));
+  const none = GPU_CAPS[0], low = GPU_CAPS[GPU_CAPS.length - 1];
+  setText('gc-note', 'The reference box, 2026-11-11: the Qwen3.8 Flash-Next FP4-Local lane at 4 streams, the same work at each cap '
+    + `(48 answers of 1,200 tokens). One stream and the prefill moved little, ${none.tps1.toFixed(2)} to ${low.tps1.toFixed(2)} tok/s `
+    + `and ${fmtN(none.prefill)} to ${fmtN(low.prefill)} tok/s from no cap to ${gpuCapName(low.cap)}. ${GPU_CAP_LIMITS}`);
+}
+// What the server says of the cap (cockpit.py, gpu_clock_state): the clock nvidia-smi reads, whether this machine has the
+// nvidia-smi the sudoers lines name, the cap kept for the cockpit's next start, and what the cockpit last did with
+// it. The cap lit is the one in effect as far as the cockpit knows: the one it set last, else the one it keeps while
+// its start sets it again, and None once that try failed (the GPU at its own clocks: the kept cap stayed lit, the final
+// review of v1.47.0) or on a machine without nvidia-smi, where no cap can be set. A call that did not answer (timeout)
+// may still set or lift the cap, nvidia-smi running as root: the lit cap stays the one before it, and the state says
+// not known.
+on('gpu', d => {
+  const c = d.clock; if (!c) return;
+  const has = !!c.nvidia_smi, pending = c.set == null && c.kept !== 'none', unknown = c.error === 'timeout';
+  const failed = pending && !!c.error && !unknown;
+  const lit = !has || failed ? 'none' : c.set != null ? c.set : c.kept;
+  GC.has = has; GC.kept = c.kept;
+  setText('gc-mhz', c.mhz != null ? `${fmtN(c.mhz)} MHz` : 'n/a (nvidia-smi did not answer)');
+  cap('gc-cap', !has ? 'not on this machine'
+      : pending ? `${gpuCapName(c.kept)}, ${unknown ? 'not known' : c.error ? 'not set' : 'being set'}` : unknown ? 'not known' : gpuCapName(lit),
+      !has ? '' : unknown ? 'warn' : pending ? (c.error ? 'err' : 'warn') : c.error ? 'warn' : lit === 'none' ? '' : 'ok', pending && !c.error ? 'live' : true);
+  const when = c.at ? ` at ${clockTime(c.at)}` : '';
+  // none from the cockpit is all it knows: a cap set by hand outside it is not read back (nvidia-smi gives no cap)
+  setText('gc-state', !has ? 'none: no nvidia-smi here'
+    : pending ? `${gpuCapName(c.kept)}, kept for the cockpit’s start: ${unknown ? 'not known, its last try did not answer'
+      : c.error ? 'not set, its last try failed' : 'being set again'}`
+    : unknown ? `not known: ${c.tried === 'none' ? 'the try to lift it' : `the try to cap it at ${gpuCapName(c.tried)}`} did not answer, and may still apply`
+    : lit === 'none' ? (c.set === 'none' ? `none, lifted${when}: the GPU runs at its own clocks` : 'none set from the cockpit')
+    : `${gpuCapName(lit)}, set${c.origin === 'boot' ? ' again at the cockpit’s start' : ''}${when}`);
+  const m = GPU_CAPS.find(x => x.cap === lit);
+  setText('gc-line', m ? `${lit === 'none' ? 'No cap, the factory setting' : gpuCapName(lit)}: ${gpuCapFigures(m)} on the reference box.` : '');
+  // what failed last, and what to do: the server's own sentence (a refused sudo names the installer to run again)
+  const why = !has ? 'This machine has no /usr/bin/nvidia-smi, the one the cockpit’s sudoers lines name: the GPU clock cannot be capped from here.'
+      + (c.kept !== 'none' ? ` The cockpit keeps ${gpuCapName(c.kept)} for its start, which it cannot set here: None forgets it.` : '')
+    : c.error ? gpuCapFailed(c.error, c.tried, c.said)
+    : c.kept_bad ? `The file the cockpit keeps its cap in (cockpit-gpu-clock.json) was not used: ${c.kept_bad}.` : '';
+  show('gc-why', !!why); setText('gc-why', why);
+  [...$('gc-pick').querySelectorAll('button')].forEach(b => { b.setAttribute('aria-checked', String(b.dataset.cap === lit)); b.tabIndex = b.dataset.cap === lit ? 0 : -1; });
+  // no nvidia-smi: every cap is off, with why, but None while a cap is kept, which it forgets (the server runs nothing
+  // then); applyBusy owns the disabled state of every action control
+  const blocked = has ? '' : why, freeNone = !has && c.kept !== 'none';
+  if (GC.blocked !== blocked || GC.freeNone !== freeNone){
+    GC.blocked = blocked; GC.freeNone = freeNone;
+    $('gc-pick').querySelectorAll('button').forEach(b => {
+      const own = freeNone && b.dataset.cap === 'none' ? '' : blocked;
+      if (own) b.dataset.blocked = own; else delete b.dataset.blocked; });
+    applyBusy();
+  }
+});
+// what a cap's job did, once it ends: the server's own sentence, and the panel above already reads the outcome
+on('job_finished', j => {
+  if (j.action !== 'gpu_clock') return;
+  const r = j.result || {}, tried = (j.params || {}).cap;
+  if (r.dry_run) return toast(`${cap1(actionPhrase(j.action, j.params))}: dry run, nothing was run.`, 'ok');
+  if (j.status === 'done') return toast(gpuCapEnd(r.said || cap1(actionPhrase(j.action, j.params)) + ': done'), 'ok');
+  toast(gpuCapFailed(r.error, tried, r.said || 'open its log in Logs'), 'err', 9000);
+});
+
 // ── Library (on demand: each scan says what happened) ─────────────────────────
 function tag(t, kind){ return el('span', 'tag' + (kind ? ' ' + kind : ''), t); }
 function emptyRow(tb, n, txt){ const tr = tb.insertRow(); tr.className = 'empty'; const c = tr.insertCell(); c.colSpan = n; c.textContent = txt; }
@@ -604,6 +727,7 @@ function wireOps(){
   $('inv-btn').addEventListener('click', scanInventory);
   $('oc-fitbtn').dataset.act = 'fit_opencode';
   $('oc-fitbtn').addEventListener('click', () => askAction('fit_opencode', {}, []));
+  wireGpuCap();
   const theme = $('theme-select');
   if (theme && typeof themeName === 'function'){
     theme.value = themeName();

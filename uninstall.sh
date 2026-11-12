@@ -18,6 +18,10 @@ CONFIG_DIR="$HOME/.config/qwen38"
 SYSTEMD_DIR=/etc/systemd/system
 SUDOERS_FILE=/etc/sudoers.d/qwen38-cockpit
 PYSPY_WRAPPER=/usr/local/bin/qwen38-pyspy-scheduler
+# The GPU clock cap the cockpit sets from its Machine view (v1.47.0), and the file it keeps it in to set it
+# again at each of its starts: lifted with the cockpit, by the nvidia-smi its sudoers lines name.
+GPU_CAP_FILE="$CONFIG_DIR/cockpit-gpu-clock.json"
+NVIDIA_SMI=/usr/bin/nvidia-smi
 # Every cache and PLE folder the installed lanes use, not just the environment's: a box
 # installed with HF_CACHE=/data/hf had 22 to 126 GB of weights and the 48 GB PLE file
 # neither listed nor given a reclaim command (found in review, 2026-09-24).
@@ -170,6 +174,11 @@ if [ -d "$CONFIG_DIR" ]; then
   for _lane in image video flash 27b kolibri nemotron nemotron-super flash-local ornith-122b; do
     [ -f "$CONFIG_DIR/$_lane.off" ] && echo "  marker    $CONFIG_DIR/$_lane.off ($_lane lane left out with --no-$_lane)"
   done
+  # named from CONFIG_DIR alone, as every line of this block (GPU_CAP_FILE above is the same file)
+  if [ -f "$CONFIG_DIR/cockpit-gpu-clock.json" ]; then
+    _cap="$({ sed -n 's/.*"cap": *"\([0-9]*\)".*/\1/p' "$CONFIG_DIR/cockpit-gpu-clock.json" 2>/dev/null || true; } | head -1)"
+    echo "  setting   $CONFIG_DIR/cockpit-gpu-clock.json (the cockpit's GPU clock cap${_cap:+, $_cap MHz}, set again at each of its starts: lifted with the cockpit)"
+  fi
 fi
 if grep -q 'dgx-spark-qwen38' "$HOME/.local/bin/oc" 2>/dev/null; then
   echo "  launcher  $HOME/.local/bin/oc (this repo's opencode launcher)"
@@ -228,7 +237,7 @@ for f in "$SYSTEMD_DIR/qwen38-sglang.service" "$SYSTEMD_DIR/qwen38-flash.service
          "$SYSTEMD_DIR/qwen38-image.service" "$SYSTEMD_DIR/qwen38-video.service" "$SYSTEMD_DIR/qwen38-kolibri.service" \
          "$SYSTEMD_DIR/qwen38-nemotron.service" "$SYSTEMD_DIR/qwen38-nemotron-super.service" "$SYSTEMD_DIR/qwen38-flash-local.service" "$SYSTEMD_DIR/qwen38-ornith-122b.service" "$SYSTEMD_DIR/qwen38-speech.service" "$SYSTEMD_DIR/opencode-web.service" \
          "$SYSTEMD_DIR/qwen38-sglang.service.d" "$SYSTEMD_DIR/qwen38-dashboard.service.d" \
-         "$SYSTEMD_DIR/qwen38-keepalive.service.d" "$SUDOERS_FILE" "$PYSPY_WRAPPER"; do
+         "$SYSTEMD_DIR/qwen38-keepalive.service.d" "$SUDOERS_FILE" "$PYSPY_WRAPPER" "$GPU_CAP_FILE"; do
   [ -e "$f" ] && PRIV=1
 done
 # What only root can remove, asked for only when some of it is there. A --no-service box has
@@ -243,6 +252,17 @@ if [ "$PRIV" -eq 1 ]; then
       sudo systemctl disable --now "$u.service" 2>/dev/null || true
     done
     docker rm -f qwen38-sglang qwen38-sglang-run qwen38-flash qwen38-kolibri qwen38-nemotron qwen38-nemotron-super qwen38-flash-local qwen38-ornith-122b 2>/dev/null || true
+    # The GPU clock cap the cockpit set, lifted now that the cockpit is stopped (it can no longer set it
+    # again) and before its sudoers lines go: left, it held until the next reboot with nothing to say it.
+    # Only a cap the cockpit keeps: one set by hand outside it is the operator's.
+    if [ -f "$GPU_CAP_FILE" ]; then
+      if sudo "$NVIDIA_SMI" -rgc >/dev/null 2>&1; then
+        echo "GPU clock cap lifted."
+      else
+        echo "NOTE: nvidia-smi did not lift the GPU clock cap: the next reboot does, or sudo $NVIDIA_SMI -rgc now."
+      fi
+      rm -f "$GPU_CAP_FILE"
+    fi
     sudo rm -f "$SYSTEMD_DIR/qwen38-sglang.service" "$SYSTEMD_DIR/qwen38-flash.service" "$SYSTEMD_DIR/qwen38-keepalive.service" "$SYSTEMD_DIR/qwen38-dashboard.service" "$SYSTEMD_DIR/qwen38-image.service" "$SYSTEMD_DIR/qwen38-video.service" "$SYSTEMD_DIR/qwen38-kolibri.service" "$SYSTEMD_DIR/qwen38-nemotron.service" "$SYSTEMD_DIR/qwen38-nemotron-super.service" "$SYSTEMD_DIR/qwen38-flash-local.service" "$SYSTEMD_DIR/qwen38-ornith-122b.service" "$SYSTEMD_DIR/qwen38-speech.service" "$SYSTEMD_DIR/opencode-web.service"
     sudo rm -rf "$SYSTEMD_DIR/qwen38-sglang.service.d" "$SYSTEMD_DIR/qwen38-dashboard.service.d" "$SYSTEMD_DIR/qwen38-keepalive.service.d"
     # The cockpit's privileged surface goes with it: a NOPASSWD allowlist left behind

@@ -24,7 +24,7 @@ THEMES = {
 ROLES = ("--ink-0", "--rule-1", "--fg-1", "--brand", "--ok", "--warn", "--bad",
          "--surface", "--surface-border", "--primary-bg", "--primary-ink", "--primary-ink-soft",
          "--field-bg", "--code-bg", "--reservoir-bg", "--mark-tile", "--overlay-ink", "--lane-brand", "--stage-1", "--stage-2", "--stage-3", "--scrim",
-         "--tick-ink", "--spark-grid", "--logo-2", "--r-panel")
+         "--tick-ink", "--spark-grid", "--r-panel")
 
 
 def run(test, body, **kw):
@@ -52,6 +52,20 @@ def luminance(value):
         return c / 12.92 if c <= .03928 else ((c + .055) / 1.055) ** 2.4
     r, g, b = (channel(c) for c in hex_rgb(value))
     return .2126 * r + .7152 * g + .0722 * b
+
+
+def rgba(value):
+    r, g, b, a = re.match(r"rgba\((\d+),\s*(\d+),\s*(\d+),\s*([\d.]+)\)", value).groups()
+    return int(r), int(g), int(b), float(a)
+
+
+def halo_peak(theme):
+    """The ground under the text where both halos lie at full strength, as one hex colour."""
+    base = [int(c * 255) for c in hex_rgb(token(theme, "--ground"))]
+    for name in ("--ground-a", "--ground-b"):
+        r, g, b, a = rgba(token(theme, name))
+        base = [round(c * a + d * (1 - a)) for c, d in zip((r, g, b), base)]
+    return "#%02x%02x%02x" % tuple(base)
 
 
 def contrast(a, b):
@@ -154,6 +168,20 @@ class EveryThemeAnswersWithItsWholePalette(unittest.TestCase):
                 self.assertGreaterEqual(contrast(token(theme, fg), token(theme, bg)), 4.5,
                                         "%s %s on %s" % (theme, fg, bg))
 
+    def test_text_meets_aa_where_the_halos_lie(self):
+        for theme in ("graphite", "paper"):
+            peak = halo_peak(theme)
+            for fg in ("--fg-1", "--fg-2", "--fg-3"):
+                with self.subTest(theme=theme, fg=fg):
+                    self.assertGreaterEqual(contrast(token(theme, fg), peak), 4.5,
+                                            "%s %s on the halo peak %s" % (theme, fg, peak))
+
+    def test_the_halos_are_the_indigo_gradient_in_every_theme(self):
+        shape = re.search(r"body::before\{.*?\n.*?\}", CSS, re.S).group(0)
+        self.assertIn("var(--ground-a)", shape)
+        self.assertIn("var(--ground-b)", shape)
+        self.assertNotIn("rgba(122,62,232", shape)
+
     def test_state_text_meets_aa_on_its_panel(self):
         for theme in ("graphite", "paper"):
             for state in ("--ok-hi", "--warn-hi", "--bad-hi"):
@@ -171,6 +199,25 @@ class EveryThemeAnswersWithItsWholePalette(unittest.TestCase):
                 for stop in stops:
                     with self.subTest(theme=theme, ink=name, stop=stop):
                         self.assertGreaterEqual(contrast(ink, stop), 4.5, "%s on %s" % (ink, stop))
+
+
+class TheLogoIsIndigoInEveryTheme(unittest.TestCase):
+    def test_no_theme_recolours_the_mark(self):
+        self.assertNotIn("--logo", CSS)
+        for theme in THEMES:
+            with self.subTest(theme=theme):
+                self.assertNotIn("--logo", block(theme))
+
+
+class TheThemeIsAnEntryOfTheCockpitPanel(unittest.TestCase):
+    def test_the_picker_sits_in_the_cockpit_facts_and_no_card_of_its_own(self):
+        html = (DASH / "static" / "index.html").read_text()
+        panel = re.search(r"<header><h2>Cockpit</h2></header>\s*<dl class=\"facts\">(.*?)</dl>", html, re.S)
+        self.assertIsNotNone(panel)
+        self.assertIn('id="theme-select"', panel.group(1))
+        self.assertTrue(panel.group(1).rstrip().endswith("</dd>"))
+        self.assertEqual(re.findall(r"<dt>(?:<label[^>]*>)?([^<]+)", panel.group(1))[-1], "Theme")
+        self.assertNotIn("Appearance", html)
 
 
 if __name__ == "__main__":

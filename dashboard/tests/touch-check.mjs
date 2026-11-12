@@ -21,8 +21,8 @@
 //     would land (a control scrolled under the sticky head or folded in a closed
 //     <details> is not covered: it is not shown);
 //   * the Agent's fullscreen frame covers the head, and its exit button can be tapped;
-//   * on a phone, the request log and the Library's wide tables fit the screen, and each
-//     request's outcome is on screen;
+//   * on a phone, the request log, the Library's wide tables and the Machine view's GPU clock
+//     cap fit the screen, and each request's outcome is on screen;
 //   * with an iPhone's safe-area insets, the head, the toasts and the fullscreen frame keep
 //     clear of the notch and the home indicator.
 import { spawn } from 'node:child_process';
@@ -350,6 +350,22 @@ try {
     ok('phone: the recipes stack into cards that fit the screen', rc.overflow <= 1 && rc.tableW <= phone.w && rc.head === 'none', JSON.stringify(rc));
     ok('phone: every stacked line carries its column name', rc.unlabelled === 0, JSON.stringify(rc));
   }
+  // the Machine view's GPU clock cap on the narrowest phone (375 px): its four caps on the screen, and what each
+  // cost and gave stacked into cards that fit, each line with its column's name (decision of 2026-11-11). Measured
+  // against the layout viewport, clientWidth: a phone's innerWidth grows with a page wider than the screen (462 px
+  // for a cap 420 px wide on a 375 px phone, its page zoomed out to fit), and read so it found nothing too wide
+  await device(PHONES[0], true);
+  await evalJs("(showView('machine'), 1)"); await sleep(300);
+  const gc = await evalJs(`(() => { const vw = document.documentElement.clientWidth, t = document.getElementById('gc-table');
+    const caps = [...document.querySelectorAll('#gc-pick button')].map(b => b.getBoundingClientRect());
+    const cells = [...t.querySelectorAll('tbody td')];
+    return JSON.stringify({ overflow: document.documentElement.scrollWidth - vw, n: caps.length,
+      off: caps.filter(r => r.left < 0 || r.right > vw + 1 || r.width < 1).length, rows: t.tBodies[0].rows.length,
+      tableW: Math.round(t.getBoundingClientRect().width), head: getComputedStyle(t.tHead).display,
+      unlabelled: cells.filter(c => c.cellIndex > 0 && !c.dataset.label).length }); })()`).then(JSON.parse);
+  ok(`${PHONES[0].name}: the GPU clock cap fits the screen, its four caps on it`, gc.overflow <= 1 && gc.n === 4 && gc.off === 0, JSON.stringify(gc));
+  ok(`${PHONES[0].name}: what each GPU clock cap cost stacks into cards that fit, each line named`,
+    gc.rows === 5 && gc.tableW <= PHONES[0].w && gc.head === 'none' && gc.unlabelled === 0, JSON.stringify(gc));
 
   // ── a load put away: its way back fits the head of every screen and answers a finger ──
   // The head hides the job button under 1100 px and its right side never shrinks: the way back to a

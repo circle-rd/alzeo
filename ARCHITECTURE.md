@@ -36,7 +36,7 @@ also the cockpit login), the patched chat templates, the flash launcher, the
 reduced draft vocabulary, the deployed copy of the proxy, the opencode
 config artifact, the `opencode.off` and `cockpit.off` markers, the cockpit state files
 (`cockpit-secret` 0600, `cockpit-events.jsonl`, `cockpit-history.json`,
-`wedge-*.txt` dumps), and unit backups (`*.bak-preupdate`). Outside it:
+`cockpit-gpu-clock.json` while a GPU clock cap is kept, `wedge-*.txt` dumps), and unit backups (`*.bak-preupdate`). Outside it:
 systemd units in `/etc/systemd/system`, one sudoers file in
 `/etc/sudoers.d`, the pyspy forensics wrapper in `/usr/local/bin`, the `oc`
 launcher in `~/.local/bin`, and the two weight trees (HF cache, PLE dir).

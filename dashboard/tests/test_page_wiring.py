@@ -19,7 +19,7 @@ from test_page_behaviour import HELPERS  # noqa: E402
 
 DASH = pathlib.Path(__file__).resolve().parents[1]
 JS = {p.name: p.read_text() for p in (DASH / "static" / "js").glob("*.js")}
-ACTIONS = ("unit", "switch", "flush_cache", "abort_all", "fit_opencode", "diag_bundle", "smoke")
+ACTIONS = ("unit", "switch", "flush_cache", "abort_all", "fit_opencode", "diag_bundle", "smoke", "gpu_clock")
 
 
 def run(test, body, **kw):
@@ -41,7 +41,7 @@ class EveryActionButtonIsWired(unittest.TestCase):
         report(seen);
         """)
         acts = {s["act"] for s in r}
-        self.assertTrue({"smoke", "flush_cache", "abort_all", "diag_bundle", "fit_opencode"} <= acts, acts)
+        self.assertTrue({"smoke", "flush_cache", "abort_all", "diag_bundle", "fit_opencode", "gpu_clock"} <= acts, acts)
         for s in r:
             with self.subTest(act=s["act"]):
                 self.assertTrue(s["opened"], f"{s['act']} does nothing when pressed")

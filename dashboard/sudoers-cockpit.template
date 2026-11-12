@@ -6,7 +6,8 @@
 # units and the opencode web server of the Agent tab), the
 # operations switch-model.sh performs (27B, image, Kolibri and Nemotron unit installs from
 # fixed staging paths, enable/disable, daemon-reload, the keepalive ceiling drop-in), one
-# read-only forensics wrapper, and one fixed kernel-journal read.
+# read-only forensics wrapper, one fixed kernel-journal read, and the GPU clock cap of the
+# Machine view (the end of this file).
 # Deliberately free of wildcards now: a glob on install sources once allowed
 # any file, and a glob on sed arguments is still root (its w command writes
 # any file), so switch-model.sh stages at fixed paths and edits the keepalive
@@ -74,3 +75,12 @@ __USER__ ALL=(root) NOPASSWD: /usr/bin/install -m 644 __HOME__/.config/qwen38/qw
 __USER__ ALL=(root) NOPASSWD: /usr/bin/install -m 644 -D __HOME__/.config/qwen38/keepalive-ceiling.conf.switch-stage /etc/systemd/system/qwen38-keepalive.service.d/ceiling.conf
 __USER__ ALL=(root) NOPASSWD: /usr/local/bin/qwen38-pyspy-scheduler ""
 __USER__ ALL=(root) NOPASSWD: /usr/bin/journalctl -k --since -1h --no-pager -o short-iso
+# The GPU clock cap (decision of 2026-11-11): the three caps the cockpit offers, no floor and that
+# ceiling, and the reset that lifts it; exactly cockpit.py's GPU_CLOCK_ARGV. In sudoers a comma
+# separates commands, so the one inside "0,2400" is escaped; sudo matches it against the
+# cockpit's plain "0,2400" (run by sudo 1.9.15p5 on this file rendered, 2026-11-11: the four calls
+# allowed, another clock, an option after the cap and nvidia-smi's other options refused).
+__USER__ ALL=(root) NOPASSWD: /usr/bin/nvidia-smi -lgc 0\,2400
+__USER__ ALL=(root) NOPASSWD: /usr/bin/nvidia-smi -lgc 0\,2200
+__USER__ ALL=(root) NOPASSWD: /usr/bin/nvidia-smi -lgc 0\,2000
+__USER__ ALL=(root) NOPASSWD: /usr/bin/nvidia-smi -rgc

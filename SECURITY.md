@@ -6,7 +6,7 @@ What this box trusts, what it does not, and how to report a hole in that line.
 
 A serving stack one operator installs on a machine they own and administer:
 a Docker engine behind a Python proxy, a cockpit web UI that reaches systemd
-through an exact-argv sudo allowlist, and a relay, installed with the cockpit
+(and the GPU clock cap of nvidia-smi) through an exact-argv sudo allowlist, and a relay, installed with the cockpit
 when opencode is there, that puts opencode's web interface behind the cockpit
 login. There is no telemetry and no
 phone-home: every byte that leaves the box is a download the installer names
@@ -137,7 +137,7 @@ what it says as root. So the cockpit's user, its API key and a session on it are
 root on this machine, and the defences that count are the ones in front of it:
 the key, the bind, the session cookie. The allowlist is still exact argv with
 no wildcards (a glob on `sed` arguments is root without any file to write), and
-two CI steps hold it: no `*` on any allowlist line, and every privileged call in
+two CI steps hold it: no wildcard or regular expression (`*`, `?`, `[`, `^`) on any allowlist line, and every privileged call in
 `switch-model.sh` cross-checked against the template. The cockpit process
 runs unprivileged; login is the serving API key; a per-session HMAC cookie
 gates everything else; the diagnostic bundle masks the API key in every
