@@ -114,6 +114,25 @@ checked by `visudo` before it lands, as at every update that installs the cockpi
 `./dashboard/install-dashboard.sh`). No cap is set: the setting starts at None, and nothing changes for a box that does
 not use it. The cockpit restarts, as at every release. Engines, lanes and the proxy do not change.
 
+**After the push.** The pull request ran GitHub's CI on its runners before `main` moved: 95 steps, none skipped, in 10
+min 36 s. Merged as a fast-forward, `main` passed its own run on 6fd0f5a at the first try (95 steps, none skipped, 10
+min 39 s). On the reference box the final tree passed the CI in 570 s (53 steps, none skipped) and, beside it, the pass
+in one process in 1,834 s. The reference box updated in 1 min 37 s by the README's command (get.alzeo.ai): the 27B and
+the proxy kept running, the cockpit restarted and serves v1.47.0, its sudoers file was written again with the four new
+lines, and of the configuration nothing else changed but the record of what is installed. No cap was set.
+
+The cap was then run from the cockpit's service, on the code as released, as the notes above say. By the Machine view's
+own path (a session, the CSRF token, the action), 2,400 MHz was set: the job ended 0 in one second with nvidia-smi's
+words in its log, the file kept `{"cap": "2400"}`, and nvidia-smi read 2,392 MHz four seconds later. The cockpit's
+service was restarted: a job of origin `boot` set the cap again, the audit log has its argv (`sudo -n
+/usr/bin/nvidia-smi -lgc 0,2400`), and the view's state said 2,400 MHz, set at the start. None then lifted it: the file
+was removed, and nvidia-smi read 2,411 MHz four seconds later. The reference box still carries the broader sudoers rule
+of the study, so this run does not show the four lines alone, which the run in a container does. On the 27B the
+production checks passed, and so did the eight real clients (Claude Code, opencode, Hermes, pi, the OpenAI and
+Anthropic SDKs, fetch under Node and under Bun, LiteLLM). The cockpit showed no banner on any of its views and no
+JavaScript error, and its panel read "none, lifted at 11:46: the GPU runs at its own clocks". No client matrix was run:
+this release touches no lane, no engine, no unit and not the proxy.
+
 ## v1.46.4 (2026-11-11): the Qwen3.8 Flash-Next FP4-Local lane answers at the lean effort by default, as the other Qwen lanes do
 
 **At `xhigh`, the lane often answered nothing.** A request that names no reasoning effort got `xhigh` on the Qwen3.8
