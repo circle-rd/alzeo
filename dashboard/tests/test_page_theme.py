@@ -24,7 +24,7 @@ THEMES = {
 ROLES = ("--ink-0", "--rule-1", "--fg-1", "--brand", "--ok", "--warn", "--bad",
          "--surface", "--surface-border", "--primary-bg", "--primary-ink", "--primary-ink-soft",
          "--field-bg", "--code-bg", "--reservoir-bg", "--mark-tile", "--overlay-ink", "--lane-brand", "--stage-1", "--stage-2", "--stage-3", "--scrim",
-         "--tick-ink", "--spark-grid", "--logo-2", "--r-panel")
+         "--tick-ink", "--spark-grid", "--r-panel")
 
 
 def run(test, body, **kw):
@@ -201,12 +201,22 @@ class EveryThemeAnswersWithItsWholePalette(unittest.TestCase):
                         self.assertGreaterEqual(contrast(ink, stop), 4.5, "%s on %s" % (ink, stop))
 
 
+class TheLogoIsIndigoInEveryTheme(unittest.TestCase):
+    def test_no_theme_recolours_the_mark(self):
+        self.assertNotIn("--logo", CSS)
+        for theme in THEMES:
+            with self.subTest(theme=theme):
+                self.assertNotIn("--logo", block(theme))
+
+
 class TheThemeIsAnEntryOfTheCockpitPanel(unittest.TestCase):
     def test_the_picker_sits_in_the_cockpit_facts_and_no_card_of_its_own(self):
         html = (DASH / "static" / "index.html").read_text()
         panel = re.search(r"<header><h2>Cockpit</h2></header>\s*<dl class=\"facts\">(.*?)</dl>", html, re.S)
         self.assertIsNotNone(panel)
         self.assertIn('id="theme-select"', panel.group(1))
+        self.assertTrue(panel.group(1).rstrip().endswith("</dd>"))
+        self.assertEqual(re.findall(r"<dt>(?:<label[^>]*>)?([^<]+)", panel.group(1))[-1], "Theme")
         self.assertNotIn("Appearance", html)
 
 

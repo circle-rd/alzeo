@@ -96,8 +96,6 @@
   --shadow-slider:0 4px 10px rgba(0,0,0,.5);
   --gate-bg:linear-gradient(180deg, rgba(255,255,255,.09), rgba(255,255,255,.05));
   --gate-shadow:0 40px 120px -40px rgba(5,2,20,.9); --gate-line:rgba(255,255,255,.55); --gate-err:#ffb2a9;
-  --logo-bg:#120a22; --logo-1:#f4ecff; --logo-2:#a676ff; --logo-3:#4a1fa8;
-  --logo-edge-1:#e9dbff; --logo-edge-2:#6b3fd4; --logo-spark:#56d6ff;
   /* type */
   --f-ui:"Geist", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   --f-code:"IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
@@ -171,8 +169,6 @@
   --shadow-slider:0 4px 10px rgba(0,0,0,.45);
   --gate-bg:linear-gradient(180deg, rgba(255,255,255,.045), rgba(255,255,255,.02));
   --gate-shadow:0 40px 120px -40px rgba(0,0,0,.9); --gate-line:rgba(255,255,255,.18); --gate-err:#fca5a5;
-  --logo-bg:#09090b; --logo-1:#ecfeff; --logo-2:#22d3ee; --logo-3:#0f766e;
-  --logo-edge-1:#a5f3fc; --logo-edge-2:#0891b2; --logo-spark:#67e8f9;
   --r-hero:20px; --r-panel:16px; --r-ctl:10px;
 }
 
@@ -223,8 +219,6 @@
   --shadow-slider:0 4px 10px rgba(24,24,27,.20);
   --gate-bg:linear-gradient(180deg, rgba(255,255,255,.90), rgba(255,255,255,.70));
   --gate-shadow:0 40px 120px -40px rgba(24,24,27,.22); --gate-line:rgba(14,116,144,.35); --gate-err:#991b1b;
-  --logo-bg:#0e7490; --logo-1:#ecfeff; --logo-2:#0891b2; --logo-3:#0f766e;
-  --logo-edge-1:#67e8f9; --logo-edge-2:#0e7490; --logo-spark:#0891b2;
   --r-hero:20px; --r-panel:16px; --r-ctl:10px;
 }
 
@@ -279,13 +273,6 @@ img,svg,video,canvas{display:block; max-width:100%}
 .menu-btn svg{width:18px; height:18px; stroke:currentColor; fill:none; stroke-width:1.8; stroke-linecap:round}
 .brand{display:flex; align-items:center; gap:var(--s-3); text-decoration:none; color:var(--fg-1); flex:none}
 .brand .mark{width:30px; height:30px; flex:none}
-.brand .mark rect{fill:var(--logo-bg)}
-.brand .mark #mk stop:nth-child(1){stop-color:var(--logo-1)}
-.brand .mark #mk stop:nth-child(2){stop-color:var(--logo-2)}
-.brand .mark #mk stop:nth-child(3){stop-color:var(--logo-3)}
-.brand .mark #mk-edge stop:nth-child(1){stop-color:var(--logo-edge-1)}
-.brand .mark #mk-edge stop:nth-child(2){stop-color:var(--logo-edge-2)}
-.brand .mark path[stroke="#56d6ff"]{stroke:var(--logo-spark)}
 .brand .word{display:flex; flex-direction:column; line-height:1}
 .brand .word b{font-weight:680; font-size:var(--t-15); letter-spacing:.01em}
 .brand .word small{font-size:var(--t-12); color:var(--fg-3); margin-top:3px}
