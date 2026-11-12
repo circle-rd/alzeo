@@ -142,8 +142,8 @@
   --pip-bg:rgba(255,255,255,.04);
   --control-bg:rgba(255,255,255,.04); --control-bg-hover:rgba(255,255,255,.08);
   --control-border:rgba(255,255,255,.10); --control-border-hover:rgba(255,255,255,.18); --control-border-soft:rgba(255,255,255,.08);
-  --primary-bg:linear-gradient(90deg, #06b6d4, #14b8a6); --primary-bg-hover:linear-gradient(90deg, #22d3ee, #2dd4bf);
-  --primary-ink:#041016; --primary-ink-soft:#041016; --primary-border:transparent; --primary-border-hover:transparent;
+  --primary-bg:#fafafa; --primary-bg-hover:#e4e4e7;
+  --primary-ink:#09090b; --primary-ink-soft:#09090b; --primary-border:#fafafa; --primary-border-hover:#e4e4e7;
   --field-bg:#0c0c0e; --placeholder:#82828b;
   --mark-tile:#ffffff; --overlay-ink:#ffffff;
   --stage-1:var(--fg-1); --stage-2:var(--fg-2); --stage-3:var(--fg-3); --stage-track:var(--ink-3);
@@ -192,8 +192,8 @@
   --pip-bg:rgba(9,9,11,.03);
   --control-bg:rgba(9,9,11,.03); --control-bg-hover:rgba(9,9,11,.07);
   --control-border:rgba(9,9,11,.14); --control-border-hover:rgba(9,9,11,.24); --control-border-soft:rgba(9,9,11,.10);
-  --primary-bg:linear-gradient(90deg, #0e7490, #0f766e); --primary-bg-hover:linear-gradient(90deg, #155e75, #115e59);
-  --primary-ink:#ffffff; --primary-ink-soft:#ffffff; --primary-border:transparent; --primary-border-hover:transparent;
+  --primary-bg:#18181b; --primary-bg-hover:#27272a;
+  --primary-ink:#ffffff; --primary-ink-soft:#ffffff; --primary-border:#18181b; --primary-border-hover:#27272a;
   --field-bg:#ffffff; --placeholder:#71717a;
   --mark-tile:#ffffff; --overlay-ink:#ffffff;
   --stage-1:#fafafa; --stage-2:#a1a1aa; --stage-3:#82828b; --stage-track:rgba(255,255,255,.14);
