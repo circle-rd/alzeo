@@ -1,6 +1,6 @@
 # Changelog
 
-## v1.47.0 (2026-11-11): a GPU clock cap in the cockpit's Machine view: about the same tokens per second for fewer watts and degrees
+## v1.47.0 (2026-11-12): a GPU clock cap in the cockpit's Machine view: about the same tokens per second for fewer watts and degrees
 
 **What it is.** The Machine view has a new setting, the GPU clock cap: None, the factory setting and the default, or a
 ceiling of 2,400, 2,200 or 2,000 MHz on the GPU's clock. Measured on the reference box on 2026-11-11, on the Qwen3.8
@@ -9,7 +9,7 @@ again at the end:
 
 | Cap | Clock read | tok/s, 4 streams | GPU watts | Hottest zone | tok/s, 1 stream | Prefill, tok/s |
 |---|---|---|---|---|---|---|
-| None | 2,502 MHz | 105.74 | 46.6 W | 92.6 °C | 56.20 | 2,077 |
+| None | 2,502 MHz | 105.74 | 46.6 W | 92.6 °C | 56.20 | 2,078 |
 | 2,400 MHz | 2,387 MHz | 105.87 | 35.9 W | 90.2 °C | 56.22 | 2,073 |
 | 2,200 MHz | 2,190 MHz | 103.77 | 28.1 W | 86.6 °C | 55.50 | 2,027 |
 | 2,000 MHz | 1,989 MHz | 103.15 | 22.8 W | 84.4 °C | 54.62 | 2,004 |
@@ -17,8 +17,15 @@ again at the end:
 
 At 2,400 MHz the lane answered as fast as with no cap for 10.7 W less on the GPU. At 2,000 MHz it gave up 2.4 % of its
 tokens per second for less than half the GPU's watts and 8.2 °C less at the box's hottest zone. The limits of the
-measurement are said in the view and here: one lane, a text one. The image, video and 27B lanes are not measured yet,
-and the watts are the GPU's alone, as nvidia-smi reads them. Nothing is capped unless the setting is used.
+measurement are said in the view and here: one lane, a text one, and one run per cap (None twice, first and last). The
+image, video and 27B lanes are not measured yet, and the watts are the GPU's alone, as nvidia-smi reads them.
+nvidia-smi warns, at each cap it sets, that the persistence mode is disabled: on a box where nothing holds the GPU any
+more, the driver may lose the cap, and the view would still say it is set. Not verified: the reference box keeps its
+GPU active with its desktop. An image model under study, MiniMax-H3-Image, which is not a lane yet, was measured the
+same day (one image at a time, 10 at 2048x2048 and 3 at 4736x3552 per cap, no cap again at the end): 2,400 MHz changed
+nothing, and 2,000 MHz cost 8 % more time per image (16.86 s against 15.58 s, and 89.15 s against 82.87 s) for 28 to 34
+% fewer GPU watts and a box's hottest zone at 87.7 °C against 97.0 °C at 2048x2048. Diffusion pays the cap more than
+text does. Nothing is capped unless the setting is used.
 
 **How it works.** A cap is `nvidia-smi -lgc 0,<MHz>` (no floor, that ceiling) and None is `nvidia-smi -rgc`. The
 cockpit runs them through `sudo -n`, by exact argv: its sudoers allowlist (`dashboard/sudoers-cockpit.template`) gains
@@ -27,36 +34,54 @@ four lines, the three caps and the reset, and nothing else of nvidia-smi. The se
 before it runs, the audit log. It takes the four values and refuses any other. nvidia-smi applies a cap at once, a
 generation in flight included. A cap does not survive a reboot of the machine, so the cockpit keeps the choice in
 `~/.config/qwen38/cockpit-gpu-clock.json` and sets it again at its start, which is at boot, as a job the dock shows.
-Until that job has run, or when it fails, the view says the cap is kept and not set, never that it holds. A machine
-with no `/usr/bin/nvidia-smi` offers no cap and says why, and a box whose sudoers file has no line for the call yet is
-told to run the installer again. `./uninstall.sh` lifts a cap the cockpit keeps before it removes the sudoers file, and
-the cockpit's "Remove with" line does the same. A cap set by hand outside the cockpit is not read back (nvidia-smi
-gives the clock and the GPU's maximum, not the cap) and is left alone. The clock the view shows is the one nvidia-smi
-reads, which is the one the GPU last ran at: idle, it does not move, so it shows a cap only once the GPU has worked
-under it, and the view says so.
+Until that job has run, or when it fails, the view says the cap is kept and not set, never that it holds. When
+nvidia-smi does not answer within 20 s, the job ends and the view says the cap in effect is not known: nvidia-smi runs
+as root, out of the cockpit's reach, and may still set or lift it. A machine with no `/usr/bin/nvidia-smi` offers no
+cap and says why (None stays on while the cockpit keeps a cap there, and forgets it without running anything), and a
+box whose sudoers file has no line for the call yet is told to run the cockpit's installer again,
+`./dashboard/install-dashboard.sh`, which writes that file at every run (`./install.sh` does not when it leaves the
+cockpit out). `./uninstall.sh` lifts a cap the cockpit keeps before it removes the sudoers file, and the cockpit's
+"Remove with" line does the same: it looks for the file when it is run, not when it is printed. A cap set by hand
+outside the cockpit is not read back (nvidia-smi gives the clock and the GPU's maximum, not the cap), so the view says
+"none set from the cockpit", and the cockpit's start and the uninstall leave it alone (None, chosen in the view, lifts
+any cap). The clock the view shows is the one nvidia-smi reads, which can lag a few seconds behind a change of cap and
+then follows it, the GPU idle included: a reading above the cap just after it is set is not a cap that failed, and the
+view says so.
 
 **On the real GPU.** The cockpit's own code set and lifted the cap on the reference box (2026-11-11, driver
-580.178.04), with no test double: `sudo -n /usr/bin/nvidia-smi -lgc 0,2400` answered "GPU clocks set to (gpuClkMin 0,
-gpuClkMax 2400)", the job for 2,000 MHz ended done, named its command and kept `{"cap": "2000"}`, a cockpit start set
-it again by a job of origin `boot`, 1,800 was refused (400, "invalid cap"), and None lifted the cap and removed the
-file. Then one generation of 700 tokens on the 27B lane, three times: with no cap the GPU ran at 2,541 MHz and 41.5 W
-for 32.6 s, under the cap of 2,000 MHz at 1,989 MHz and 21.8 W for 33.6 s, and with the cap lifted at 2,522 MHz and
-43.4 W for 32.5 s. One run each: a first look at the 27B, not a measurement of it. It is also what showed that an idle
-GPU keeps the reading of its last run (2,502 MHz read with the cap of 2,000 just set, 1,989 MHz still read once it was
-lifted): the row that said "Clock now" says "Clock last run at", with the reason under it.
+580.178.04), with no test double: `sudo -n /usr/bin/nvidia-smi -lgc 0,2400` answered `GPU clocks set to "(gpuClkMin 0,
+gpuClkMax 2400)" for GPU 0000000F:01:00.0`, the job for 2,000 MHz ended done, named its command and kept `{"cap":
+"2000"}`, a cockpit start set it again by a job of origin `boot`, 1,800 was refused (400, "invalid cap"), and None
+lifted the cap and removed the file. sudo allowed those calls by a sudoers rule of that box broader than the four lines
+this release ships, so the four lines were run apart: the template rendered as the installer renders it, in a container
+with sudo 1.9.15p5, the box's version, and an nvidia-smi of the test's own. The cockpit's four argv ran there as root,
+and thirteen neighbours were refused: another clock, a fifth digit, a floor of 1, an option after the cap, a second
+comma, an escaped comma, `-lgc` alone, `-rgc -i 0`, `-q`, `--gpu-reset`, nvidia-smi alone, and two other commands. Then
+one generation of 700 tokens on the 27B lane, three times: with no cap the GPU ran at 2,541 MHz and 41.5 W for 32.6 s,
+under the cap of 2,000 MHz at 1,989 MHz and 21.8 W for 33.6 s, and with the cap lifted at 2,522 MHz and 43.4 W for 32.5
+s. One run each: a first look at the 27B, not a measurement of it. It also showed that the reading lags a change of
+cap: an idle GPU read 2,502 MHz two seconds after the cap of 2,000 was set, and 1,989 MHz just after it was lifted. The
+campaign's idle readings show that it then follows the cap (after 51 to 111 s of rest, 2,392 MHz under 2,400 and 1,989
+under 2,000), so the view names its row "Clock read" and says under it what the reading does.
 
 **Tests.** `dashboard/tests/test_cockpit_gpu_clock.py`: the four values and no other (a value with an option after it,
-a pair, spaces, five digits), the exact argv called, with a sudo and an nvidia-smi of the test's own on the PATH, the
-file written and removed, the cap set again at the cockpit's start, a machine without nvidia-smi, a sudo that refuses,
-an nvidia-smi that refuses or does not answer, and the sudoers template rendered: its lines are the argv the cockpit
-calls and `visudo -cf` accepts them. `dashboard/tests/test_gpu_clock_page.py`: the panel, its figures (the ones of
-docs/cockpit.md), its states and its sheet. `tests/test_gpu_clock_removal.py`: the uninstall lifts the cap before the
-sudoers lines go. `dashboard/tests/touch-check.mjs`: nothing overflows at 375 px. Each new test fails without the code,
-checked with 44 broken versions of it, one behavior at a time.
+a pair, spaces, five digits), the exact argv called, with a sudo and an nvidia-smi of the test's own on the PATH (a set
+and a reset answered in the real one's words), the file written and removed, a folder in its place, the cap set again
+at the cockpit's start, a machine without nvidia-smi, where None forgets a kept cap, a cap lifted while its file could
+not be removed (the message says the next start sets it again), a sudo that refuses, an nvidia-smi
+that refuses (its reason quoted, not its warning) or does not answer (the cap said not known), the exit code the event
+feed gives, and the sudoers template rendered: its lines are the argv the cockpit calls and `visudo -cf` accepts them.
+`dashboard/tests/test_gpu_clock_page.py`: the panel, its figures (the ones of docs/cockpit.md), its states, its sheet,
+its keys and its name for a screen reader. `tests/test_gpu_clock_removal.py`: the uninstall lifts the cap before the
+sudoers lines go, and the "Remove with" line, run, lifts a cap kept after it was printed.
+`dashboard/tests/touch-check.mjs`: nothing overflows at 375 px. Each test of the three new files fails without the
+code, checked with 76 broken versions of it, one behavior at a time.
 
 **What an update does.** The cockpit's sudoers file is written again with its four new lines, by the update's own sudo,
-checked by `visudo` before it lands, as at every update. No cap is set: the setting starts at None, and nothing changes
-for a box that does not use it. The cockpit restarts, as at every release. Engines, lanes and the proxy do not change.
+checked by `visudo` before it lands, as at every update that installs the cockpit (`--no-cockpit`, `--no-service` and
+`--no-start` leave it as it was: a cockpit that runs there anyway says so when sudo refuses, and names
+`./dashboard/install-dashboard.sh`). No cap is set: the setting starts at None, and nothing changes for a box that does
+not use it. The cockpit restarts, as at every release. Engines, lanes and the proxy do not change.
 
 ## v1.46.4 (2026-11-11): the Qwen3.8 Flash-Next FP4-Local lane answers at the lean effort by default, as the other Qwen lanes do
 

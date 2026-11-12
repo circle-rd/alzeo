@@ -613,11 +613,12 @@ const VERB = {unit: p => cap1(p.verb) + ' ' + (LANE_NAME[p.unit] || laneLabel(p.
   delete_strays: () => 'Delete them', fetch: () => 'Download', prepare: () => 'Build it',
   gpu_clock: p => p.cap === 'none' ? 'Lift the cap' : `Cap at ${gpuCapName(p.cap)}`};
 // the GPU clock cap runs as a python job on the server, which hands the page each cap's exact command (its
-// config); the sheet shows that command, not the job's name
+// config); the sheet shows that command, not the job's name, unless this machine has no nvidia-smi (ops.js, GC),
+// where None runs nothing and only forgets the cap kept
 const argvFor = (name, p) => name === 'unit' ? ['sudo', '-n', '/usr/bin/systemctl', p.verb, p.unit]
   : name === 'switch' ? ['bash', 'switch-model.sh', p.target] : name === 'fetch' ? ['bash', 'switch-model.sh', p.target, '--fetch']
   : name === 'prepare' ? ['bash', 'prepare-lane.sh', laneOfTarget(p.target)].concat(['flash', '27b'].includes(laneOfTarget(p.target)) ? [p.target] : [])
-  : name === 'gpu_clock' && ((F.config || {}).gpu_clock_argv || {})[p.cap] ? F.config.gpu_clock_argv[p.cap]
+  : name === 'gpu_clock' && GC.has !== false && ((F.config || {}).gpu_clock_argv || {})[p.cap] ? F.config.gpu_clock_argv[p.cap]
   : ['cockpit', name];
 
 let SHEET = null;   // {mode: 'one'|'journey', ...}

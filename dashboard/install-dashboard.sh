@@ -140,10 +140,10 @@ if [ "$AGENT_PORT" != "0" ]; then
   echo "Agent relay: $AGENT_BIND:$AGENT_PORT -> $AGENT_UPSTREAM (Agent view; a cockpit session is required)"
 fi
 # A GPU clock cap the cockpit keeps (its Machine view) is lifted once the cockpit is stopped and before its
-# sudoers lines go: left, it held until the next reboot, with nothing left to say it.
+# sudoers lines go: left, it held until the next reboot, with nothing left to say it. The line looks for the
+# file when it is run, not when it is printed: a cap chosen after this install is lifted too, and a cap set by
+# hand outside the cockpit is left alone.
 GPU_CAP_FILE="$HOME/.config/qwen38/cockpit-gpu-clock.json"
-LIFT=""
-[ -f "$GPU_CAP_FILE" ] && LIFT="sudo /usr/bin/nvidia-smi -rgc; rm -f $GPU_CAP_FILE; "
-REMOVE="sudo systemctl disable --now $UNIT; ${LIFT}sudo rm -f $INSTALLED /etc/sudoers.d/qwen38-cockpit /usr/local/bin/qwen38-pyspy-scheduler"
+REMOVE="sudo systemctl disable --now $UNIT; [ -f $GPU_CAP_FILE ] && sudo /usr/bin/nvidia-smi -rgc; rm -f $GPU_CAP_FILE; sudo rm -f $INSTALLED /etc/sudoers.d/qwen38-cockpit /usr/local/bin/qwen38-pyspy-scheduler"
 [ -f /etc/systemd/system/opencode-web.service ] && REMOVE="$REMOVE; sudo systemctl disable --now opencode-web.service; sudo rm -f /etc/systemd/system/opencode-web.service"
 [ "$QUIET" = "1" ] || echo "Remove with: $REMOVE"

@@ -137,7 +137,7 @@ what it says as root. So the cockpit's user, its API key and a session on it are
 root on this machine, and the defences that count are the ones in front of it:
 the key, the bind, the session cookie. The allowlist is still exact argv with
 no wildcards (a glob on `sed` arguments is root without any file to write), and
-two CI steps hold it: no `*` on any allowlist line, and every privileged call in
+two CI steps hold it: no `*`, `?` or `[` on any allowlist line, and every privileged call in
 `switch-model.sh` cross-checked against the template. The cockpit process
 runs unprivileged; login is the serving API key; a per-session HMAC cookie
 gates everything else; the diagnostic bundle masks the API key in every

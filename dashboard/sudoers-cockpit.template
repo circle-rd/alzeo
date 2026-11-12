@@ -78,7 +78,8 @@ __USER__ ALL=(root) NOPASSWD: /usr/bin/journalctl -k --since -1h --no-pager -o s
 # The GPU clock cap (decision of 2026-11-11): the three caps the cockpit offers, no floor and that
 # ceiling, and the reset that lifts it; exactly cockpit.py's GPU_CLOCK_ARGV. In sudoers a comma
 # separates commands, so the one inside "0,2400" is escaped; sudo matches it against the
-# cockpit's plain "0,2400" (checked on the reference box, 2026-11-11).
+# cockpit's plain "0,2400" (run by sudo 1.9.15p5 on this file rendered, 2026-11-11: the four calls
+# allowed, another clock, an option after the cap and nvidia-smi's other options refused).
 __USER__ ALL=(root) NOPASSWD: /usr/bin/nvidia-smi -lgc 0\,2400
 __USER__ ALL=(root) NOPASSWD: /usr/bin/nvidia-smi -lgc 0\,2200
 __USER__ ALL=(root) NOPASSWD: /usr/bin/nvidia-smi -lgc 0\,2000

@@ -167,7 +167,7 @@ box is operable from a hand.
 
 **The privileged surface, stated plainly.** The unit actions need root, so the
 installer writes `/etc/sudoers.d/qwen38-cockpit`: an exact argv allowlist,
-nothing wildcarded except the rendered unit path, validated with `visudo -c`
+nothing wildcarded (a CI step refuses `*`, `?` and `[` on its lines), validated with `visudo -c`
 from a temp file before it lands so a bad render can never brick sudo. It covers
 start/stop/restart and enable/disable of this repo's units, `daemon-reload`, the
 writes `switch-model.sh` performs, one read-only forensics wrapper, kernel
@@ -191,8 +191,9 @@ Remove it with `./uninstall.sh` (which takes the whole stack) or on its own:
 
 ```bash
 sudo systemctl disable --now qwen38-dashboard
-# only when a GPU clock cap was set from the Machine view: it holds until the next reboot otherwise
-sudo /usr/bin/nvidia-smi -rgc; rm -f ~/.config/qwen38/cockpit-gpu-clock.json
+# a GPU clock cap the cockpit keeps (Machine view) is lifted: it holds until the next reboot otherwise
+[ -f ~/.config/qwen38/cockpit-gpu-clock.json ] && sudo /usr/bin/nvidia-smi -rgc
+rm -f ~/.config/qwen38/cockpit-gpu-clock.json
 sudo rm -f /etc/systemd/system/qwen38-dashboard.service \
            /etc/sudoers.d/qwen38-cockpit /usr/local/bin/qwen38-pyspy-scheduler
 sudo systemctl daemon-reload
@@ -205,11 +206,11 @@ default, or 2,400, 2,200 or 2,000 MHz. A cap is a ceiling with no floor
 (`nvidia-smi -lgc 0,<MHz>`), and None lifts it (`nvidia-smi -rgc`); each goes through its exact
 line of the sudoers allowlist, after the sheet that shows the command. nvidia-smi applies it at
 once, "regardless if an app is running" in its own words, so a generation in flight goes on at
-the new clock. The view shows the clock the GPU last ran at and, for each cap, what it cost and gave here:
+the new clock. The view shows the clock nvidia-smi reads and, for each cap, what it cost and gave here:
 
 | Cap | Clock read | tok/s, 4 streams | GPU watts | Hottest zone | tok/s, 1 stream | Prefill, tok/s |
 |---|---|---|---|---|---|---|
-| None | 2,502 MHz | 105.74 | 46.6 W | 92.6 °C | 56.20 | 2,077 |
+| None | 2,502 MHz | 105.74 | 46.6 W | 92.6 °C | 56.20 | 2,078 |
 | 2,400 MHz | 2,387 MHz | 105.87 | 35.9 W | 90.2 °C | 56.22 | 2,073 |
 | 2,200 MHz | 2,190 MHz | 103.77 | 28.1 W | 86.6 °C | 55.50 | 2,027 |
 | 2,000 MHz | 1,989 MHz | 103.15 | 22.8 W | 84.4 °C | 54.62 | 2,004 |
@@ -218,29 +219,46 @@ the new clock. The view shows the clock the GPU last ran at and, for each cap, w
 *The reference box, 2026-11-11: the Qwen3.8 Flash-Next FP4-Local lane at 4 streams, the same
 work at each cap, 48 answers of 1,200 tokens.* At 2,400 MHz the lane answered as fast as with no
 cap (105.87 tok/s, against 105.74 and 105.02 for the two runs without one) for 10.7 W less on the
-GPU and 2.4 °C less at its hottest zone; at 2,000 MHz it gave up 2.59 tok/s at 4 streams (2.4 %)
+GPU and 2.4 °C less at the box's hottest zone; at 2,000 MHz it gave up 2.59 tok/s at 4 streams (2.4 %)
 for less than half the GPU's watts and 8.2 °C less.
 
-The clock nvidia-smi reads is the one the GPU last ran at, not the one it would run at. Idle, the reading does not
-move: on the reference box a cap of 2,000 MHz just set still read 2,502 MHz, read 1,989 MHz all through the next
-generation, and still read 1,989 MHz after the cap was lifted, until the GPU worked again (2,522 MHz). So a reading
-above the cap on an idle box is not a cap that failed.
+The clock nvidia-smi reads can lag a few seconds behind a change of cap, then it follows the cap, the GPU idle
+included. On the reference box an idle GPU still read 2,502 MHz two seconds after a cap of 2,000 MHz was set, and
+still 1,989 MHz just after that cap was lifted; after 51 to 111 s of rest, idle at 7 to 12 W, it read 2,392 MHz under
+a cap of 2,400, 2,197 under 2,200, 1,989 under 2,000, and 2,411 MHz with no cap. So a reading above the cap just
+after it is set is not a cap that failed.
 
-What this does not say yet: one lane was measured, a text one, and the image, video and 27B lanes
-are not measured. The watts are the GPU's alone, as nvidia-smi reads them, not the whole box's.
+What this does not say yet: one lane was measured, a text one, with one run per cap (None twice,
+first and last), and the image, video and 27B lanes are not measured. The watts are the GPU's
+alone, as nvidia-smi reads them, not the whole box's. nvidia-smi warns, at each cap it sets, that
+the persistence mode is disabled: on a box where nothing holds the GPU any more, the driver may
+lose the cap, and the view would still say it is set. Not verified: the reference box keeps its
+GPU active with its desktop.
+
+An image model under study, MiniMax-H3-Image, which is not a lane yet, was measured the same day,
+one image at a time (10 at 2048x2048 and 3 at 4736x3552 per cap, no cap again at the end): 2,400
+MHz changed nothing, and 2,000 MHz cost 8 % more time per image (16.86 s against 15.58 s, and 89.15
+s against 82.87 s) for 28 to 34 % fewer GPU watts and a box's hottest zone at 87.7 °C against 97.0
+°C at 2048x2048. Diffusion pays the cap more than text does.
 
 A cap does not survive a reboot of the machine. The cockpit keeps the one you chose in
 `~/.config/qwen38/cockpit-gpu-clock.json` and sets it again at its start, which is at boot, as a
 job like any other (the dock and the Jobs list say "again at the cockpit's start"). Until that
 job has run, or when it fails, the view says the cap is kept and not set, never that it holds.
-None removes the file. The cockpit knows only the caps it set: nvidia-smi's clock query gives the
-clock and the GPU's maximum (3,003 MHz on the reference box), not a cap, so a cap set by hand
-outside the cockpit is not read back.
+When nvidia-smi does not answer within 20 s, at the start or at a click, the view says the cap
+in effect is not known: the cockpit stops waiting, but nvidia-smi runs as root, out of its
+reach, and may still set or lift the cap. None removes the file. The cockpit knows only the caps
+it set: nvidia-smi's clock query gives the clock and the GPU's maximum (3,003 MHz on the
+reference box), not a cap, so a cap set by hand outside the cockpit is not read back, and with
+none set from the cockpit the view says just that.
 
-A machine without `/usr/bin/nvidia-smi` offers no cap, and says why. On a box whose sudoers
-allowlist predates the cap, sudo refuses the call: the view says so, and running the installer
-again (`./install.sh` in the checkout) writes the four lines. `./uninstall.sh` lifts the cap the
-cockpit keeps and removes its file, once the cockpit is stopped and before its sudoers lines go.
+A machine without `/usr/bin/nvidia-smi` offers no cap, and says why; None stays on while the
+cockpit keeps a cap there, and forgets it without running anything. On a box whose sudoers
+allowlist predates the cap, sudo refuses the call: the view says so, and the cockpit's installer
+(`./dashboard/install-dashboard.sh` in the checkout) writes the four lines. `./install.sh` runs
+it too, unless it leaves the cockpit out (`--no-cockpit`, `--no-service`, `--no-start`).
+`./uninstall.sh` lifts the cap the cockpit keeps and removes its file, once the cockpit is
+stopped and before its sudoers lines go.
 
 ## The Decide view: the typed-decisions endpoint, from a browser
 

@@ -98,36 +98,72 @@ class UninstallLiftsTheCap(unittest.TestCase):
 
 
 class TheRemoveLineOfTheDashboardInstaller(unittest.TestCase):
-    """install-dashboard.sh prints how to remove the cockpit alone: with a cap kept, the lift comes
-    after the stop of the cockpit and before its allowlist goes, as uninstall.sh does it."""
+    """install-dashboard.sh prints how to remove the cockpit alone: the lift of a cap the cockpit keeps
+    comes after the stop of the cockpit and before its allowlist goes, as uninstall.sh does it, and the
+    line looks for the file when it is run. Built when it was printed, it had no lift on a first install,
+    or any made before a cap was chosen, and followed later it left the cap and its file (review of
+    v1.47.0). The installer's summary runs with a sudo and an nvidia-smi of the test's own first on its
+    PATH, which only record what they are asked: a call added there later is caught, never run for real."""
 
-    def summary(self, cap):
+    def setUp(self):
+        self.d = pathlib.Path(tempfile.mkdtemp(prefix="dash-cap-"))
+        self.addCleanup(shutil.rmtree, self.d, True)
+        self.home, self.stub, self.log = self.d / "home", self.d / "bin", self.d / "calls"
+        (self.home / ".config/qwen38").mkdir(parents=True)
+        (self.home / ".config/qwen38/api-key").write_text("k\n")
+        self.cap = self.home / ".config/qwen38/cockpit-gpu-clock.json"
+        self.stub.mkdir()
+        for name in ("sudo", "nvidia-smi"):
+            (self.stub / name).write_text(f'#!/bin/sh\necho "{name} $*" >> "{self.log}"\n')
+            (self.stub / name).chmod(0o755)
+        # the one command the line runs itself, on a PATH that has nothing else (run below)
+        (self.stub / "rm").symlink_to(shutil.which("rm"))
+
+    def calls(self):
+        return self.log.read_text().splitlines() if self.log.exists() else []
+
+    def summary(self):
         text = (REPO / "dashboard" / "install-dashboard.sh").read_text()
         body = text[text.index("# DASH_QUIET=1:"):]
-        home = pathlib.Path(tempfile.mkdtemp(prefix="dash-cap-"))
-        self.addCleanup(shutil.rmtree, home, True)
-        (home / ".config/qwen38").mkdir(parents=True)
-        (home / ".config/qwen38/api-key").write_text("k\n")
-        if cap:
-            (home / ".config/qwen38/cockpit-gpu-clock.json").write_text('{"cap": "2400"}\n')
         script = ("set -euo pipefail\nPROBE=127.0.0.1; PORT=30090; BIND=127.0.0.1; AGENT_PORT=0; "
                   "AGENT_BIND=tailscale; AGENT_UPSTREAM=http://127.0.0.1:4096; UNIT=qwen38-dashboard.service; "
-                  f"INSTALLED=/etc/systemd/system/qwen38-dashboard.service; HOME={home}\n" + body)
+                  f"INSTALLED=/etc/systemd/system/qwen38-dashboard.service; HOME={self.home}\n" + body)
         r = subprocess.run(["bash", "-c", script], capture_output=True, text=True, timeout=30,
-                           env={"PATH": "/usr/bin:/bin", "DASH_QUIET": "0"})
+                           env={"PATH": f"{self.stub}:/usr/bin:/bin", "DASH_QUIET": "0"})
         self.assertEqual(r.returncode, 0, r.stderr)
-        return next(ln for ln in r.stdout.splitlines() if ln.startswith("Remove with: ")), home
+        self.assertEqual(self.calls(), [], "the summary called sudo or nvidia-smi")
+        return next(ln for ln in r.stdout.splitlines() if ln.startswith("Remove with: "))[len("Remove with: "):]
 
-    def test_a_kept_cap_is_lifted_between_the_stop_and_the_sudoers(self):
-        line, home = self.summary(cap=True)
-        self.assertIn("sudo systemctl disable --now qwen38-dashboard.service; sudo /usr/bin/nvidia-smi -rgc; "
-                      f"rm -f {home}/.config/qwen38/cockpit-gpu-clock.json; sudo rm -f /etc/systemd/system/qwen38-dashboard.service "
-                      "/etc/sudoers.d/qwen38-cockpit", line)
+    def run_line(self, line):
+        """The line as an operator pastes it, with only the test's sudo, nvidia-smi and rm on the PATH."""
+        r = subprocess.run([shutil.which("bash"), "-c", line], capture_output=True, text=True, timeout=30,
+                           env={"PATH": str(self.stub)})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        return self.calls()
 
-    def test_no_cap_kept_no_lift(self):
-        line, _ = self.summary(cap=False)
-        self.assertNotIn("nvidia-smi", line)
-        self.assertIn("sudo systemctl disable --now qwen38-dashboard.service; sudo rm -f /etc/systemd/system/", line)
+    def test_the_line_is_the_same_with_a_cap_kept_or_not(self):
+        before = self.summary()
+        self.cap.write_text('{"cap": "2400"}\n')
+        self.assertEqual(self.summary(), before, "the line said what was kept when it was printed")
+        self.assertIn(f"sudo systemctl disable --now qwen38-dashboard.service; [ -f {self.cap} ] && sudo /usr/bin/nvidia-smi "
+                      f"-rgc; rm -f {self.cap}; sudo rm -f /etc/systemd/system/qwen38-dashboard.service "
+                      "/etc/sudoers.d/qwen38-cockpit", before)
+
+    def test_run_it_lifts_a_cap_kept_after_it_was_printed(self):
+        line = self.summary()                         # printed with no cap kept: a first install
+        self.cap.write_text('{"cap": "2400"}\n')       # then a cap chosen in the Machine view
+        calls = self.run_line(line)
+        lift = calls.index(LIFT)
+        self.assertLess(calls.index("sudo systemctl disable --now qwen38-dashboard.service"), lift,
+                        "the cockpit could set it again")
+        self.assertLess(lift, next(i for i, c in enumerate(calls) if c.startswith("sudo rm -f /etc/systemd/system/qwen38-dashboard")),
+                        "lifted after the allowlist that names it went")
+        self.assertFalse(self.cap.exists(), "a later install's cockpit would set it again")
+
+    def test_run_with_no_cap_kept_it_lifts_nothing(self):
+        calls = self.run_line(self.summary())
+        self.assertIn("sudo systemctl disable --now qwen38-dashboard.service", calls)
+        self.assertNotIn(LIFT, calls, "a cap set by hand outside the cockpit is the operator's")
 
 
 if __name__ == "__main__":

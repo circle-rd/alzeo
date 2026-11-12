@@ -334,8 +334,10 @@ class Ran(str):
     """run()'s answer: the text, and .ok, True when the command ran to a zero exit. The text
     alone is "" on a timeout, and a git status that timed out read as a clean checkout, a
     docker inspect that did as a container without the request-id override (found in
-    review, 2026-09-24): a reader that must not take that for a fact checks .ok."""
+    review, 2026-09-24): a reader that must not take that for a fact checks .ok. And .rc,
+    its exit code, None when it did not run to an end (a timeout, a command that could not start)."""
     ok = True
+    rc = None
 
 
 def run(argv: list[str], timeout: float = 5.0, merge_err: bool = False, errors: str = "strict") -> str:
@@ -359,6 +361,7 @@ def run(argv: list[str], timeout: float = 5.0, merge_err: bool = False, errors: 
                                  timeout=timeout)
         ran = Ran(out.stdout)
         ran.ok = out.returncode == 0
+        ran.rc = out.returncode
         return ran
     except (OSError, subprocess.TimeoutExpired):
         ran = Ran("")
@@ -506,7 +509,7 @@ def collect_machine():
 # A ceiling on the GPU's clock, set from the Machine view: none (the factory setting, the default),
 # 2,400, 2,200 or 2,000 MHz. On the reference box (2026-11-11, the Qwen3.8 Flash-Next FP4-Local lane,
 # 4 streams, the same 48 answers of 1,200 tokens at each cap) 2,400 MHz gave 105.87 tok/s for 35.9 W
-# of GPU and 90.2 °C at the hottest zone, against 105.74 tok/s, 46.6 W and 92.6 °C with no cap, and
+# of GPU and 90.2 °C at the box's hottest zone, against 105.74 tok/s, 46.6 W and 92.6 °C with no cap, and
 # 2,000 MHz 103.15 tok/s for 22.8 W and 84.4 °C (docs/cockpit.md has the whole table). nvidia-smi sets
 # it (-lgc 0,<MHz>: no floor, that ceiling) and lifts it (-rgc), each through its exact line of
 # sudoers-cockpit.template, and a reboot loses it: the cockpit keeps the choice in CONFIG_DIR and sets
@@ -570,34 +573,43 @@ def gpu_clock_mhz(cap: str) -> str:
 
 def gpu_clock_run(cap: str):
     """Run the cap's exact argv: (ok, what failed or None, the sentence that says it, the lines sudo and
-    nvidia-smi wrote). What failed: absent (no nvidia-smi where the sudoers lines name it), sudo (sudo
-    refused: its last line is its own, "sudo: ...", in the box's language), failed (nvidia-smi's own
-    refusal, or no answer)."""
+    nvidia-smi wrote, the call's exit code or None when it did not run to an end). What failed: absent (no
+    nvidia-smi where the sudoers lines name it), sudo (sudo refused: its last line is its own, "sudo: ...",
+    in the box's language), failed (nvidia-smi's own refusal, or a call that said nothing), timeout (no
+    answer within GPU_CLOCK_TIMEOUT_S: the cockpit stops waiting and its sudo ends, but the nvidia-smi it
+    started runs as root, which the cockpit cannot signal, and may still set or lift the cap after that)."""
     if not os.access(NVIDIA_SMI, os.X_OK):
-        return False, "absent", f"this machine has no {NVIDIA_SMI}: the cockpit cannot cap its GPU clock", []
+        return False, "absent", f"this machine has no {NVIDIA_SMI}: the cockpit cannot cap its GPU clock", [], None
     t0 = time.monotonic()
     out = run(GPU_CLOCK_ARGV[cap], timeout=GPU_CLOCK_TIMEOUT_S, merge_err=True, errors="replace")
     lines = [ln.rstrip() for ln in str(out).splitlines() if ln.strip()]
+    rc = getattr(out, "rc", None)
     if answered(out):
         return True, None, ("GPU clock cap lifted: the GPU runs at its own clocks" if cap == "none"
-                            else f"GPU clock capped at {gpu_clock_mhz(cap)}"), lines
+                            else f"GPU clock capped at {gpu_clock_mhz(cap)}"), lines, rc
     if lines and lines[-1].startswith("sudo:"):
         return False, "sudo", ("sudo refused the call: the cockpit's sudoers allowlist on this box has no line for it "
-                               f"yet, which the installer writes (cd {REPO_DIR} && ./install.sh)"), lines
+                               f"yet, which the cockpit's installer writes (cd {REPO_DIR} && "
+                               "./dashboard/install-dashboard.sh)"), lines, rc
     if lines:
-        return False, "failed", f"nvidia-smi refused: {lines[-1][:200]}", lines
-    # nothing said: the deadline, or a call that could not even start (run() keeps no exit code)
-    return False, "failed", (f"nvidia-smi did not answer within {GPU_CLOCK_TIMEOUT_S} s"
-                             if time.monotonic() - t0 >= GPU_CLOCK_TIMEOUT_S * 0.9
-                             else "sudo or nvidia-smi failed and said nothing"), lines
+        # its reason, not the warning it adds after it (after every -lgc on the reference box, 2026-11-11:
+        # "Warning: persistence mode is disabled on device ...")
+        said = next((ln for ln in reversed(lines) if not ln.startswith("Warning:")), lines[-1])
+        return False, "failed", f"nvidia-smi refused: {said[:200]}", lines, rc
+    # nothing said: the deadline (no exit code), or a call that could not even start, or one that ended silent
+    if rc is None and time.monotonic() - t0 >= GPU_CLOCK_TIMEOUT_S * 0.9:
+        return False, "timeout", (f"nvidia-smi did not answer within {GPU_CLOCK_TIMEOUT_S} s and may still run, "
+                                  "so the cap in effect is not known"), lines, rc
+    return False, "failed", "sudo or nvidia-smi failed and said nothing", lines, rc
 
 
 def gpu_clock_state(mhz) -> dict:
-    """What the Machine view says of the cap: the clock nvidia-smi reads (MHz, None when unread), which is the one
-    the GPU last ran at (idle, it does not move: on the reference box, 2026-11-11, it read 2,502 MHz with a cap of
-    2,000 just set, then 1,989 once a generation had run, and 1,989 still after the cap was lifted), whether this
-    machine has the nvidia-smi the sudoers lines name, the cap kept for the cockpit's next start, and what
-    this cockpit last did with it (GPU_CLOCK)."""
+    """What the Machine view says of the cap: the clock nvidia-smi reads (MHz, None when unread), which can lag a few
+    seconds behind a change of cap, then follows it, the GPU idle included (on the reference box, 2026-11-11, an
+    idle GPU read 2,502 MHz two seconds after a cap of 2,000 was set, and 1,989 just after it was lifted; after a
+    rest of 51 to 111 s it read each cap, 1,989 MHz under 2,000), whether this machine has the nvidia-smi the
+    sudoers lines name, the cap kept for the cockpit's next start, and what this cockpit last did with it
+    (GPU_CLOCK)."""
     kept, bad = gpu_clock_kept()
     with GPU_CLOCK_LOCK:
         last = dict(GPU_CLOCK)
@@ -3626,7 +3638,10 @@ def run_job(job: Job):
             for ln in lines:
                 job.append(ln)
             job.result = result
-            job.rc = 0 if ok else 1
+            # a python job that ran a command of its own (its job.argv, the GPU clock cap's) has that command's exit
+            # code, None when it did not run to an end; the others 0 or 1. The feed said "exit code 1" of an
+            # nvidia-smi that ended 3, or never ended (review of v1.47.0, 2026-11-11)
+            job.rc = result.get("rc") if job.argv else (0 if ok else 1)
             status = "done" if ok else "failed"
         else:
             # Its own process group, and a deadline that does not wait for output. The
@@ -5444,18 +5459,34 @@ def job_delete_strays(job: Job):
 def job_gpu_clock(job: Job):
     """Cap the GPU clock at one of the caps the cockpit offers, or lift the cap: the cap's exact argv
     (GPU_CLOCK_ARGV), then, once nvidia-smi has done it, the choice kept for the cockpit's next start
-    (none: the file goes). A refusal changes nothing kept: the cap set before still holds. The job's log
-    names the command it ran, and the Machine view reads the outcome before the job is seen to end."""
+    (none: the file goes). A refusal changes nothing kept: the cap set before still holds. A call that did
+    not answer changes nothing kept either, and the view says the cap in effect is not known. On a machine
+    without nvidia-smi, None runs nothing and forgets the cap kept, which each start tried again in vain.
+    The job's log names the command it ran, its exit code is the job's, and the Machine view reads the
+    outcome before the job is seen to end."""
     cap = job.params["cap"]
-    job.argv = list(GPU_CLOCK_ARGV[cap])
-    ok, error, said, lines = gpu_clock_run(cap)
-    if ok:
+    if os.access(NVIDIA_SMI, os.X_OK):
+        job.argv = list(GPU_CLOCK_ARGV[cap])     # named only when it runs: a log never shows a call not made
+    ok, error, said, lines, rc = gpu_clock_run(cap)
+    if error == "absent" and cap == "none":
+        why = gpu_clock_keep("none")
+        if why is None:
+            ok, error, said = True, None, (f"this machine has no {NVIDIA_SMI}, so nothing was lifted: the cockpit "
+                                           "forgot the cap it kept")
+        else:
+            said += f", and the cockpit could not forget the cap it kept ({why})"
+    elif ok:
         why = gpu_clock_keep(cap)
         if why:
             # set, and not kept: what holds now is said, and that a reboot loses it with nothing to set it again
             ok, error = False, "keep"
-            said += (f", but the cockpit could not keep it for its next start ({why}): it holds until the next "
-                     "reboot, and nothing sets it again then")
+            if cap == "none":
+                # lifted, and the file still there: the next start reads it and sets that cap again. The message
+                # said "nothing sets it again then", the opposite (review of v1.47.0, 2026-11-11)
+                said += f", but the cockpit could not forget the cap it kept ({why}): its next start sets that cap again"
+            else:
+                said += (f", but the cockpit could not keep it for its next start ({why}): it holds until the next "
+                         "reboot, and nothing sets it again then")
     now = time.time()
     with GPU_CLOCK_LOCK:
         GPU_CLOCK.update(tried=cap, error=error, said=said)
@@ -5465,7 +5496,7 @@ def job_gpu_clock(job: Job):
     snap = collect_gpu()
     with STATE_LOCK:
         STATE["gpu"] = {"data": snap, "ts": time.time()}
-    return ok, lines + [said], {"ok": ok, "cap": cap, "error": error, "said": said}
+    return ok, lines + [said], {"ok": ok, "cap": cap, "error": error, "said": said, "rc": rc}
 
 
 def gpu_clock_at_start():
