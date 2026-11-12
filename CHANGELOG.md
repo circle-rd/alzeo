@@ -44,17 +44,20 @@ cockpit out). `./uninstall.sh` lifts a cap the cockpit keeps before it removes t
 "Remove with" line does the same: it looks for the file when it is run, not when it is printed. A cap set by hand
 outside the cockpit is not read back (nvidia-smi gives the clock and the GPU's maximum, not the cap), so the view says
 "none set from the cockpit", and the cockpit's start and the uninstall leave it alone (None, chosen in the view, lifts
-any cap). The clock the view shows is the one nvidia-smi reads, which can lag a few seconds behind a change of cap and
-then follows it, the GPU idle included: a reading above the cap just after it is set is not a cap that failed, and the
-view says so.
+any cap). The clock the view shows is the one nvidia-smi reads, which can lag behind a change of cap (still the old one
+2 s after it on the reference box), then follows the cap within a minute, the GPU idle included: a reading above the
+cap just after it is set is not a cap that failed, and the view says so.
 
 **On the real GPU.** The cockpit's own code set and lifted the cap on the reference box (2026-11-11, driver
 580.178.04), with no test double: `sudo -n /usr/bin/nvidia-smi -lgc 0,2400` answered `GPU clocks set to "(gpuClkMin 0,
 gpuClkMax 2400)" for GPU 0000000F:01:00.0`, the job for 2,000 MHz ended done, named its command and kept `{"cap":
-"2000"}`, a cockpit start set it again by a job of origin `boot`, 1,800 was refused (400, "invalid cap"), and None
-lifted the cap and removed the file. sudo allowed those calls by a sudoers rule of that box broader than the four lines
-this release ships, so the four lines were run apart: the template rendered as the installer renders it, in a container
-with sudo 1.9.15p5, the box's version, and an nvidia-smi of the test's own. The cockpit's four argv ran there as root,
+"2000"}`, `gpu_clock_at_start`, the function the cockpit's start calls, set it again by a job of origin `boot`, 1,800
+was refused (400, "invalid cap"), and None lifted the cap and removed the file. That run was of the code of this
+release's second commit, in a process of its own rather than the cockpit's service: the code as released is to be run
+the same way from the service once the reference box is updated, and the notes after these say what it gave. sudo
+allowed those calls by a sudoers rule of that box broader than the four lines this release ships, so the four lines
+were run apart: the template rendered as the installer renders it, in a container with sudo 1.9.15p5, the box's
+version, and an nvidia-smi of the test's own. The cockpit's four argv ran there as root,
 and thirteen neighbours were refused: another clock, a fifth digit, a floor of 1, an option after the cap, a second
 comma, an escaped comma, `-lgc` alone, `-rgc -i 0`, `-q`, `--gpu-reset`, nvidia-smi alone, and two other commands. Then
 one generation of 700 tokens on the 27B lane, three times: with no cap the GPU ran at 2,541 MHz and 41.5 W for 32.6 s,
@@ -67,15 +70,18 @@ under 2,000), so the view names its row "Clock read" and says under it what the 
 **Tests.** `dashboard/tests/test_cockpit_gpu_clock.py`: the four values and no other (a value with an option after it,
 a pair, spaces, five digits), the exact argv called, with a sudo and an nvidia-smi of the test's own on the PATH (a set
 and a reset answered in the real one's words), the file written and removed, a folder in its place, the cap set again
-at the cockpit's start, a machine without nvidia-smi, where None forgets a kept cap, a cap lifted while its file could
-not be removed (the message says the next start sets it again), a sudo that refuses, an nvidia-smi
-that refuses (its reason quoted, not its warning) or does not answer (the cap said not known), the exit code the event
-feed gives, and the sudoers template rendered: its lines are the argv the cockpit calls and `visudo -cf` accepts them.
-`dashboard/tests/test_gpu_clock_page.py`: the panel, its figures (the ones of docs/cockpit.md), its states, its sheet,
-its keys and its name for a screen reader. `tests/test_gpu_clock_removal.py`: the uninstall lifts the cap before the
+at the cockpit's start, a machine without nvidia-smi, where None forgets a kept cap, a cap set or lifted while its file
+could not be written or removed (a full disk, a folder made read-only, a folder in the file's place: the message says
+what the next start sets, read from the file left), a cap its file already names not written again, a sudo that
+refuses, an nvidia-smi that refuses (its reason quoted, not its warning) or does not answer (the cap said not known),
+the exit code the event feed gives (1 for a job that failed on its file after a call that ended 0, a 0 its log keeps),
+and the sudoers template rendered: its lines are the argv the cockpit calls and `visudo -cf` accepts them.
+`dashboard/tests/test_gpu_clock_page.py`: the panel, its figures (the ones of docs/cockpit.md), its states (None lit
+once the start's try failed, a lamp live only while the start sets the cap, a cap lifted from the view), its sheet, its
+keys and its name for a screen reader. `tests/test_gpu_clock_removal.py`: the uninstall lifts the cap before the
 sudoers lines go, and the "Remove with" line, run, lifts a cap kept after it was printed.
 `dashboard/tests/touch-check.mjs`: nothing overflows at 375 px. Each test of the three new files fails without the
-code, checked with 76 broken versions of it, one behavior at a time.
+code, checked with 88 broken versions of it, one behavior at a time, all run again after the final review.
 
 **The CI.** On 2026-11-11 the step that installs Chrome on GitHub's arm64 runner hung four times in apt-get, on a name
 the runner could not resolve (ports.ubuntu.com), until each attempt was cancelled by hand. The fifth passed in 29 s. It
@@ -84,6 +90,16 @@ now ends by itself after 10 minutes, and the download of Google's key has a dead
 name that does not resolve: none is added. `tests/test_chrome_step.py` holds the two guards, and fails when either is
 removed: the step's `timeout-minutes`, a whole number of at most 15, and on the curl line a `--max-time` and a
 `--retry` of 1 or more.
+
+**The final review.** A second review, of the whole release, found three defects and a fix that overstated itself. A
+cap set or lifted whose file could not be written or removed said what the next start sets from the change asked, not
+from the file left: a full disk said nothing would set again a cap its file still named, and a lift whose file was a
+folder said the next start would set one. The message now reads the file, and a cap its file already names is not
+written again, so a start on a full disk no longer fails the cap it has just set. A cap set whose file was not kept
+read "failed (exit code 0)" in the dock and the Logs view: the job ends 1, and the call's 0 stays in its log. A kept
+cap whose try failed at the start stayed lit while the GPU ran at its own clocks: None is lit then, and the state still
+says the kept cap is not set. And the CI's fix above is brought back to what bounds the step: the options it gave apt
+were the runner's own. The review added 4 tests and changed 5 others.
 
 **What an update does.** The cockpit's sudoers file is written again with its four new lines, by the update's own sudo,
 checked by `visudo` before it lands, as at every update that installs the cockpit (`--no-cockpit`, `--no-service` and

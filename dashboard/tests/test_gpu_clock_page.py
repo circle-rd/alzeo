@@ -3,8 +3,9 @@
 DOM built from its own markup (pagejs.py, fakedom.js), state delivered as the server's stream does.
 
 The cap is a setting of four positions, none by default, each with what it cost and gave on the
-reference box. What is held: the lit position is the cap in effect as far as the server knows, never
-one that is only kept; each position asks first, in the sheet, with its exact command, its figures
+reference box. What is held: the lit position is the cap in effect as far as the server knows, a kept
+one only while the start sets it again or when that try did not answer, and None once it failed;
+each position asks first, in the sheet, with its exact command, its figures
 and the limits of the measurement, and sends its value and nothing else; the outcome of the job is
 said and the panel reads the state again; a machine without nvidia-smi, a refused sudo, nvidia-smi's
 own refusal and a call that did not answer each say what happened and what to do; the arrows move the
@@ -37,7 +38,8 @@ const gpu = o => feed({gpu: {power_w: 10.6, temp_c: 46, procs: [], clock: clock(
 const panel = () => ({lit: [...$('gc-pick').querySelectorAll('button')].filter(b => b.getAttribute('aria-checked') === 'true').map(b => b.dataset.cap),
   disabled: [...$('gc-pick').querySelectorAll('button')].map(b => b.disabled), titles: [...$('gc-pick').querySelectorAll('button')].map(b => b.title),
   tabs: [...$('gc-pick').querySelectorAll('button')].map(b => b.tabIndex),
-  cap: txt('gc-cap'), capCls: $('gc-cap').className, mhz: txt('gc-mhz'), state: txt('gc-state'), line: txt('gc-line'),
+  cap: txt('gc-cap'), capCls: $('gc-cap').className, lamp: $('gc-cap').firstChild ? $('gc-cap').firstChild.className : null,
+  mhz: txt('gc-mhz'), state: txt('gc-state'), line: txt('gc-line'),
   why: $('gc-why').hidden ? null : txt('gc-why')});
 const opt = cap => $('gc-pick').querySelector(`button[data-cap="${cap}"]`);
 feed({config: CFG, units: UNITS, lifecycle: life({'qwen38-sglang.service': eng('ready')})});
@@ -70,19 +72,24 @@ class NoneIsTheDefaultAndEachCapSaysWhatItCost(unittest.TestCase):
     def test_the_clock_read_is_said_to_lag_then_follow_the_cap(self):
         # Measured on the reference box, 2026-11-11: an idle GPU still read 2,502 MHz two seconds after a cap of
         # 2,000 was set, and 1,989 MHz just after it was lifted; after 51 to 111 s of rest, idle, it read each
-        # cap (1,989 MHz under 2,000) and 2,411 MHz with none. The page said the reading did not move at idle.
+        # cap (1,989 MHz under 2,000) and 2,411 MHz with none, 51 s after it was lifted. The page said the reading
+        # did not move at idle, then that it lagged "a few seconds", a lag only known to be between 2 and 51 s (the
+        # final review of v1.47.0).
         html = (REPO / "dashboard" / "static" / "index.html").read_text()
         for wrong in ("Clock now", "last run at", "last ran at", "does not move"):
             self.assertNotIn(wrong, html)
         self.assertIn('<dt>Clock read</dt><dd class="num" id="gc-mhz">', html)
         said = re.search(r'<p class="faint" id="gc-read"[^>]*>([^<]+)</p>', html).group(1)
-        for words in ("lag a few seconds behind a change of cap", "follows the cap", "idle included",
+        for words in ("lag behind a change of cap", "still the old one 2 s after it on the reference box",
+                      "follows the cap within a minute", "idle included",
                       "above the cap just after it is set is not a cap that failed"):
             self.assertIn(words, said)
+        self.assertNotIn("a few seconds", said)
         doc = " ".join((REPO / "docs" / "cockpit.md").read_text().split())
-        for wrong in ("last ran at", "does not move", "last run at"):
+        for wrong in ("last ran at", "does not move", "last run at", "lag a few seconds"):
             self.assertNotIn(wrong, doc)
-        for words in ("can lag a few seconds behind a change of cap, then it follows the cap, the GPU idle included",
+        for words in ("can lag behind a change of cap (still the old one 2 s after it on the reference box), then follows "
+                      "the cap within a minute, the GPU idle included",
                       "a reading above the cap just after it is set is not a cap that failed"):
             self.assertIn(words, doc)
 
@@ -191,7 +198,9 @@ class TheOutcomeIsSaidAndReadAgain(unittest.TestCase):
         feed({job: {current: null, recent: [job('j1', 'done', {ok: true, cap: '2400', error: null, said: 'GPU clock capped at 2,400 MHz'})]}});
         const toast1 = toastText();
         gpu({kept: '2400', set: '2400', at: Date.now() / 1000, origin: 'ui', tried: '2400', said: 'GPU clock capped at 2,400 MHz'});
-        report(Object.assign(panel(), {toast: toast1, dock: txt('dock-what')}));
+        const set = Object.assign(panel(), {toast: toast1, dock: txt('dock-what')});
+        gpu({kept: 'none', set: 'none', at: Date.now() / 1000, origin: 'ui', tried: 'none', said: 'GPU clock cap lifted: the GPU runs at its own clocks'});
+        report(Object.assign(set, {lifted: panel()}));
         """)
         self.assertIn("GPU clock capped at 2,400 MHz.", r["toast"])
         self.assertEqual(r["lit"], ["2400"])
@@ -200,6 +209,9 @@ class TheOutcomeIsSaidAndReadAgain(unittest.TestCase):
         self.assertRegex(r["state"], r"^2,400 MHz, set at \d\d:\d\d$")
         self.assertTrue(r["line"].startswith("2,400 MHz: 105.87 tok/s at 4 streams"), r["line"])
         self.assertEqual(r["dock"], "Cap the GPU clock at 2,400 MHz")
+        # then lifted from the view: when, and that the GPU runs at its own clocks (no test held it: the final review
+        # of v1.47.0)
+        self.assertRegex(r["lifted"]["state"], r"^none, lifted at \d\d:\d\d: the GPU runs at its own clocks$")
 
     def test_a_dry_run_says_nothing_was_run(self):
         r = page(self, self.JOB + r"""
@@ -267,10 +279,16 @@ class AKeptCapIsNeverSaidToHold(unittest.TestCase):
         w, f, u, s = r["waiting"], r["failed"], r["unknown"], r["set"]
         self.assertEqual((w["cap"], w["capCls"]), ("2,200 MHz, being set", "cap warn"))
         self.assertEqual(w["state"], "2,200 MHz, kept for the cockpit’s start: being set again")
+        # its lamp is live while the start sets it, and only then (no test held it: the final review of v1.47.0)
+        self.assertEqual((w["lamp"], f["lamp"]), ("lamp warn live", "lamp err"))
         self.assertEqual((f["cap"], f["capCls"]), ("2,200 MHz, not set", "cap err"))
         self.assertEqual(f["state"], "2,200 MHz, kept for the cockpit’s start: not set, its last try failed")
         self.assertEqual(f["why"], "Capping the GPU clock at 2,200 MHz failed: nvidia-smi refused: Setting locked GPU clocks is "
                                    "not supported for GPU 0000000F:01:00.0.")
+        # a try that failed leaves the GPU at its own clocks: None is lit, with the figures of no cap, where the kept cap
+        # stayed lit (the final review of v1.47.0); one that did not answer may still apply, and keeps it lit
+        self.assertEqual((f["lit"], u["lit"]), (["none"], ["2200"]))
+        self.assertTrue(f["line"].startswith("No cap, the factory setting: 105.74 tok/s at 4 streams"), f["line"])
         # no answer at the start: nvidia-smi may still set it, so it is neither said set nor said not set
         self.assertEqual((u["cap"], u["capCls"]), ("2,200 MHz, not known", "cap warn"))
         self.assertEqual(u["state"], "2,200 MHz, kept for the cockpit’s start: not known, its last try did not answer")

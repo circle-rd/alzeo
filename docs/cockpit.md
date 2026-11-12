@@ -167,7 +167,7 @@ box is operable from a hand.
 
 **The privileged surface, stated plainly.** The unit actions need root, so the
 installer writes `/etc/sudoers.d/qwen38-cockpit`: an exact argv allowlist,
-nothing wildcarded (a CI step refuses `*`, `?` and `[` on its lines), validated with `visudo -c`
+no wildcard or regular expression (a CI step refuses `*`, `?`, `[` and `^` on its lines), validated with `visudo -c`
 from a temp file before it lands so a bad render can never brick sudo. It covers
 start/stop/restart and enable/disable of this repo's units, `daemon-reload`, the
 writes `switch-model.sh` performs, one read-only forensics wrapper, kernel
@@ -222,11 +222,11 @@ cap (105.87 tok/s, against 105.74 and 105.02 for the two runs without one) for 1
 GPU and 2.4 °C less at the box's hottest zone; at 2,000 MHz it gave up 2.59 tok/s at 4 streams (2.4 %)
 for less than half the GPU's watts and 8.2 °C less.
 
-The clock nvidia-smi reads can lag a few seconds behind a change of cap, then it follows the cap, the GPU idle
-included. On the reference box an idle GPU still read 2,502 MHz two seconds after a cap of 2,000 MHz was set, and
-still 1,989 MHz just after that cap was lifted; after 51 to 111 s of rest, idle at 7 to 12 W, it read 2,392 MHz under
-a cap of 2,400, 2,197 under 2,200, 1,989 under 2,000, and 2,411 MHz with no cap. So a reading above the cap just
-after it is set is not a cap that failed.
+The clock nvidia-smi reads can lag behind a change of cap (still the old one 2 s after it on the reference box), then
+follows the cap within a minute, the GPU idle included. On the reference box an idle GPU still read 2,502 MHz two
+seconds after a cap of 2,000 MHz was set, and still 1,989 MHz just after that cap was lifted; after 51 to 111 s of
+rest, idle at 7 to 12 W, it read 2,392 MHz under a cap of 2,400, 2,197 under 2,200, 1,989 under 2,000, and 2,411 MHz
+with no cap (51 s after the cap was lifted). So a reading above the cap just after it is set is not a cap that failed.
 
 What this does not say yet: one lane was measured, a text one, with one run per cap (None twice,
 first and last), and the image, video and 27B lanes are not measured. The watts are the GPU's

@@ -1056,14 +1056,16 @@ jobs:
           # no line may hide a wildcard (a glob on install sources once allowed
           # any file; a glob on sed arguments is still root, its w command
           # writes any file, so the ceiling edit is a drop-in now). sudoers
-          # globs with ? and [...] as with *: a line with any of the three fails.
+          # globs with ? and [...] as with *, and since sudo 1.9.10 reads an
+          # argument from ^ to $ as a regular expression (^.+$ allows any):
+          # a line with any of the four fails.
           python3 - <<'PY'
           import pathlib, re, sys
           alw = pathlib.Path("dashboard/sudoers-cockpit.template").read_text()
           bad = [ln for ln in alw.splitlines()
-                 if ln.strip().startswith("__USER__") and any(c in ln for c in "*?[")]
+                 if ln.strip().startswith("__USER__") and any(c in ln for c in "*?[^")]
           if bad:
-              print("wildcard in sudoers allowlist:")
+              print("wildcard or regular expression in sudoers allowlist:")
               print("\n".join("  " + b for b in bad)); sys.exit(1)
           sw = pathlib.Path("switch-model.sh").read_text()
           for var, tail in (("STAGE_UNIT", "qwen38-sglang.service.switch-stage"),

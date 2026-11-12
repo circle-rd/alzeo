@@ -18,6 +18,7 @@ at its start, since a reboot loses the cap. What is held here:
 sudo and nvidia-smi are stubs on a PATH of the test's own: the real ones are never run. The cockpit is
 loaded in dry run, and a test that needs its job to run for real says so and puts the dry run back.
 """
+import errno
 import http.client
 import importlib.util
 import json
@@ -91,6 +92,14 @@ for f in $(printf '%s' "$q" | tr ',' ' '); do
 done
 echo "$out"
 """
+
+
+def failing(path: Path, method: str, err: int) -> Path:
+    """path, as a Path whose `method` fails with errno err, as a full disk (ENOSPC on a write) or a folder made
+    read-only (EACCES on a removal) makes it fail; the file it names is read as it is."""
+    def fail(self, *a, **k):
+        raise OSError(err, os.strerror(err))
+    return type("Failing", (type(path),), {method: fail})(path)
 
 
 def load_cockpit(config_dir: Path):
@@ -341,19 +350,59 @@ class TheChoiceIsKept(Base):
         self.assertEqual((st["set"], st["kept"]), ("2400", "none"), "what holds is what was set")
 
 
-    def test_a_cap_lifted_and_not_forgotten_says_the_next_start_sets_it_again(self):
-        # the file cannot go (a folder with something in it stands in its place: unlink fails, as root too)
+    def test_a_lift_whose_file_is_a_folder_says_nothing_is_set_again(self):
+        # the file cannot go (a folder with something in it stands in its place: unlink fails, as root too), and a
+        # folder names no cap, so the next start sets none. It was said to set "that cap again" (the final review of
+        # v1.47.0)
         self.cp.GPU_CLOCK_FILE.mkdir()
         (self.cp.GPU_CLOCK_FILE / "x").write_text("x")
         self.addCleanup(shutil.rmtree, self.cp.GPU_CLOCK_FILE, True)
         _, ok, _, result = self.job("none")
         self.assertFalse(ok)
         self.assertEqual(result["error"], "keep")
-        self.assertIn("GPU clock cap lifted: the GPU runs at its own clocks, but the cockpit could not forget the cap "
-                      "it kept", result["said"])
-        self.assertIn("its next start sets that cap again", result["said"])
-        self.assertNotIn("nothing sets it again", result["said"])
+        self.assertEqual(result["said"], "GPU clock cap lifted: the GPU runs at its own clocks, but the cockpit could not "
+                                         "remove its file (Is a directory), which names no cap: nothing sets one again then")
+        self.assertIsNone(self.cp.gpu_clock_at_start(), "the next start would set a cap")
         self.assertEqual(self.calls(), [WANT["none"]], "the cap was lifted all the same")
+
+    def test_a_lift_whose_file_cannot_go_says_the_next_start_sets_its_cap_again(self):
+        # the file names a cap and cannot be removed (its folder made read-only): the next start reads it and sets that
+        # cap again, and the message says so, the cap named
+        self.cp.GPU_CLOCK_FILE.write_text('{"cap": "2400"}\n')
+        self.cp.GPU_CLOCK_FILE = failing(self.cp.GPU_CLOCK_FILE, "unlink", errno.EACCES)
+        _, ok, _, result = self.job("none")
+        self.assertFalse(ok)
+        self.assertEqual(result["error"], "keep")
+        self.assertEqual(result["said"], "GPU clock cap lifted: the GPU runs at its own clocks, but the cockpit could not "
+                                         "forget the cap it kept, 2,400 MHz (Permission denied): its next start sets "
+                                         "that cap again")
+        self.assertEqual(self.kept(), {"cap": "2400"})
+        self.assertEqual(self.calls(), [WANT["none"]], "the cap was lifted all the same")
+
+    def test_a_cap_whose_file_cannot_be_written_says_what_the_next_start_sets(self):
+        # a full disk: the cap is set, and its file stays as it was, naming the cap before, which the next start sets.
+        # It was said that nothing would (the final review of v1.47.0)
+        self.cp.GPU_CLOCK_FILE.write_text('{"cap": "2400"}\n')
+        self.cp.GPU_CLOCK_FILE = failing(self.cp.GPU_CLOCK_FILE, "write_text", errno.ENOSPC)
+        _, ok, _, result = self.job("2000")
+        self.assertFalse(ok)
+        self.assertEqual(result["error"], "keep")
+        self.assertEqual(result["said"], "GPU clock capped at 2,000 MHz, but the cockpit could not keep it for its next "
+                                         "start (No space left on device): it holds until that start, which sets "
+                                         "2,400 MHz, the cap its file still names")
+        self.assertEqual(self.kept(), {"cap": "2400"})
+        st = self.cp.gpu_clock_state(None)
+        self.assertEqual((st["set"], st["kept"]), ("2000", "2400"), "what holds is what was set")
+
+    def test_a_cap_its_file_already_names_is_not_written_again(self):
+        # the start sets the cap its file names: written again, a write refused there (a full disk) failed a cap that was
+        # set and kept, and said nothing would set it again (the final review of v1.47.0)
+        self.cp.GPU_CLOCK_FILE.write_text('{"cap": "2400"}\n')
+        self.cp.GPU_CLOCK_FILE = failing(self.cp.GPU_CLOCK_FILE, "write_text", errno.ENOSPC)
+        _, ok, _, result = self.job("2400", origin="boot")
+        self.assertTrue(ok, result)
+        self.assertEqual((result["error"], result["said"], result["rc"]), (None, "GPU clock capped at 2,400 MHz", 0))
+        self.assertEqual(self.kept(), {"cap": "2400"})
 
 
 class TheKeptCapIsSetAgainAtTheStart(Base):
@@ -557,6 +606,16 @@ class TheEventFeedGivesTheCallsOwnExitCode(Base):
         job, said = self.run_job("2400")
         self.assertEqual((job.status, job.rc), ("done", 0))
         self.assertEqual(said, "cap the GPU clock at 2,400 MHz: done")
+
+    def test_a_cap_set_and_not_kept_ends_1_and_its_log_has_the_call_s_0(self):
+        # the call ended 0 and the job failed after it, on its file: the dock and the Logs view said "failed (exit code
+        # 0)" (the final review of v1.47.0). The job ends 1, and its log says the call's own 0
+        self.cp.GPU_CLOCK_FILE = self.tmp / "no-such-folder" / "cockpit-gpu-clock.json"
+        job, said = self.run_job("2400")
+        self.assertEqual((job.status, job.rc, job.result["error"]), ("failed", 1, "keep"))
+        self.assertEqual(said, "cap the GPU clock at 2,400 MHz: failed (exit code 1)")
+        self.assertIn("[cockpit] the call ended with exit code 0: what failed after it is the file the cockpit keeps its "
+                      "cap in", job.lines)
 
 
 class TheClockIsReadWithThePowerAndTheTemperature(Base):

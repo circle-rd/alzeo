@@ -310,13 +310,16 @@ function wireGpuCap(){
 }
 // What the server says of the cap (cockpit.py, gpu_clock_state): the clock nvidia-smi reads, whether this machine has the
 // nvidia-smi the sudoers lines name, the cap kept for the cockpit's next start, and what the cockpit last did with
-// it. The cap lit is the one in effect as far as the cockpit knows: the one it set last, else the one it keeps, and
-// None on a machine without nvidia-smi, where no cap can be set. A call that did not answer (timeout) may still set
-// or lift the cap, nvidia-smi running as root: the lit cap stays the one before it, and the state says not known.
+// it. The cap lit is the one in effect as far as the cockpit knows: the one it set last, else the one it keeps while
+// its start sets it again, and None once that try failed (the GPU at its own clocks: the kept cap stayed lit, the final
+// review of v1.47.0) or on a machine without nvidia-smi, where no cap can be set. A call that did not answer (timeout)
+// may still set or lift the cap, nvidia-smi running as root: the lit cap stays the one before it, and the state says
+// not known.
 on('gpu', d => {
   const c = d.clock; if (!c) return;
   const has = !!c.nvidia_smi, pending = c.set == null && c.kept !== 'none', unknown = c.error === 'timeout';
-  const lit = !has ? 'none' : c.set != null ? c.set : c.kept;
+  const failed = pending && !!c.error && !unknown;
+  const lit = !has || failed ? 'none' : c.set != null ? c.set : c.kept;
   GC.has = has; GC.kept = c.kept;
   setText('gc-mhz', c.mhz != null ? `${fmtN(c.mhz)} MHz` : 'n/a (nvidia-smi did not answer)');
   cap('gc-cap', !has ? 'not on this machine'

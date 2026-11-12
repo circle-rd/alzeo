@@ -604,10 +604,11 @@ def gpu_clock_run(cap: str):
 
 
 def gpu_clock_state(mhz) -> dict:
-    """What the Machine view says of the cap: the clock nvidia-smi reads (MHz, None when unread), which can lag a few
-    seconds behind a change of cap, then follows it, the GPU idle included (on the reference box, 2026-11-11, an
-    idle GPU read 2,502 MHz two seconds after a cap of 2,000 was set, and 1,989 just after it was lifted; after a
-    rest of 51 to 111 s it read each cap, 1,989 MHz under 2,000), whether this machine has the nvidia-smi the
+    """What the Machine view says of the cap: the clock nvidia-smi reads (MHz, None when unread), which can lag behind
+    a change of cap (still the old one 2 s after it on the reference box), then follows the cap within a minute, the
+    GPU idle included (on the reference box, 2026-11-11, an idle GPU read 2,502 MHz two seconds after a cap of 2,000
+    was set, and 1,989 just after it was lifted; 51 to 111 s after a change, at rest, it read each cap, 1,989 MHz
+    under 2,000, and 2,411 MHz 51 s after the cap was lifted), whether this machine has the nvidia-smi the
     sudoers lines name, the cap kept for the cockpit's next start, and what this cockpit last did with it
     (GPU_CLOCK)."""
     kept, bad = gpu_clock_kept()
@@ -3639,8 +3640,9 @@ def run_job(job: Job):
                 job.append(ln)
             job.result = result
             # a python job that ran a command of its own (its job.argv, the GPU clock cap's) has that command's exit
-            # code, None when it did not run to an end; the others 0 or 1. The feed said "exit code 1" of an
-            # nvidia-smi that ended 3, or never ended (review of v1.47.0, 2026-11-11)
+            # code, None when it did not run to an end, 1 when it ended 0 and the job failed after it (job_gpu_clock);
+            # the others 0 or 1. The feed said "exit code 1" of an nvidia-smi that ended 3, or never ended (review of
+            # v1.47.0, 2026-11-11)
             job.rc = result.get("rc") if job.argv else (0 if ok else 1)
             status = "done" if ok else "failed"
         else:
@@ -5462,8 +5464,9 @@ def job_gpu_clock(job: Job):
     (none: the file goes). A refusal changes nothing kept: the cap set before still holds. A call that did
     not answer changes nothing kept either, and the view says the cap in effect is not known. On a machine
     without nvidia-smi, None runs nothing and forgets the cap kept, which each start tried again in vain.
-    The job's log names the command it ran, its exit code is the job's, and the Machine view reads the
-    outcome before the job is seen to end."""
+    The job's log names the command it ran, its exit code is the job's (1 when it ended 0 and the job failed
+    after it, on the file the cap is kept in: its 0 is in the log), and the Machine view reads the outcome
+    before the job is seen to end."""
     cap = job.params["cap"]
     if os.access(NVIDIA_SMI, os.X_OK):
         job.argv = list(GPU_CLOCK_ARGV[cap])     # named only when it runs: a log never shows a call not made
@@ -5476,14 +5479,26 @@ def job_gpu_clock(job: Job):
         else:
             said += f", and the cockpit could not forget the cap it kept ({why})"
     elif ok:
-        why = gpu_clock_keep(cap)
+        # a cap its file already names is not written again: the start that has just read it rewrote it, and a write
+        # refused there (a full disk) made a cap set and kept read as one that was not. None always removes the file,
+        # one the cockpit cannot read included (the final review of v1.47.0, 2026-11-12)
+        kept, _ = gpu_clock_kept()
+        why = None if cap != "none" and kept == cap else gpu_clock_keep(cap)
         if why:
-            # set, and not kept: what holds now is said, and that a reboot loses it with nothing to set it again
+            # done, and not kept as asked: what holds now is said, and what the next start sets, read from the file,
+            # which a failed write (a temp file, then a rename) or removal leaves as it was. Said from the change asked,
+            # it was "nothing" of a file left whole, and a cap set again of a folder that names none (the final review
+            # of v1.47.0, 2026-11-12)
             ok, error = False, "keep"
-            if cap == "none":
-                # lifted, and the file still there: the next start reads it and sets that cap again. The message
-                # said "nothing sets it again then", the opposite (review of v1.47.0, 2026-11-11)
-                said += f", but the cockpit could not forget the cap it kept ({why}): its next start sets that cap again"
+            if cap == "none" and kept != "none":
+                said += (f", but the cockpit could not forget the cap it kept, {gpu_clock_mhz(kept)} ({why}): its next "
+                         "start sets that cap again")
+            elif cap == "none":
+                said += f", but the cockpit could not remove its file ({why}), which names no cap: nothing sets one again then"
+            elif kept != "none":
+                # the cockpit's next start, a reboot or not, sets the cap its file still names over this one
+                said += (f", but the cockpit could not keep it for its next start ({why}): it holds until that start, "
+                         f"which sets {gpu_clock_mhz(kept)}, the cap its file still names")
             else:
                 said += (f", but the cockpit could not keep it for its next start ({why}): it holds until the next "
                          "reboot, and nothing sets it again then")
@@ -5496,6 +5511,12 @@ def job_gpu_clock(job: Job):
     snap = collect_gpu()
     with STATE_LOCK:
         STATE["gpu"] = {"data": snap, "ts": time.time()}
+    if error == "keep" and rc == 0:
+        # the call ended 0 and the job failed after it, on its file: the job ends 1, and the call's 0 stays in its log.
+        # Ended 0, the dock and the Logs view said "failed (exit code 0)" (the final review of v1.47.0, 2026-11-12)
+        lines = lines + ["[cockpit] the call ended with exit code 0: what failed after it is the file the cockpit keeps "
+                         "its cap in"]
+        rc = 1
     return ok, lines + [said], {"ok": ok, "cap": cap, "error": error, "said": said, "rc": rc}
 
 
