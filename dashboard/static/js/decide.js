@@ -209,6 +209,6 @@ function wireDecide(){
   }));
   $('s1-run').addEventListener('click', s1Run);
   $('s1-state').addEventListener('input', s1Curl);
-  $('s1-copy').addEventListener('click', () => copyText($('s1-curl').textContent));
+  wireCopyButton($('s1-copy'), () => $('s1-curl').textContent, 'Copy the call');
   s1Load(Object.keys(S1_EXAMPLES)[0]);
 }
