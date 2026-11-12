@@ -350,7 +350,7 @@ function wireImage(){
   $('img-refsample').addEventListener('click', imgSample);
   $('img-run').addEventListener('click', imgRun);
   $('img-cancel').addEventListener('click', imgCancel);
-  $('img-copy').addEventListener('click', () => copyText($('img-curl').textContent));
+  wireCopyButton($('img-copy'), () => $('img-curl').textContent, 'Copy the call');
   document.addEventListener('visibilitychange', () => { if (!document.hidden && activeView === 'image') imgLane(); });
   imgReset(); imgLoadExample(Object.keys(IMG_EXAMPLES)[0]);
 }

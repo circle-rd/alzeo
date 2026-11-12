@@ -137,24 +137,27 @@ try {
     try { F.update = ${JSON.stringify(BEHIND)}; renderBanners(lastState || {}, lastErrors || {});
       const b = [...document.querySelectorAll('#banners .banner')].find(e => /is out; this box runs/.test(e.textContent));
       ${body} } finally { HANDLERS.update = keep; } })()`);
-  // the command apart from the sentence, with a Copy button (2026-10-21)
+  // the command apart from the sentence, with a copy icon that names it (2026-11-12)
   const block = await onBehind(`const c = b && b.querySelector('.bcmd .cmd'), btn = b && b.querySelector('.bcmd button');
-    return JSON.stringify({ cmd: c ? c.textContent : null, btn: btn ? btn.textContent : null });`);
+    return JSON.stringify({ cmd: c ? c.textContent : null, label: btn ? btn.getAttribute('aria-label') : null,
+      icon: !!(btn && btn.querySelector('svg')), text: btn ? btn.textContent.trim() : null });`);
   const blk = JSON.parse(block);
-  ok('and gives the command, apart, with a Copy button', /^cd \S+ && /.test(blk.cmd || '') && (blk.cmd || '').endsWith(` && ${ONE}`)
-     && blk.btn === 'Copy' && !/git pull/.test(s), block);
-  // every Copy button of the page, the banner's included, is drawn as a button: a ghost one read as
-  // plain text at rest (Hasan, 2026-10-21: "visible partout")
-  const looks = await onBehind(`return JSON.stringify([...document.querySelectorAll('button')].filter(x => x.textContent.trim() === 'Copy')
-    .map(x => ({ id: x.id || 'banner', ghost: x.classList.contains('ghost'), border: getComputedStyle(x).borderTopColor })));`);
+  ok('and gives the command, apart, with a copy icon', /^cd \S+ && /.test(blk.cmd || '') && (blk.cmd || '').endsWith(` && ${ONE}`)
+     && blk.label === 'Copy the command' && blk.icon && blk.text === '' && !/git pull/.test(s), block);
+  // every copy control of the page, the banner's included, is an icon with its border seen at rest,
+  // and no button still spends a line on the word Copy (Hasan, 2026-11-12)
+  const looks = await onBehind(`return JSON.stringify({ icons: [...document.querySelectorAll('button.copy-icon')]
+    .map(x => ({ id: x.id || 'banner', ghost: x.classList.contains('ghost'), border: getComputedStyle(x).borderTopColor,
+                 svg: !!x.querySelector('svg') })), words: [...document.querySelectorAll('button')].filter(x => x.textContent.trim() === 'Copy').length });`);
   const drawn = JSON.parse(looks);
-  ok('every Copy button is drawn as a button, its border seen at rest', drawn.length >= 7 && drawn.some(c => c.id === 'banner')
-     && drawn.every(c => !c.ghost && !/^rgba\(.*,\s*0\)$/.test(c.border) && c.border !== 'transparent'), looks);
+  ok('every copy control is an icon, its border seen at rest, and no Copy word is left',
+     drawn.icons.length >= 7 && drawn.icons.some(c => c.id === 'banner') && drawn.words === 0
+     && drawn.icons.every(c => c.svg && !c.ghost && !/^rgba\(.*,\s*0\)$/.test(c.border) && c.border !== 'transparent'), looks);
   // what the button copies, by the clipboard API where the page is a secure context and by a
   // selected textarea where it is not (plain HTTP on the box's LAN or Tailscale address)
   const copied = viaApi => onBehind(`
     const btn = b && b.querySelector('.bcmd button');
-    if (!btn) return 'no Copy button';
+    if (!btn) return 'no copy icon';
     let got = null;
     const api = navigator.clipboard, exec = document.execCommand.bind(document);
     Object.defineProperty(navigator, 'clipboard', { configurable: true, get: () => ${viaApi} ? { writeText: async t => { got = 'api:' + t; } } : undefined });
@@ -166,7 +169,7 @@ try {
     return JSON.stringify({ got, focus });`);
   const copiedJson = async viaApi => { const r = await copied(viaApi); try { return JSON.parse(r); } catch { return { got: r }; } };
   let got = await copiedJson(true);
-  ok('Copy puts the exact command on the clipboard', got.got === 'api:' + blk.cmd, got.got);
+  ok('the copy icon puts the exact command on the clipboard', got.got === 'api:' + blk.cmd, got.got);
   got = await copiedJson(false);
   ok('and without the clipboard API, by a selected textarea', got.got === 'exec:' + blk.cmd, got.got);
   ok('and gives the focus back to the button, for a keyboard', got.focus === true, JSON.stringify(got));
@@ -204,7 +207,7 @@ try {
   line = await setupLine({ installed: 'v1.15.1', checked: false });
   ok('Setup line, check switched off', /check is off/.test(line), line);
   // A real click there, the browser's own input and no stand-in, puts the command on the clipboard,
-  // which a secure page then reads back (the Copy buttons said the browser refused on every box
+  // which a secure page then reads back (the copy controls said the browser refused on every box
   // opened by its address, 2026-10-21)
   await send('Network.setCookie', { name: 'cockpit', value: cookie, url: FAR, httpOnly: true, sameSite: 'Strict' }, sessionId);
   await send('Emulation.setFocusEmulationEnabled', { enabled: true }, sessionId);
@@ -226,7 +229,7 @@ try {
     await send('Input.dispatchMouseEvent', { type, x: at.x, y: at.y, button: 'left', clickCount: 1 }, sessionId);
   await sleep(400);
   const said = await evalJs("[...document.querySelectorAll('#toasts .toast')].map(e => e.textContent).join(' | ')");
-  ok('a real click on Copy there says Copied', /^Copied\.$/.test(said), said);
+  ok('a real click on the copy icon there says Copied', /^Copied\.$/.test(said), said);
   await send('Browser.grantPermissions', { origin: BASE, permissions: ['clipboardReadWrite', 'clipboardSanitizedWrite'] });
   await send('Page.navigate', { url: BASE + '/' }, sessionId);
   await waitFor("document.readyState === 'complete'");

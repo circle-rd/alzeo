@@ -788,6 +788,25 @@ class TheUpdateCommandsNameThisCheckout(unittest.TestCase):
         """ % self.UPDATE)
         self.assertEqual(r, self.UPDATE)
 
+    def test_the_copy_icon_turns_into_a_green_check_and_back(self):
+        r = run(self, r"""
+        feed({config: Object.assign({}, CONFIG, {repo_dir: '/opt/qwen', terminal_only: {update_stack: 'cd /opt/qwen && ./install.sh', update: '%s'}})});
+        let copied = null; navigator.clipboard.writeText = async t => { copied = t; };
+        const b = $('st-copy');
+        const before = {label: b.getAttribute('aria-label'), copy: !!b.querySelector('.g-copy'), check: !!b.querySelector('.g-check'),
+                        copied: b.classList.contains('copied'), svg: !!b.querySelector('svg')};
+        b.click(); await __settle();
+        const during = {label: b.getAttribute('aria-label'), copied: b.classList.contains('copied')};
+        await __advance(1700); await __settle();
+        const after = {label: b.getAttribute('aria-label'), copied: b.classList.contains('copied')};
+        report({before, during, after, copied});
+        """ % self.UPDATE)
+        self.assertEqual(r["before"], {"label": "Copy the update command", "copy": True, "check": True,
+                                       "copied": False, "svg": True})
+        self.assertEqual(r["during"], {"label": "Copied", "copied": True})
+        self.assertEqual(r["after"], {"label": "Copy the update command", "copied": False})
+        self.assertEqual(r["copied"], self.UPDATE)
+
     def test_a_server_that_sends_none_gets_the_same_from_the_page(self):
         # a page newer than the process that serves it builds the commands itself: the same
         # long form as the server's, get.sh from GitHub itself (v1.41.0)
@@ -1082,7 +1101,9 @@ class AClientIsToldWhereToSendItsRequests(unittest.TestCase):
           engine_info: {served_target: 'stock', info: {served_model_name: 'qwen3.8-27b'}},
           api: {known: true, port: 30001, bind: %s, tls: %s, client_keys: false, key_file: '/home/u/.config/qwen38/api-key',
                 addresses: [{iface: 'tailscale0', addr: '100.101.102.103'}, {iface: 'enP7s7', addr: '192.168.1.20'}]}});
-    report({facts: txt('api-facts'), aside: txt('api-aside'), buttons: [...$('api-copy').children].map(b => b.textContent)});
+    report({facts: txt('api-facts'), aside: txt('api-aside'),
+            copies: [...document.querySelectorAll('#api-facts .copy-icon')].map(b => b.getAttribute('aria-label')),
+            links: [...$('api-copy').children].map(b => b.textContent)});
     """
 
     def test_the_address_the_page_was_reached_by_the_model_and_where_the_key_is(self):
@@ -1092,8 +1113,9 @@ class AClientIsToldWhereToSendItsRequests(unittest.TestCase):
         self.assertIn("Modelqwen3.8-27b", r["facts"])
         self.assertIn("/home/u/.config/qwen38/api-key on the box", r["facts"])
         self.assertNotIn("Other machines", r["facts"])
-        self.assertEqual(r["buttons"], ["Copy the address", "Copy for Claude Code, on the box", "Copy a test",
-                                        "Every client, step by step"])
+        self.assertEqual(r["copies"], ["Copy the OpenAI API address", "Copy the Anthropic API address",
+                                       "Copy the Claude Code launcher", "Copy a test call"])
+        self.assertEqual(r["links"], ["Every client, step by step"])
 
     def test_a_proxy_on_the_box_alone_says_so_and_tls_is_https(self):
         r = run(self, self.BODY % ("'100.101.102.103'", "'127.0.0.1'", "false"))
@@ -1115,7 +1137,7 @@ class AClientIsToldWhereToSendItsRequests(unittest.TestCase):
         feed({config: CONFIG, units: UNITS, lifecycle: life({'qwen38-sglang.service': eng('ready')}),
               engine_info: {served_target: 'stock', info: {served_model_name: 'qwen3.8-27b'}}, api: api({client_keys: true})});
         const v6 = txt('api-facts');
-        [...$('api-copy').children].find(b => b.textContent === 'Copy a test').click();
+        document.querySelector('#api-facts .copy-icon[aria-label="Copy a test call"]').click();
         const test = copied;
         const dd = $('api-facts').querySelector('dd');
         feed({lifecycle: life({'qwen38-sglang.service': eng('ready', {elapsed: 602})})});

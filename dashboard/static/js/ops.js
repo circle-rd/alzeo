@@ -563,7 +563,7 @@ function wireLogs(){
   $('log-btn').addEventListener('click', () => { setText('log-view', 'Reading…'); tailLog(); });
   $('log-src').addEventListener('change', () => { logTouched = true; tailLog(); });
   $('log-filter').addEventListener('input', drawLog);
-  $('log-copy').addEventListener('click', () => copyText(logLines.join('\n')));
+  wireCopyButton($('log-copy'), () => logLines.join('\n'), 'Copy the log');
   $('log-follow').addEventListener('change', () => {
     if (followTimer){ clearInterval(followTimer); followTimer = null; }
     if ($('log-follow').checked){ tailLog(); followTimer = setInterval(() => { if (activeView === 'logs' && !document.hidden) tailLog(); }, 3000); }
@@ -718,8 +718,8 @@ on('config', d => {
 });
 afterApply(() => { setText('ck-ceiling', !textReady() ? 'set when a text lane serves' : F.ceiling > 0 ? fmtN(F.ceiling) + ' tokens (proxy)' : 'none: the pool share only'); });
 function wireOps(){
-  $('st-copy').addEventListener('click', () => copyText($('st-update').textContent));
-  $('cf-rec-copy').addEventListener('click', () => copyText($('cf-rec-cmd').textContent));
+  wireCopyButton($('st-copy'), () => $('st-update').textContent, 'Copy the update command');
+  wireCopyButton($('cf-rec-copy'), () => $('cf-rec-cmd').textContent, 'Copy the recommended command');
   $('rcp-btn').addEventListener('click', loadRecipes);
   $('reg-btn').addEventListener('click', () => scanRegistry(true));
   $('reg-del').addEventListener('click', () => askAction('delete_strays', {}, [], {danger: true}));

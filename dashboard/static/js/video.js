@@ -432,7 +432,7 @@ function wireVideo(){
     $('vid-secs').value = 4; $('vid-steps').value = 50; VS.baseSteps = null; $('vid-seed').value = ''; VS.size = '864x480'; VS.frames = {first: null, last: null}; VS.turbo = false;
     vidDrawFrames(); VS.touched = false; vidSync(); toast('Back to the defaults: the base, 4 s, 480p, 50 steps, a random seed.', 'ok', 2600);
   });
-  $('vid-copy').addEventListener('click', () => copyText($('vid-curl').textContent));
+  wireCopyButton($('vid-copy'), () => $('vid-curl').textContent, 'Copy the call');
   document.addEventListener('visibilitychange', () => { if (!document.hidden && activeView === 'video') vidLane(); });
   vidSync();
 }

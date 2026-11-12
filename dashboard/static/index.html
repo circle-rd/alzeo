@@ -420,8 +420,8 @@
             <div class="btn-row" id="s1-meta" style="margin-top:var(--s-4)"></div>
           </section>
           <section class="panel">
-            <header><h2>The same call from a terminal</h2><button class="btn sm" id="s1-copy" type="button">Copy</button></header>
-            <pre class="cmd" id="s1-curl"></pre>
+            <header><h2>The same call from a terminal</h2></header>
+            <div class="copy-field"><pre class="cmd" id="s1-curl"></pre><button class="icon-btn copy-icon" id="s1-copy" type="button" aria-label="Copy the call" title="Copy the call"></button></div>
           </section>
         </div>
       </div>
@@ -502,7 +502,7 @@
             <div class="gallery" id="img-history"></div>
           </section>
           <details class="why"><summary>The same call from a terminal</summary>
-            <div><pre class="cmd" id="img-curl"></pre><div class="btn-row"><button class="btn sm" id="img-copy" type="button">Copy</button></div></div>
+            <div class="copy-field"><pre class="cmd" id="img-curl"></pre><button class="icon-btn copy-icon" id="img-copy" type="button" aria-label="Copy the call" title="Copy the call"></button></div>
           </details>
         </div>
       </div>
@@ -580,7 +580,7 @@
             <div class="gallery" id="vid-history"></div>
           </section>
           <details class="why"><summary>The same call from a terminal</summary>
-            <div><p id="vid-curl-note"></p><pre class="cmd" id="vid-curl"></pre><div class="btn-row"><button class="btn sm" id="vid-copy" type="button">Copy</button></div></div>
+            <div><p id="vid-curl-note"></p><div class="copy-field"><pre class="cmd" id="vid-curl"></pre><button class="icon-btn copy-icon" id="vid-copy" type="button" aria-label="Copy the call" title="Copy the call"></button></div></div>
           </details>
           <details class="why"><summary>What each setting costs on this box</summary>
             <div>
@@ -653,9 +653,8 @@
           <label class="switch"><input type="checkbox" id="log-follow"> Follow</label>
           <input class="input grow" id="log-filter" type="search" placeholder="Filter lines" aria-label="Filter lines">
           <button class="btn sm" id="log-btn" type="button">Read</button>
-          <button class="btn sm" id="log-copy" type="button">Copy</button>
         </div>
-        <pre class="logview" id="log-view" tabindex="0" aria-label="Log lines">Pick a source and read it.</pre>
+        <div class="copy-field"><pre class="logview" id="log-view" tabindex="0" aria-label="Log lines">Pick a source and read it.</pre><button class="icon-btn copy-icon" id="log-copy" type="button" aria-label="Copy the log" title="Copy the log"></button></div>
         <p class="help faint" id="log-note" hidden style="margin-top:var(--s-3)"></p>
       </section>
       <div class="grid g2" style="margin-top:var(--s-5)">
@@ -706,7 +705,7 @@
         <section class="panel">
           <header><h2>Update the serving stack</h2></header>
           <p class="muted">The installer needs an interactive sudo, so it is not a button: a half-applied install is the one thing this cockpit must never cause. Run it on the box; your choices are remembered.</p>
-          <div><pre class="cmd" id="st-update" style="margin-top:var(--s-3)">…</pre><div class="btn-row"><button class="btn sm" id="st-copy" type="button">Copy</button></div></div>
+          <div class="copy-field" style="margin-top:var(--s-3)"><pre class="cmd" id="st-update">…</pre><button class="icon-btn copy-icon" id="st-copy" type="button" aria-label="Copy the update command" title="Copy the update command"></button></div>
         </section>
         <section class="panel" data-src="update" id="settings-conformity">
           <header><h2>This box against its release</h2><span class="cap" id="cf-cap">…</span></header>
@@ -715,7 +714,7 @@
           <p class="help" style="margin-top:var(--s-3)">On the box, <code>./install.sh --plan</code> prints the same list and changes nothing; every update prints it before its first step.</p>
           <div id="cf-rec" hidden>
             <p class="help">Updates keep your choices. This brings every one of them to what the release recommends, as on a new box, the site's port, cache and folders kept (<code>--plan --recommended</code> lists what it moves):</p>
-            <pre class="cmd" id="cf-rec-cmd">…</pre><div class="btn-row"><button class="btn sm" id="cf-rec-copy" type="button">Copy</button></div>
+            <div class="copy-field"><pre class="cmd" id="cf-rec-cmd">…</pre><button class="icon-btn copy-icon" id="cf-rec-copy" type="button" aria-label="Copy the recommended command" title="Copy the recommended command"></button></div>
           </div>
         </section>
         <!-- no data-src: these facts are the process's own, set once at its start, and the

@@ -253,27 +253,39 @@ function renderApi(){
   // the header through a descriptor, never an argument of curl's, where any local user reads it in /proc (the rule of
   // tests/test_no_secret_in_argv.py, which caught this command at first)
   const keyHeader = `@<(printf 'Authorization: Bearer %s\\n' "${d.client_keys ? '$YOUR_CLIENT_KEY' : `$(cat ${d.key_file})`}")`;
-  const rows = [['OpenAI API', `${base}/v1`, 'wrap'], ['Anthropic API', base, 'wrap'], ['Model', modelSaid], ['Key', keySaid, 'wrap'],
+  const m = model || 'MODEL';
+  // claude-local sets Claude Code up for the lane that serves (proxy, key, model, budgets: docs/clients.md); the test
+  // reads the key from its file, on the box, and never shows it
+  const testCmd = `curl -s ${base}/v1/chat/completions -H ${keyHeader} -H 'Content-Type: application/json' -d '{"model":"${m}","messages":[{"role":"user","content":"Say ok."}],"max_tokens":8}'`;
+  const rows = [
+    ['OpenAI API', `${base}/v1`, 'wrap', `${base}/v1`, 'Copy the OpenAI API address'],
+    ['Anthropic API', base, 'wrap', base, 'Copy the Anthropic API address'],
+    ['Model', modelSaid],
+    ['Key', keySaid, 'wrap'],
+    ['Claude Code', 'claude-local', 'wrap', 'claude-local', 'Copy the Claude Code launcher'],
+    ['Test call', 'a curl call, with the key read from its file on the box', 'wrap', testCmd, 'Copy a test call'],
     boxOnly ? ['Other machines', `the proxy listens on this box only (PROXY_BIND=${d.bind}): PROXY_BIND=0.0.0.0 ./install.sh opens it, the key still the gate`, 'wrap']
       : others.length ? ['From another machine', others.join('\n'), 'wrap lines'] : [null, null],
     // part of the proxy's settings in a file the cockpit cannot read: what it sets is not known here (review of v1.45.1)
     d.env_unread ? ['Not read', "the proxy's environment file: if it sets a certificate the address is https, and with client keys only those are taken", 'wrap'] : [null, null]];
-  const m = model || 'MODEL';
-  // claude-local sets Claude Code up for the lane that serves (proxy, key, model, budgets: docs/clients.md); the test
-  // reads the key from its file, on the box, and never shows it
-  const items = [['Copy the address', `${base}/v1`], ['Copy for Claude Code, on the box', 'claude-local'],
-    ['Copy a test', `curl -s ${base}/v1/chat/completions -H ${keyHeader} -H 'Content-Type: application/json' -d '{"model":"${m}","messages":[{"role":"user","content":"Say ok."}],"max_tokens":8}'`]];
   // the unit not read: the proxy's usual port, said as a guess (review of v1.45.1)
   const aside = !d.known ? 'its port not read: 30001 assumed' : boxOnly ? 'from this box only' : 'OpenAI and Anthropic APIs';
   // built again only when what it says changed: rebuilt at every tick of the lanes (2 s), a selection or a focus on
   // it was lost within two seconds (review of v1.45.1)
-  const said = JSON.stringify([rows, items, aside]);
+  const said = JSON.stringify([rows, aside]);
   if (said === API.said) return;
   API.said = said;
   setText('api-aside', aside);
-  facts(box, rows);
+  clear(box);
+  rows.forEach(([k, v, cls, copy, label]) => {
+    if (v == null) return;
+    box.append(el('dt', null, k));
+    const dd = el('dd', cls || null);
+    dd.append(document.createTextNode(v));
+    if (copy) dd.append(copyIconButton(copy, label));
+    box.append(dd);
+  });
   clear(row);
-  items.forEach(([label, text]) => { const b = el('button', 'btn sm', label); b.type = 'button'; b.addEventListener('click', () => copyText(text)); row.append(b); });
   const a = el('a', 'btn sm ghost', 'Every client, step by step'); a.href = 'https://github.com/hasso5703/alzeo/blob/main/docs/clients.md';
   a.target = '_blank'; a.rel = 'noopener'; row.append(a);
 }

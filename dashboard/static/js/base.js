@@ -472,11 +472,11 @@ function recommendedCmd(cfg){
     || `cd ${c.repo_dir || '~/dgx-spark-qwen38'} && curl -fsSL https://raw.githubusercontent.com/hasso5703/alzeo/main/get.sh | bash -s -- --recommended`;
 }
 // The clipboard API exists in a secure context only: on the box's LAN or Tailscale address, plain
-// HTTP, every Copy button said the browser refused (found 2026-10-21, a GX10's cockpit opened by its
+// HTTP, every copy control said the browser refused (found 2026-10-21, a GX10's cockpit opened by its
 // Tailscale address). A selected textarea and execCommand('copy'), still inside the click, copy there.
 async function copyText(txt){
   if (navigator.clipboard && window.isSecureContext){
-    try { await navigator.clipboard.writeText(txt); toast('Copied.', 'ok', 1800); return; } catch { /* the textarea below */ }
+    try { await navigator.clipboard.writeText(txt); toast('Copied.', 'ok', 1800); return true; } catch { /* the textarea below */ }
   }
   // 16 px: under it, iOS Safari zooms the whole page on the field's focus and never zooms back
   // (cockpit.css); and the focus goes back where it was, on the button for a keyboard
@@ -489,6 +489,42 @@ async function copyText(txt){
   ta.remove();
   if (back && back !== document.body && back.focus) back.focus({ preventScroll: true });
   if (done) toast('Copied.', 'ok', 1800); else toast('The browser refused the clipboard; select the text instead.', 'warn');
+  return done;
+}
+// A copy icon carries its field: the same button, drawn as a copy mark at rest and a green
+// check for a moment after a successful copy. The text may be a function for a command that
+// is rebuilt while the view is open.
+function copyGlyph(){
+  const NS = 'http://www.w3.org/2000/svg', s = document.createElementNS(NS, 'svg');
+  s.setAttribute('viewBox', '0 0 24 24'); s.setAttribute('aria-hidden', 'true');
+  const rect = document.createElementNS(NS, 'rect');
+  rect.setAttribute('class', 'g-copy'); rect.setAttribute('x', '9'); rect.setAttribute('y', '9');
+  rect.setAttribute('width', '12'); rect.setAttribute('height', '12'); rect.setAttribute('rx', '2');
+  const back = document.createElementNS(NS, 'path');
+  back.setAttribute('class', 'g-copy');
+  back.setAttribute('d', 'M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1');
+  const check = document.createElementNS(NS, 'path');
+  check.setAttribute('class', 'g-check'); check.setAttribute('d', 'M20 6 9 17l-5-5');
+  s.append(rect, back, check);
+  return s;
+}
+function wireCopyButton(btn, text, label = 'Copy'){
+  if (!btn) return btn;
+  if (!btn.querySelector('svg')) btn.append(copyGlyph());
+  const get = () => typeof text === 'function' ? text() : text;
+  const reset = () => { btn.classList.remove('copied'); btn.setAttribute('aria-label', label); btn.title = label; };
+  btn.setAttribute('aria-label', label); btn.title = label;
+  btn.addEventListener('click', async () => {
+    if (!await copyText(String(get() || ''))) return;
+    btn.classList.add('copied'); btn.setAttribute('aria-label', 'Copied'); btn.title = 'Copied';
+    clearTimeout(btn.copyTimer); btn.copyTimer = setTimeout(reset, 1600);
+  });
+  return btn;
+}
+function copyIconButton(text, label){
+  const b = el('button', 'icon-btn copy-icon copy-inline'); b.type = 'button';
+  b.append(copyGlyph());
+  return wireCopyButton(b, text, label);
 }
 
 // ── actions: one sheet, the exact command, the warnings, one job at a time ─────
@@ -1072,7 +1108,7 @@ function wedgeNext(){
 function renderBanners(state, errors){
   const box = $('banners'); if (!box) return;
   const want = [];
-  // cmd: a command the banner asks to run, shown apart with a Copy button (Hasan, 2026-10-21:
+  // cmd: a command the banner asks to run, shown apart with its copy icon (Hasan, 2026-10-21:
   // selecting it by hand out of a sentence was the only way)
   // list: lines a banner shows one under the other, between its title and its sentence (the commits of the clone)
   const add = (kind, strong, text, cmd, list) => want.push([kind, strong, text, cmd, list]);
@@ -1217,9 +1253,9 @@ function renderBanners(state, errors){
     if (list && list.length){ const ul = el('ul', 'blist'); list.forEach(x => ul.append(el('li', null, x))); p.append(ul); }
     p.append(el('span', 't', text));
     if (cmd){
-      const pre = el('pre', 'cmd', cmd), btn = el('button', 'btn sm', 'Copy'), row = el('div', 'btn-row'), c = el('div', 'bcmd');
-      btn.type = 'button'; btn.addEventListener('click', () => copyText(pre.textContent));
-      row.append(btn); c.append(pre, row); p.append(c);
+      const pre = el('pre', 'cmd', cmd), btn = el('button', 'icon-btn copy-icon'), c = el('div', 'copy-field bcmd');
+      btn.type = 'button'; wireCopyButton(btn, () => pre.textContent, 'Copy the command');
+      c.append(pre, btn); p.append(c);
     }
     b.append(p); box.append(b);
   });

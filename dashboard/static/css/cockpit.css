@@ -416,7 +416,7 @@ img,svg,video,canvas{display:block; max-width:100%}
    finger, every tap landing 30 px below its target (found by the touch check, 2026-10-17) */
 .banner > div{min-width:0; overflow-wrap:anywhere}
 .banner b{font-weight:640}
-/* a command a banner asks to run, apart from its sentence, with its Copy button */
+/* a command a banner asks to run, apart from its sentence, with its copy icon */
 .banner .bcmd{display:flex; flex-direction:column; gap:var(--s-2); margin-top:var(--s-2)}
 .banner .bcmd .cmd{margin:0}
 /* lines a banner shows one under the other (the clone's commits), between its title and its sentence */
@@ -621,6 +621,17 @@ input[type=range]:focus-visible::-webkit-slider-thumb{box-shadow:0 0 0 4px color
   background:var(--code-bg); border:1px solid var(--rule-2); border-radius:var(--r-ctl); padding:var(--s-3) var(--s-4);
   white-space:pre-wrap; word-break:break-word; overflow:auto}
 .cmd .p{color:var(--brand); user-select:none}
+.copy-field{position:relative; min-width:0}
+.copy-field > .cmd, .copy-field > .logview{padding-right:52px}
+.copy-icon{position:absolute; top:6px; right:6px; z-index:1; width:32px; height:32px; border-radius:9px;
+  background:var(--ink-2); border-color:var(--rule-1); color:var(--fg-2)}
+.copy-icon:hover{background:var(--ink-3); border-color:var(--rule-3); color:var(--fg-1)}
+.copy-icon .g-copy{fill:none; stroke:currentColor}
+.copy-icon .g-check{display:none; fill:none; stroke:currentColor}
+.copy-icon.copied{color:var(--ok); border-color:color-mix(in srgb, var(--ok) 55%, transparent); background:color-mix(in srgb, var(--ok) 12%, var(--ink-1))}
+.copy-icon.copied .g-copy{display:none}
+.copy-icon.copied .g-check{display:block}
+.copy-icon.copy-inline{position:static; display:inline-grid; width:28px; height:28px; margin-left:var(--s-2); vertical-align:middle; flex:none}
 .logview{font-family:var(--f-code); font-size:12.5px; line-height:1.6; color:var(--log-ink); background:var(--code-bg);
   border:1px solid var(--rule-2); border-radius:var(--r-ctl); padding:var(--s-3) var(--s-4); min-height:320px; max-height:62vh;
   overflow:auto; white-space:pre-wrap; word-break:break-word; tab-size:4}
