@@ -1150,6 +1150,8 @@ class AClientIsToldWhereToSendItsRequests(unittest.TestCase):
         self.assertIn("OpenAI APIhttp://[fd7a:115c::1]:30001/v1", r["v6"])
         self.assertIn("a client key of yours", r["v6"])
         self.assertIn("the cockpit's login included", r["v6"])
+        self.assertIn("with your client key in $YOUR_CLIENT_KEY", r["v6"])
+        self.assertNotIn("with the key read from its file", r["v6"])
         self.assertIn("-H @<(printf 'Authorization: Bearer %s\\n' \"$YOUR_CLIENT_KEY\")", r["test"])
         self.assertNotIn("api-key", r["test"])
         self.assertNotIn('-H "Authorization', r["test"], "the key in curl's arguments, read by any local user")

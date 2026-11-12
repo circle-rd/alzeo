@@ -263,7 +263,7 @@ function renderApi(){
     ['Model', modelSaid],
     ['Key', keySaid, 'wrap'],
     ['Claude Code', 'claude-local', 'wrap', 'claude-local', 'Copy the Claude Code launcher'],
-    ['Test call', 'a curl call, with the key read from its file on the box', 'wrap', testCmd, 'Copy a test call'],
+    ['Test call', d.client_keys ? 'a curl call, with your client key in $YOUR_CLIENT_KEY' : 'a curl call, with the key read from its file on the box', 'wrap', testCmd, 'Copy a test call'],
     boxOnly ? ['Other machines', `the proxy listens on this box only (PROXY_BIND=${d.bind}): PROXY_BIND=0.0.0.0 ./install.sh opens it, the key still the gate`, 'wrap']
       : others.length ? ['From another machine', others.join('\n'), 'wrap lines'] : [null, null],
     // part of the proxy's settings in a file the cockpit cannot read: what it sets is not known here (review of v1.45.1)
@@ -401,7 +401,13 @@ function setGauge(id, ratio, kind){
   e.dataset.kind = pct == null ? 'none' : (kind || 'ok');
   e.dataset.pct = pct == null ? 'none' : String(Math.round(pct * 100));
   const rect = e.querySelector('.gauge-fill-rect');
-  if (rect){ const h = pct == null ? 0 : 24 * pct; rect.setAttribute('y', String(24 - h)); rect.setAttribute('height', String(h)); }
+  if (rect){
+    // Each icon owns the vertical span of its own fill path: the memory stick is thin, the
+    // thermometer tall, and a 24-unit clip would make the stick read full at half use.
+    const top = Number(e.dataset.fillTop || 0), bottom = Number(e.dataset.fillBottom || 24);
+    const h = pct == null ? 0 : (bottom - top) * pct;
+    rect.setAttribute('y', String(bottom - h)); rect.setAttribute('height', String(h));
+  }
 }
 function setBars(id, ratio){
   const e = $(id); if (!e) return;
@@ -426,8 +432,9 @@ function renderVitals(){
   vital('vt-gpu', pw != null ? pw.toFixed(0) + ' W' : unread(F.gpu), procs ? `${procs.length} process${procs.length === 1 ? '' : 'es'}` : '');
   setGauge('vt-gpu-glyph', pwRatio, pwRatio == null ? 'none' : pwRatio >= .9 ? 'bad' : pwRatio >= .7 ? 'orange' : pwRatio >= .5 ? 'warn' : 'ok');
   const t = g.temp_c;
-  vital('vt-temp', t != null ? t.toFixed(0) + ' °C' : unread(F.gpu), t == null ? '' : t > 85 ? 'hot: give it air' : t > 75 ? 'warm' : 'cool', t > 85 ? 'err' : t > 75 ? 'warn' : '');
-  setGauge('vt-temp-glyph', t == null ? null : t / 100, t == null ? 'none' : t >= 85 ? 'bad' : t >= 80 ? 'orange' : t >= 75 ? 'warn' : 'ok');
+  const tempKind = t == null ? 'none' : t >= 85 ? 'bad' : t >= 80 ? 'orange' : t >= 75 ? 'warn' : 'ok';
+  vital('vt-temp', t != null ? t.toFixed(0) + ' °C' : unread(F.gpu), t == null ? '' : t > 85 ? 'hot: give it air' : t > 75 ? 'warm' : 'cool', t == null ? '' : tempKind === 'bad' ? 'err' : tempKind === 'warn' || tempKind === 'orange' ? 'warn' : '');
+  setGauge('vt-temp-glyph', t == null ? null : t / 100, tempKind);
   const dk = (m.disks || {}).home;
   const diskRatio = dk && dk.total ? dk.free / dk.total : null;
   // a small volume is not a full one: the warning line follows the smaller of the 60 GiB the box
@@ -441,9 +448,9 @@ function renderVitals(){
   vital('vt-swap', mem.SwapTotal != null ? fmtGiB(sw) : unread(F.machine), mem.SwapTotal ? `of ${fmtGiB(mem.SwapTotal, 0)}` : '', sw > 8 * GIB ? 'warn' : '');
   setGauge('vt-swap-glyph', swapRatio, swapRatio == null ? 'none' : swapRatio >= .75 ? 'bad' : swapRatio >= .5 ? 'orange' : swapRatio >= .25 ? 'warn' : 'ok');
   const k = F.kernel || {}, n = k.nvrm_oom_1h;
-  vital('vt-nvrm', n != null ? String(n) : unread(F.kernel), n == null ? '' : k.nvrm_last ? `last ${String(k.nvrm_last).slice(11, 16)}` : 'none', n > 200 ? 'warn' : '');
-  setGauge('vt-nvrm-glyph', n == null ? null : n === 0 ? 0 : n <= 10 ? .25 : n <= 50 ? .5 : n <= 200 ? .75 : 1,
-    n == null ? 'none' : n === 0 ? 'ok' : n <= 10 ? 'warn' : n <= 200 ? 'orange' : 'bad');
+  const nvrmKind = n == null ? 'none' : n === 0 ? 'ok' : n <= 10 ? 'warn' : n <= 200 ? 'orange' : 'bad';
+  vital('vt-nvrm', n != null ? String(n) : unread(F.kernel), n == null ? '' : k.nvrm_last ? `last ${String(k.nvrm_last).slice(11, 16)}` : 'none', nvrmKind === 'bad' ? 'err' : nvrmKind === 'warn' || nvrmKind === 'orange' ? 'warn' : '');
+  setGauge('vt-nvrm-glyph', n == null ? null : n === 0 ? 0 : n <= 10 ? .25 : n <= 50 ? .5 : n <= 200 ? .75 : 1, nvrmKind);
 }
 on('kernel', d => { F.kernel = d; });
 

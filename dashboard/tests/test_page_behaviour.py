@@ -1158,12 +1158,21 @@ class TheVitalsWearTheirReading(unittest.TestCase):
         r = run(self, r"""
         const glyph = id => { const g = $(id); return {kind: g.dataset.kind, pct: g.dataset.pct,
           lit: g.querySelectorAll('i.on').length}; };
+        const clip = id => { const r = $(id).querySelector('.gauge-fill-rect');
+          return {y: r.getAttribute('y'), h: r.getAttribute('height')}; };
         feed({machine: {cpu_pct: {cpu: 60}, load: [0.5], disks: {home: {total: 1000 * GIB, free: 5 * GIB}},
                         mem: {SwapTotal: 10 * GIB, SwapFree: 1 * GIB}},
               gpu: {power_w: 95, temp_c: 90, procs: []},
               kernel: {nvrm_oom_1h: 250, nvrm_last: '2026-11-12T10:00:00Z'}});
         const read = {cpu: glyph('vt-cpu-glyph'), gpu: glyph('vt-gpu-glyph'), temp: glyph('vt-temp-glyph'),
                       disk: glyph('vt-disk-glyph'), swap: glyph('vt-swap-glyph'), nvrm: glyph('vt-nvrm-glyph')};
+        const cards = {temp: $('vt-temp').className, nvrm: $('vt-nvrm').className};
+        feed({machine: {cpu_pct: {cpu: 60}, load: [0.5], disks: {}, mem: {}},
+              gpu: {power_w: 95, temp_c: 85, procs: []}, kernel: {nvrm_oom_1h: 250, nvrm_last: null}});
+        const at85 = {kind: glyph('vt-temp-glyph').kind, card: $('vt-temp').className};
+        feed({machine: {cpu_pct: {cpu: 0}, load: [], disks: {}, mem: {SwapTotal: 10 * GIB, SwapFree: 5 * GIB}},
+              gpu: {}, kernel: {}});
+        const half = clip('vt-swap-glyph');
         feed({machine: {cpu_pct: {cpu: 10}, load: [0], disks: {home: {total: 31 * GIB, free: 28 * GIB}},
                         mem: {SwapTotal: 8 * GIB, SwapFree: 8 * GIB}}, gpu: {}, kernel: {}});
         const small = glyph('vt-disk-glyph');
@@ -1171,7 +1180,7 @@ class TheVitalsWearTheirReading(unittest.TestCase):
               gpu: {power_w: null, temp_c: null, procs: null}, kernel: {nvrm_oom_1h: null, nvrm_last: null}});
         const silent = {cpu: glyph('vt-cpu-glyph'), gpu: glyph('vt-gpu-glyph'), temp: glyph('vt-temp-glyph'),
                         disk: glyph('vt-disk-glyph'), swap: glyph('vt-swap-glyph'), nvrm: glyph('vt-nvrm-glyph')};
-        report({read, small, silent});
+        report({read, cards, at85, half, small, silent});
         """)
         self.assertEqual(r["read"]["cpu"], {"kind": "bars", "pct": "60", "lit": 3})
         self.assertEqual(r["read"]["gpu"], {"kind": "bad", "pct": "95", "lit": 0})
@@ -1180,6 +1189,9 @@ class TheVitalsWearTheirReading(unittest.TestCase):
         self.assertEqual(r["small"], {"kind": "ok", "pct": "90", "lit": 0}, "a small volume that is 90 % free stays green")
         self.assertEqual(r["read"]["swap"], {"kind": "bad", "pct": "90", "lit": 0})
         self.assertEqual(r["read"]["nvrm"], {"kind": "bad", "pct": "100", "lit": 0})
+        self.assertEqual(r["cards"], {"temp": "vital err", "nvrm": "vital err"})
+        self.assertEqual(r["at85"], {"kind": "bad", "card": "vital err"})
+        self.assertEqual(r["half"], {"y": "9", "h": "4"}, "half swap fills half of the memory stick body")
         for name in ("cpu", "gpu", "temp", "disk", "swap", "nvrm"):
             with self.subTest(glyph=name):
                 self.assertEqual(r["silent"][name]["pct"], "none")

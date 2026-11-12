@@ -5898,6 +5898,15 @@ def check_token(tok: str, kind: str, max_age: int = 12 * 3600) -> bool:
         return False
 
 
+def session_cookie(value: str, max_age: int | None = None) -> str:
+    # The login writes it and the logout expires it: both read the name and the path here, so a
+    # change to either cannot leave a sign-out deleting a cookie the login no longer sets.
+    parts = [f"cockpit={value}", "HttpOnly", "SameSite=Strict", "Path=/"]
+    if max_age is not None:
+        parts += [f"Max-Age={max_age}", "Expires=Thu, 01 Jan 1970 00:00:00 GMT"]
+    return "; ".join(parts)
+
+
 
 # The Logs view's lines carry the engine's own time: the serving containers run in UTC, and
 # their lines read two hours behind every other time on the page in Luxembourg (16:37 shown
@@ -6228,8 +6237,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body)))
-            self.send_header("Set-Cookie",
-                             f"cockpit={tok}; HttpOnly; SameSite=Strict; Path=/")
+            self.send_header("Set-Cookie", session_cookie(tok))
             self.end_headers()
             self.wfile.write(body)
             return
@@ -6255,9 +6263,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body)))
-            self.send_header("Set-Cookie",
-                             "cockpit=; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT; "
-                             "HttpOnly; SameSite=Strict; Path=/")
+            self.send_header("Set-Cookie", session_cookie("", max_age=0))
             self.end_headers()
             self.wfile.write(body)
             return
