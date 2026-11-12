@@ -905,6 +905,25 @@ class TheDrawerAndTheDialogsHandTheFocusBack(unittest.TestCase):
         self.assertTrue(out["first"], "the first action has the focus while the menu is open")
 
 
+class TheTopBarCanEndTheSession(unittest.TestCase):
+    """The login lasts as long as the cookie does. A red button at the right of the head
+    asks the server to expire it and returns to /, which is the login page once it is gone."""
+
+    def test_the_button_is_red_and_leaves_after_the_server_expired_the_cookie(self):
+        r = run(self, r"""
+        __fetch = async (url, init) => url === '/api/csrf' ? __response(200, {token: 't'})
+          : url === '/api/logout' ? __response(200, {ok: true}) : new Promise(() => {});
+        const b = $('logoutbtn');
+        const before = {label: b.getAttribute('aria-label'), danger: b.classList.contains('danger')};
+        b.click(); await __settle();
+        report({before, asked: __fetches.filter(f => f.url === '/api/logout').map(f => JSON.parse(f.init.body)),
+                href: location.href});
+        """)
+        self.assertEqual(r["before"], {"label": "Sign out", "danger": True})
+        self.assertEqual(r["asked"], [{"csrf": "t"}])
+        self.assertEqual(r["href"], "/")
+
+
 class ATableCellCarriesItsColumnName(unittest.TestCase):
     """On a phone the Library's wide tables stack each row into a card, and a line without
     its column's name is a value nobody can read. A cell spanning columns has no one name."""

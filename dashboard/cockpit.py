@@ -6246,6 +6246,21 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self.send_json({"error": "bad json"}, 400)
         if not check_token(payload.get("csrf", ""), "csrf", max_age=3600):
             return self.send_json({"error": "csrf"}, 403)
+        if path == "/api/logout":
+            # The cookie is the session: expire it on the browser, and the next visit to /
+            # lands on the login page. The signed token itself stays stateless, so a copy
+            # taken before the logout is still bounded by its own 12 h age, as it always was.
+            audit({"kind": "logout", "ip": self.client_address[0]})
+            body = json.dumps({"ok": True}).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Set-Cookie",
+                             "cockpit=; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT; "
+                             "HttpOnly; SameSite=Strict; Path=/")
+            self.end_headers()
+            self.wfile.write(body)
+            return
         if path == "/api/action":
             code, out = start_action(str(payload.get("name", "")),
                                      payload.get("params") or {})
