@@ -163,6 +163,31 @@ the single home:
   node_id groundwork).
 
 
+## Machine vitals (2026-11-12)
+
+The six machine vitals sit first on Now, above the pool: CPU load, GPU power,
+GPU temperature, disk free, swap in use, and driver refusals in the last hour.
+Each card keeps its number and its line of context, and adds a glyph at the
+right of the value. The glyph is a second reading, never the only one.
+
+- CPU: five horizontal bars, grey when inactive, filled from the bottom. The
+  first two are green, then amber, orange, and red at the top.
+- GPU power: a lightning bolt filled from the bottom against a 100 W visual
+  scale, in the same green to red bands.
+- GPU temperature: a thermometer filled from the bottom on a 0 to 100 °C
+  scale, green under 75 °C, amber from 75, orange from 80, red from 85.
+- Disk free: the Lucide database filled from the bottom by free bytes over
+  total bytes, amber under 120 GiB and red under 60 GiB free.
+- Swap: the Lucide memory stick filled by swap in use over swap total, with
+  the same green, amber, orange, red bands.
+- Driver refusals: the Lucide alert triangle, filled in levels for none, 1 to
+  10, 11 to 50, 51 to 200, and more than 200 refusals.
+
+A collector that has not answered leaves the glyph as an empty grey outline.
+The values keep their existing `n/a` and `…` words, so a silent nvidia-smi or
+kernel log is never painted as healthy.
+
+
 ## Lifecycle engine (etape 1, 2026-08-29)
 
 One pure module (lifecycle.py) turns raw facts into a single explicit state
