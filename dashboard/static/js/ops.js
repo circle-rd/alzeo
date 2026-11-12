@@ -604,5 +604,10 @@ function wireOps(){
   $('inv-btn').addEventListener('click', scanInventory);
   $('oc-fitbtn').dataset.act = 'fit_opencode';
   $('oc-fitbtn').addEventListener('click', () => askAction('fit_opencode', {}, []));
+  const theme = $('theme-select');
+  if (theme && typeof themeName === 'function'){
+    theme.value = themeName();
+    theme.addEventListener('change', () => applyTheme(theme.value));
+  }
   wireLogs();
 }

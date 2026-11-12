@@ -74,17 +74,24 @@ checkpoint or chat template to run.
 
 *Video: MiniMax-H3 on this box. While another lane holds the box, the view says which one and loads the video lane with one button; what a call costs here shows before it is made.*
 
-Deep indigo, two halos of light drifting slowly behind translucent panels, and colour kept
-for meaning: green is ready and serving, amber on its way, red broken, grey idle, blue memory
-and information, violet the controls. Each lane carries its maker's mark on its bay and its
-card in Lanes, and its own hue on its share of the pool and the gauge in the head, and a
-lane's versions are all in sight, one button each. The backdrop is decoration and behaves like it:
+Deep indigo is the default: two halos of light drifting slowly behind translucent panels, and
+colour kept for meaning: green is ready and serving, amber on its way, red broken, grey idle,
+blue memory and information, the accent for the controls. Each lane carries its maker's mark
+on its bay and its card in Lanes, and its own hue on its share of the pool and the gauge in
+the head, and a lane's versions are all in sight, one button each. The backdrop is decoration
+and behaves like it:
 the browser draws it at a quarter of its width and height and 8 frames a second at most,
 pauses it in a hidden tab and under the Agent's fullscreen frame, keeps it still for a system
 that asks for reduced motion, leaves it out under forced colours, and shows the same light in
 CSS where WebGL is missing. Every text measured on every view meets WCAG AA contrast (4.5:1,
 3:1 for large text), on a desktop and a phone over the backdrop's whole drift (v1.27.0). Fonts,
 marks and scripts are all served by the box: the page fetches nothing from elsewhere.
+
+Settings has an Appearance panel with three themes: Deep indigo, the default; Graphite, a
+near-black room with a cyan accent and flat surfaces; and Paper, the same room in daylight.
+The choice is kept in this browser, like the rail, and changes the tokens, the meta
+theme-color and the backdrop together. No theme comes from the network and no server state
+follows it: two browsers on the same box may show different themes.
 
 ## What it does that a terminal does not
 

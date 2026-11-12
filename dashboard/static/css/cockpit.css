@@ -4,17 +4,19 @@
    memory that the lanes take turns occupying. The pool is the hero of the first screen,
    the lanes are bays in a rack, and every other view hangs off those two ideas.
 
-   Material: deep indigo. Two soft halos of violet light, the second deeper, breathe slowly behind
-   everything (js/backdrop.js), and the panels are translucent indigo laid over them, each
-   edged with a hairline of light. No blur under them: the light is smooth and a blur changed
-   nothing a reader sees, for a repaint at every frame of the halos; the head and the dock keep
-   theirs, the page scrolls under them. Colour carries meaning and is kept for it: green is ready
-   and serving, amber is on its way (booting, stopping, waiting), red is broken, grey is
-   idle, blue is memory and information, violet the brand: the controls and the plain
-   events. Each lane has an identity of its own: its maker's mark on its bay and its card,
-   and a hue of its own for its share of the pool. The main action is always the one solid
-   white button. Dark, on purpose: the cockpit is read in a dim workshop and on an OLED
-   phone; deep indigo rather than black, so it never feels like a terminal.
+   Material: deep indigo, a theme of its own. The tokens below also carry graphite, a
+   near-black room with a cyan accent, and paper, the same room in daylight; data-theme
+   on <html> is the only switch. In indigo, two soft halos of violet light, the second
+   deeper, breathe slowly behind everything (js/backdrop.js), and the panels are
+   translucent indigo laid over them, each edged with a hairline of light. No blur under
+   them: the light is smooth and a blur changed nothing a reader sees, for a repaint at
+   every frame of the halos; the head and the dock keep theirs, the page scrolls under
+   them. Colour carries meaning and is kept for it: green is ready and serving, amber is
+   on its way (booting, stopping, waiting), red is broken, grey is idle, blue is memory
+   and information, the accent is the brand: the controls and the plain events. Each lane
+   has an identity of its own: its maker's mark on its bay and its card, and a hue of its
+   own for its share of the pool. The main action is always the one solid button. Deep
+   indigo rather than black, so the default theme never feels like a terminal.
 
    Type: Geist, one variable family, headings large and set tight, numbers in tabular
    figures. IBM Plex Mono appears only where the text is a command or a log, never as
@@ -54,6 +56,48 @@
   --raised:#22164f; --raised-hi:#2c1d66;
   --shadow-1:0 1px 0 rgba(255,255,255,.06) inset, 0 18px 40px -24px rgba(5,2,20,.7);
   --shadow-2:0 1px 0 rgba(255,255,255,.08) inset, 0 28px 60px -30px rgba(5,2,20,.8);
+  /* the roles the themes fill: a surface is a panel, a bay, the pool or a strip of vitals,
+     an overlay is a chip laid on one, and the primary is the one action that stands out */
+  --ground:#170b38; --ground-a:rgba(122,62,232,.55); --ground-b:rgba(116,56,206,.30);
+  --spine-bg:rgba(23,11,56,.72); --rail-bg:rgba(23,11,56,.45); --rail-border:rgba(255,255,255,.08);
+  --surface:linear-gradient(180deg, rgba(255,255,255,.075), rgba(255,255,255,.04));
+  --surface-hover:linear-gradient(180deg, rgba(255,255,255,.10), rgba(255,255,255,.06));
+  --surface-border:rgba(255,255,255,.12); --surface-border-hover:rgba(255,255,255,.22);
+  --tint-1:rgba(8,4,28,.35); --tint-2:rgba(8,4,28,.40); --tint-3:rgba(8,4,28,.50); --tint-4:rgba(8,4,28,.55);
+  --nav-active-bg:rgba(255,255,255,.10); --nav-active-ink:#ffffff; --nav-active-mark:#ffffff;
+  --pip-bg:rgba(255,255,255,.06);
+  --control-bg:rgba(255,255,255,.08); --control-bg-hover:rgba(255,255,255,.14);
+  --control-border:rgba(255,255,255,.18); --control-border-hover:rgba(255,255,255,.30); --control-border-soft:rgba(255,255,255,.14);
+  --primary-bg:#ffffff; --primary-bg-hover:#efeaff; --primary-ink:var(--brand-ink);
+  --primary-ink-soft:color-mix(in srgb, var(--brand-ink) 70%, transparent);
+  --primary-border:#ffffff; --primary-border-hover:#efeaff;
+  --field-bg:var(--ink-0); --placeholder:rgba(255,255,255,.5);
+  --mark-tile:#ffffff; --overlay-ink:#ffffff;
+  --stage-1:var(--fg-1); --stage-2:var(--fg-2); --stage-3:var(--fg-3); --stage-track:var(--ink-3);
+  --code-bg:#0d0926; --code-ink:#e5e3f4; --log-ink:#d2cfe6; --log-err:#ff9f95; --log-warn:#ffe2a3;
+  --log-dim:#8e8aac; --log-mark-ink:#ffffff;
+  --reservoir-bg:rgba(8,4,28,.55); --reservoir-border:rgba(255,255,255,.14);
+  --reservoir-shadow:inset 0 2px 10px rgba(0,0,0,.45); --reservoir-rule:rgba(0,0,0,.55);
+  --reservoir-text-shadow:0 1px 2px rgba(0,0,0,.6); --tick-ink:rgba(255,255,255,.07);
+  --free-a:rgba(74,222,128,.14); --free-b:rgba(74,222,128,.06); --free-ink:#dcfce7; --cache-ink:#ffffff;
+  --shine:rgba(255,255,255,.35); --lane-brand:var(--brand); --lane-seg-ink:#0d0a24; --thumb-hi:#f3efff;
+  --bay-act-bg:rgba(255,255,255,.10); --bay-act-rule:rgba(255,255,255,.16);
+  --bay-veil-a:rgba(9,8,36,.94); --bay-veil-b:rgba(9,8,36,.80); --bay-veil-c:rgba(9,8,36,.15); --bay-veil-d:rgba(9,8,36,0);
+  --bay-veil-m-a:rgba(9,8,36,.90); --bay-veil-m-b:rgba(9,8,36,.72); --bay-veil-m-c:rgba(9,8,36,.10);
+  --bay-soon-border:rgba(120,150,255,.45);
+  --journey-run-ink:#ffe2a3; --journey-done-bg:var(--ok); --journey-done-ink:#052e16;
+  --journey-fail-bg:var(--bad); --journey-fail-ink:#2a0b08;
+  --scrim:rgba(6,3,22,.66); --viewer-scrim:rgba(2,2,3,.94); --viewer-bar:rgba(0,0,0,.6); --drawer-veil:rgba(6,3,22,.55);
+  --warn-ink:#ffe2a3; --err-ink:#ffb2a9; --danger-ink:#ffe1dc; --danger-solid-bg:#ef8277; --danger-solid-ink:#2a0b08;
+  --cool-ink:#dbe4ff; --gold-tag-ink:#ebe5ff; --warn-tag-ink:#ffe2a3; --err-tag-ink:#ffd0cc;
+  --spark-grid:rgba(255,255,255,.06);
+  --shadow-sheet:0 40px 120px -30px rgba(0,0,0,.95); --shadow-dock:0 30px 80px -30px rgba(0,0,0,.9);
+  --shadow-toast:0 18px 50px -18px rgba(0,0,0,.9); --shadow-drawer:30px 0 80px -30px rgba(0,0,0,.9);
+  --shadow-slider:0 4px 10px rgba(0,0,0,.5);
+  --gate-bg:linear-gradient(180deg, rgba(255,255,255,.09), rgba(255,255,255,.05));
+  --gate-shadow:0 40px 120px -40px rgba(5,2,20,.9); --gate-line:rgba(255,255,255,.55); --gate-err:#ffb2a9;
+  --logo-bg:#120a22; --logo-1:#f4ecff; --logo-2:#a676ff; --logo-3:#4a1fa8;
+  --logo-edge-1:#e9dbff; --logo-edge-2:#6b3fd4; --logo-spark:#56d6ff;
   /* type */
   --f-ui:"Geist", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   --f-code:"IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
@@ -74,11 +118,121 @@
   --head:calc(var(--spine) + var(--sa-t));
 }
 
+/* ── themes ───────────────────────────────────────────────────────────────────
+   The indigo above is the default. A theme changes the roles, never a component:
+   data-theme on <html> is the only switch, and every rule below reads a token.
+   Graphite is a near-black room with a cyan accent and flat surfaces. Paper is
+   the same room in daylight, with the same geometry and a quieter shadow. */
+:root[data-theme="graphite"]{
+  color-scheme:dark;
+  --ink-0:#09090b; --ink-1:rgba(255,255,255,.035); --ink-2:rgba(255,255,255,.06); --ink-3:rgba(255,255,255,.10); --ink-4:rgba(255,255,255,.14);
+  --rule-1:rgba(255,255,255,.06); --rule-2:rgba(255,255,255,.10); --rule-3:rgba(255,255,255,.18);
+  --fg-1:#fafafa; --fg-2:#a1a1aa; --fg-3:#82828b;
+  --brand:#22d3ee; --brand-hi:#67e8f9; --brand-lo:#0891b2; --brand-ink:#041016;
+  --ok:#34d399; --ok-hi:#a7f3d0; --warn:#fbbf24; --warn-hi:#fde68a; --bad:#f87171; --bad-hi:#fecaca; --idle:rgba(255,255,255,.4);
+  --orange:#fb923c; --orange-hi:#fed7aa;
+  --mem:#60a5fa; --mem-lo:#2563eb; --steel:rgba(96,165,250,.32); --slate:rgba(255,255,255,.12);
+  --lane-27b:#a78bfa; --lane-flash:#38bdf8; --lane-image:#f472b6; --lane-video:#fb923c; --lane-kolibri:#34d399; --lane-nemotron:#a3e635; --lane-nemotron-super:#facc15; --lane-flash-local:#22d3ee; --lane-ornith-122b:#f87171;
+  --raised:#111113; --raised-hi:#18181b;
+  --shadow-1:0 1px 0 rgba(255,255,255,.03) inset, 0 18px 40px -24px rgba(0,0,0,.8);
+  --shadow-2:0 1px 0 rgba(255,255,255,.04) inset, 0 28px 60px -30px rgba(0,0,0,.9);
+  --ground:#09090b; --ground-a:rgba(34,211,238,.05); --ground-b:rgba(34,211,238,.02);
+  --spine-bg:rgba(9,9,11,.82); --rail-bg:rgba(9,9,11,.55); --rail-border:rgba(255,255,255,.06);
+  --surface:#111113; --surface-hover:#18181b; --surface-border:rgba(255,255,255,.06); --surface-border-hover:rgba(255,255,255,.12);
+  --tint-1:rgba(0,0,0,.24); --tint-2:rgba(0,0,0,.30); --tint-3:rgba(0,0,0,.36); --tint-4:rgba(0,0,0,.42);
+  --nav-active-bg:rgba(255,255,255,.07); --nav-active-ink:#fafafa; --nav-active-mark:#22d3ee;
+  --pip-bg:rgba(255,255,255,.04);
+  --control-bg:rgba(255,255,255,.04); --control-bg-hover:rgba(255,255,255,.08);
+  --control-border:rgba(255,255,255,.10); --control-border-hover:rgba(255,255,255,.18); --control-border-soft:rgba(255,255,255,.08);
+  --primary-bg:linear-gradient(90deg, #06b6d4, #14b8a6); --primary-bg-hover:linear-gradient(90deg, #22d3ee, #2dd4bf);
+  --primary-ink:#041016; --primary-ink-soft:#041016; --primary-border:transparent; --primary-border-hover:transparent;
+  --field-bg:#0c0c0e; --placeholder:#82828b;
+  --mark-tile:#ffffff; --overlay-ink:#ffffff;
+  --stage-1:var(--fg-1); --stage-2:var(--fg-2); --stage-3:var(--fg-3); --stage-track:var(--ink-3);
+  --code-bg:#0c0c0e; --code-ink:#d4d4d8; --log-ink:#d4d4d8; --log-err:#fca5a5; --log-warn:#fde68a;
+  --log-dim:#82828b; --log-mark-ink:#fafafa;
+  --reservoir-bg:#0c0c0e; --reservoir-border:rgba(255,255,255,.08);
+  --reservoir-shadow:inset 0 1px 0 rgba(255,255,255,.03); --reservoir-rule:rgba(0,0,0,.60);
+  --reservoir-text-shadow:0 1px 2px rgba(0,0,0,.55); --tick-ink:rgba(255,255,255,.05);
+  --free-a:rgba(52,211,153,.16); --free-b:rgba(52,211,153,.06); --free-ink:#a7f3d0; --cache-ink:#ffffff;
+  --shine:rgba(255,255,255,.25); --lane-brand:#22d3ee; --lane-seg-ink:#041016; --thumb-hi:#ecfeff;
+  --bay-act-bg:rgba(255,255,255,.07); --bay-act-rule:rgba(255,255,255,.10);
+  --bay-veil-a:rgba(9,9,11,.94); --bay-veil-b:rgba(9,9,11,.80); --bay-veil-c:rgba(9,9,11,.15); --bay-veil-d:rgba(9,9,11,0);
+  --bay-veil-m-a:rgba(9,9,11,.90); --bay-veil-m-b:rgba(9,9,11,.72); --bay-veil-m-c:rgba(9,9,11,.10);
+  --bay-soon-border:rgba(34,211,238,.35);
+  --journey-run-ink:#fde68a; --journey-done-bg:var(--ok); --journey-done-ink:#041016;
+  --journey-fail-bg:var(--bad); --journey-fail-ink:#2a0b08;
+  --scrim:rgba(0,0,0,.72); --viewer-scrim:rgba(0,0,0,.94); --viewer-bar:rgba(9,9,11,.72); --drawer-veil:rgba(0,0,0,.62);
+  --warn-ink:#fde68a; --err-ink:#fca5a5; --danger-ink:#fecaca; --danger-solid-bg:#ef8277; --danger-solid-ink:#2a0b08;
+  --cool-ink:#bfdbfe; --gold-tag-ink:#cffafe; --warn-tag-ink:#fef3c7; --err-tag-ink:#fee2e2;
+  --spark-grid:rgba(255,255,255,.07);
+  --shadow-sheet:0 40px 120px -30px rgba(0,0,0,.90); --shadow-dock:0 30px 80px -30px rgba(0,0,0,.85);
+  --shadow-toast:0 18px 50px -18px rgba(0,0,0,.85); --shadow-drawer:30px 0 80px -30px rgba(0,0,0,.85);
+  --shadow-slider:0 4px 10px rgba(0,0,0,.45);
+  --gate-bg:linear-gradient(180deg, rgba(255,255,255,.045), rgba(255,255,255,.02));
+  --gate-shadow:0 40px 120px -40px rgba(0,0,0,.9); --gate-line:rgba(255,255,255,.18); --gate-err:#fca5a5;
+  --logo-bg:#09090b; --logo-1:#ecfeff; --logo-2:#22d3ee; --logo-3:#0f766e;
+  --logo-edge-1:#a5f3fc; --logo-edge-2:#0891b2; --logo-spark:#67e8f9;
+  --r-hero:20px; --r-panel:16px; --r-ctl:10px;
+}
+
+:root[data-theme="paper"]{
+  color-scheme:light;
+  --ink-0:#f6f7fb; --ink-1:rgba(9,9,11,.03); --ink-2:rgba(9,9,11,.055); --ink-3:rgba(9,9,11,.09); --ink-4:rgba(9,9,11,.14);
+  --rule-1:rgba(9,9,11,.08); --rule-2:rgba(9,9,11,.12); --rule-3:rgba(9,9,11,.20);
+  --fg-1:#18181b; --fg-2:#52525b; --fg-3:#71717a;
+  --brand:#0e7490; --brand-hi:#155e75; --brand-lo:#0f766e; --brand-ink:#ffffff;
+  --ok:#059669; --ok-hi:#065f46; --warn:#b45309; --warn-hi:#92400e; --bad:#dc2626; --bad-hi:#991b1b; --idle:rgba(24,24,27,.35);
+  --orange:#c2410c; --orange-hi:#9a3412;
+  --mem:#1d4ed8; --mem-lo:#1e40af; --steel:rgba(37,99,235,.22); --slate:rgba(24,24,27,.12);
+  --raised:#ffffff; --raised-hi:#fafafa;
+  --shadow-1:0 1px 0 rgba(255,255,255,.9) inset, 0 18px 40px -24px rgba(24,24,27,.14);
+  --shadow-2:0 1px 0 rgba(255,255,255,.9) inset, 0 28px 60px -30px rgba(24,24,27,.18);
+  --ground:#f6f7fb; --ground-a:rgba(14,116,144,.08); --ground-b:rgba(15,118,110,.05);
+  --spine-bg:rgba(246,247,251,.86); --rail-bg:rgba(246,247,251,.72); --rail-border:rgba(9,9,11,.08);
+  --surface:#ffffff; --surface-hover:#f8f8fa; --surface-border:rgba(9,9,11,.10); --surface-border-hover:rgba(9,9,11,.20);
+  --tint-1:rgba(9,9,11,.03); --tint-2:rgba(9,9,11,.05); --tint-3:rgba(9,9,11,.06); --tint-4:rgba(9,9,11,.08);
+  --nav-active-bg:rgba(9,9,11,.06); --nav-active-ink:#18181b; --nav-active-mark:#0e7490;
+  --pip-bg:rgba(9,9,11,.03);
+  --control-bg:rgba(9,9,11,.03); --control-bg-hover:rgba(9,9,11,.07);
+  --control-border:rgba(9,9,11,.14); --control-border-hover:rgba(9,9,11,.24); --control-border-soft:rgba(9,9,11,.10);
+  --primary-bg:linear-gradient(90deg, #0e7490, #0f766e); --primary-bg-hover:linear-gradient(90deg, #155e75, #115e59);
+  --primary-ink:#ffffff; --primary-ink-soft:#ffffff; --primary-border:transparent; --primary-border-hover:transparent;
+  --field-bg:#ffffff; --placeholder:#71717a;
+  --mark-tile:#ffffff; --overlay-ink:#ffffff;
+  --stage-1:#fafafa; --stage-2:#a1a1aa; --stage-3:#82828b; --stage-track:rgba(255,255,255,.14);
+  --code-bg:#f4f4f5; --code-ink:#27272a; --log-ink:#3f3f46; --log-err:#b91c1c; --log-warn:#92400e;
+  --log-dim:#52525b; --log-mark-ink:#18181b;
+  --reservoir-bg:#f4f4f5; --reservoir-border:rgba(9,9,11,.12);
+  --reservoir-shadow:inset 0 1px 0 rgba(255,255,255,.8); --reservoir-rule:rgba(9,9,11,.12);
+  --reservoir-text-shadow:0 1px 1px rgba(255,255,255,.45); --tick-ink:rgba(9,9,11,.06);
+  --free-a:rgba(5,150,105,.16); --free-b:rgba(5,150,105,.06); --free-ink:#065f46; --cache-ink:#1e3a8a;
+  --shine:rgba(255,255,255,.5); --lane-brand:#06b6d4; --lane-seg-ink:#18181b; --thumb-hi:#ecfeff;
+  --bay-act-bg:rgba(9,9,11,.05); --bay-act-rule:rgba(9,9,11,.10);
+  --bay-veil-a:rgba(255,255,255,.94); --bay-veil-b:rgba(255,255,255,.80); --bay-veil-c:rgba(255,255,255,.15); --bay-veil-d:rgba(255,255,255,0);
+  --bay-veil-m-a:rgba(255,255,255,.90); --bay-veil-m-b:rgba(255,255,255,.72); --bay-veil-m-c:rgba(255,255,255,.10);
+  --bay-soon-border:rgba(14,116,144,.35);
+  --journey-run-ink:#92400e; --journey-done-bg:#34d399; --journey-done-ink:#052e16;
+  --journey-fail-bg:#f87171; --journey-fail-ink:#2a0b08;
+  --scrim:rgba(24,24,27,.42); --viewer-scrim:rgba(9,9,11,.92); --viewer-bar:rgba(255,255,255,.90); --drawer-veil:rgba(24,24,27,.35);
+  --warn-ink:#92400e; --err-ink:#991b1b; --danger-ink:#991b1b; --danger-solid-bg:#dc2626; --danger-solid-ink:#ffffff;
+  --cool-ink:#1e40af; --gold-tag-ink:#155e75; --warn-tag-ink:#92400e; --err-tag-ink:#991b1b;
+  --spark-grid:rgba(9,9,11,.08);
+  --shadow-sheet:0 40px 120px -30px rgba(24,24,27,.22); --shadow-dock:0 30px 80px -30px rgba(24,24,27,.20);
+  --shadow-toast:0 18px 50px -18px rgba(24,24,27,.18); --shadow-drawer:30px 0 80px -30px rgba(24,24,27,.20);
+  --shadow-slider:0 4px 10px rgba(24,24,27,.20);
+  --gate-bg:linear-gradient(180deg, rgba(255,255,255,.90), rgba(255,255,255,.70));
+  --gate-shadow:0 40px 120px -40px rgba(24,24,27,.22); --gate-line:rgba(14,116,144,.35); --gate-err:#991b1b;
+  --logo-bg:#0e7490; --logo-1:#ecfeff; --logo-2:#0891b2; --logo-3:#0f766e;
+  --logo-edge-1:#67e8f9; --logo-edge-2:#0e7490; --logo-spark:#0891b2;
+  --r-hero:20px; --r-panel:16px; --r-ctl:10px;
+}
+
 /* ── base ───────────────────────────────────────────────────────────────────── */
 *,*::before,*::after{box-sizing:border-box}
 *{margin:0}
 html{-webkit-text-size-adjust:100%; scrollbar-color:var(--rule-3) transparent; scroll-padding-top:calc(var(--head) + 16px)}
-body{min-height:100vh; min-height:100dvh; background:var(--ink-0); color:var(--fg-1);
+body{min-height:100vh; min-height:100dvh; background:var(--ground); color:var(--fg-1);
   font:400 var(--t-15)/1.5 var(--f-ui);
   -webkit-font-smoothing:antialiased; -moz-osx-font-smoothing:grayscale; text-rendering:optimizeLegibility}
 /* the ground: deep indigo and two halos, drawn by js/backdrop.js on the canvas below and
@@ -86,11 +240,12 @@ body{min-height:100vh; min-height:100dvh; background:var(--ink-0); color:var(--f
    browser with no WebGL keeps */
 body::before{content:''; position:fixed; inset:0; pointer-events:none; z-index:0;
   background:
-    radial-gradient(1000px 700px at 55% 105%, rgba(122,62,232,.55), transparent 62%),
-    radial-gradient(800px 600px at 100% 0%, rgba(116,56,206,.30), transparent 60%), var(--ink-0)}
+    radial-gradient(1000px 700px at 55% 105%, var(--ground-a), transparent 62%),
+    radial-gradient(800px 600px at 100% 0%, var(--ground-b), transparent 60%), var(--ground)}
 #backdrop{position:fixed; inset:0; width:100vw; height:100vh; max-width:none; z-index:0; pointer-events:none;
   opacity:0; transition:opacity 1.2s ease}
 .has-backdrop #backdrop{opacity:1}
+:root[data-theme="graphite"] #backdrop, :root[data-theme="paper"] #backdrop{display:none}
 a{color:var(--brand-hi); text-decoration-color:color-mix(in srgb, var(--brand) 45%, transparent); text-underline-offset:3px}
 a:hover{text-decoration-color:var(--brand-hi)}
 button,input,select,textarea{font:inherit; color:inherit}
@@ -116,7 +271,7 @@ img,svg,video,canvas{display:block; max-width:100%}
 /* ── the spine: brand, what serves, the pool at a glance, the job, the line ── */
 .spine{position:sticky; top:0; z-index:40; height:var(--head); display:flex; align-items:center; gap:var(--s-4);
   padding:var(--sa-t) max(var(--s-5), var(--sa-r)) 0 max(var(--s-4), var(--sa-l)); border-bottom:1px solid var(--rule-1);
-  background:rgba(23,11,56,.72); backdrop-filter:saturate(1.2) blur(16px);
+  background:var(--spine-bg); backdrop-filter:saturate(1.2) blur(16px);
   -webkit-backdrop-filter:saturate(1.2) blur(16px)}
 
 .menu-btn{display:none; flex:none; width:40px; height:40px; border-radius:12px; border:1px solid var(--rule-2);
@@ -124,6 +279,13 @@ img,svg,video,canvas{display:block; max-width:100%}
 .menu-btn svg{width:18px; height:18px; stroke:currentColor; fill:none; stroke-width:1.8; stroke-linecap:round}
 .brand{display:flex; align-items:center; gap:var(--s-3); text-decoration:none; color:var(--fg-1); flex:none}
 .brand .mark{width:30px; height:30px; flex:none}
+.brand .mark rect{fill:var(--logo-bg)}
+.brand .mark #mk stop:nth-child(1){stop-color:var(--logo-1)}
+.brand .mark #mk stop:nth-child(2){stop-color:var(--logo-2)}
+.brand .mark #mk stop:nth-child(3){stop-color:var(--logo-3)}
+.brand .mark #mk-edge stop:nth-child(1){stop-color:var(--logo-edge-1)}
+.brand .mark #mk-edge stop:nth-child(2){stop-color:var(--logo-edge-2)}
+.brand .mark path[stroke="#56d6ff"]{stroke:var(--logo-spark)}
 .brand .word{display:flex; flex-direction:column; line-height:1}
 .brand .word b{font-weight:680; font-size:var(--t-15); letter-spacing:.01em}
 .brand .word small{font-size:var(--t-12); color:var(--fg-3); margin-top:3px}
@@ -132,19 +294,19 @@ img,svg,video,canvas{display:block; max-width:100%}
    (Hasan, 2026-11-07, decision 1181). At 720 px and less it still fills its row (the rule there). */
 .serving{display:flex; align-items:center; gap:var(--s-3); min-width:0; flex:0 1 auto; max-width:560px;
   padding:6px 8px 6px 14px; border-radius:var(--r-chip); border:1px solid var(--rule-2);
-  background:rgba(255,255,255,.06); color:var(--fg-1); text-align:left;
+  background:var(--pip-bg); color:var(--fg-1); text-align:left;
   transition:border-color .2s}
 .serving:hover{border-color:var(--rule-3)}
 .serving .lamp{flex:none}
 /* the maker's mark of what serves, on a small white tile */
-.serving .mark{flex:none; width:28px; height:28px; border-radius:8px; display:grid; place-items:center; background:#fff}
+.serving .mark{flex:none; width:28px; height:28px; border-radius:8px; display:grid; place-items:center; background:var(--mark-tile)}
 .serving .mark img{width:18px; height:18px}
 .serving .what{display:flex; flex-direction:column; min-width:0; line-height:1.2}
 .serving .what b{font-weight:640; font-size:var(--t-14); white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
 .serving .what > span{font-size:var(--t-12); color:var(--fg-2); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
   font-variant-numeric:tabular-nums}   /* its counts change each second: the capsule, sized to its text, kept still */
 .serving .go{margin-left:auto; flex:none; font-size:var(--t-13); font-weight:640; padding:6px 14px; border-radius:var(--r-chip);
-  background:#fff; color:var(--brand-ink); white-space:nowrap}
+  background:var(--primary-bg); color:var(--primary-ink); white-space:nowrap}
 .spine-right{margin-left:auto; display:flex; align-items:center; gap:var(--s-4); flex:none}
 .minipool{display:flex; flex-direction:column; gap:5px; width:176px}
 .minipool .lab{display:flex; justify-content:space-between; font-size:var(--t-12); color:var(--fg-2)}
@@ -179,8 +341,8 @@ img,svg,video,canvas{display:block; max-width:100%}
   min-height:calc(100dvh - var(--head))}
 .rail{position:sticky; top:var(--head); align-self:start; height:calc(100dvh - var(--head)); overflow:auto;
   padding:var(--s-5) var(--s-3) calc(var(--s-4) + var(--sa-b)) max(var(--s-3), var(--sa-l));
-  border-right:1px solid rgba(255,255,255,.08); display:flex; flex-direction:column; gap:var(--s-5);
-  background:rgba(23,11,56,.45)}
+  border-right:1px solid var(--rail-border); display:flex; flex-direction:column; gap:var(--s-5);
+  background:var(--rail-bg)}
 .rail .grp{display:flex; flex-direction:column; gap:2px}
 .rail .grp h2{font-size:var(--t-12); font-weight:520; color:var(--fg-3); padding:0 var(--s-3) var(--s-1); letter-spacing:.01em}
 .nav{position:relative; display:flex; align-items:center; gap:var(--s-3); width:100%; padding:9px var(--s-3);
@@ -188,11 +350,11 @@ img,svg,video,canvas{display:block; max-width:100%}
   text-align:left; transition:background .15s, color .15s}
 .nav svg{width:19px; height:19px; flex:none; stroke:currentColor; fill:none; stroke-width:1.7; stroke-linecap:round; stroke-linejoin:round}
 .nav:hover{background:var(--ink-2); color:var(--fg-1)}
-.nav[aria-current="page"]{background:rgba(255,255,255,.10); color:var(--fg-1)}
-.nav[aria-current="page"] svg{stroke:#fff}
+.nav[aria-current="page"]{background:var(--nav-active-bg); color:var(--nav-active-ink)}
+.nav[aria-current="page"] svg{stroke:var(--nav-active-mark)}
 /* the light pipe: where you are, lit like a status LED in the bezel */
 .nav[aria-current="page"]::before{content:''; position:absolute; left:-12px; top:9px; bottom:9px; width:3px; border-radius:0 3px 3px 0;
-  background:#fff}
+  background:var(--nav-active-mark)}
 .nav .lab{flex:1; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
 .nav .bdg{font-size:var(--t-12); font-weight:600; min-width:20px; padding:1px 7px; border-radius:var(--r-chip); text-align:center;
   background:var(--ink-3); color:var(--fg-2)}
@@ -256,12 +418,12 @@ img,svg,video,canvas{display:block; max-width:100%}
 .banner .blist{margin:var(--s-1) 0 var(--s-2); padding-left:var(--s-4)}
 .banner .blist li{overflow-wrap:anywhere}
 .banner.err{border-color:color-mix(in srgb, var(--bad) 50%, transparent); background:color-mix(in srgb, var(--bad) 10%, var(--ink-1))}
-.banner.info{border-color:var(--rule-2); background:rgba(255,255,255,.06); color:var(--fg-2)}
+.banner.info{border-color:var(--rule-2); background:var(--pip-bg); color:var(--fg-2)}
 .banner.orange{border-color:color-mix(in srgb, var(--orange) 50%, transparent); background:color-mix(in srgb, var(--orange) 10%, var(--ink-1))}
 
 /* ── panels: one frame, used when a group needs one ── */
-.panel{position:relative; border:1px solid rgba(255,255,255,.12); border-radius:var(--r-panel);
-  background:linear-gradient(180deg, rgba(255,255,255,.075), rgba(255,255,255,.04));
+.panel{position:relative; border:1px solid var(--surface-border); border-radius:var(--r-panel);
+  background:var(--surface);
   box-shadow:var(--shadow-1); padding:var(--s-5)}
 /* wraps: a button that never breaks its line (.btn) beside a title outgrew a 393 px phone, Library's
    "Delete 1 stray revision, frees 0.0 GiB", and the page zoomed out under the finger (found 2026-10-22) */
@@ -309,38 +471,38 @@ img,svg,video,canvas{display:block; max-width:100%}
 
 /* ── capsules and chips ── */
 .cap{display:inline-flex; align-items:center; gap:7px; padding:4px 11px 4px 9px; border-radius:var(--r-chip);
-  border:1px solid rgba(255,255,255,.28); background:rgba(8,4,28,.35); font-size:var(--t-12); font-weight:600; color:var(--fg-1); white-space:nowrap}
+  border:1px solid var(--rule-3); background:var(--tint-1); font-size:var(--t-12); font-weight:600; color:var(--fg-1); white-space:nowrap}
 .cap .lamp{width:8px; height:8px}
-.cap.ok{border-color:color-mix(in srgb, var(--ok) 70%, transparent); background:color-mix(in srgb, var(--ok) 14%, rgba(8,4,28,.5)); color:var(--ok-hi)}
-.cap.warn{border-color:color-mix(in srgb, var(--warn) 70%, transparent); background:color-mix(in srgb, var(--warn) 14%, rgba(8,4,28,.5)); color:var(--warn-hi)}
-.cap.orange{border-color:color-mix(in srgb, var(--orange) 70%, transparent); background:color-mix(in srgb, var(--orange) 14%, rgba(8,4,28,.5)); color:var(--orange-hi)}
+.cap.ok{border-color:color-mix(in srgb, var(--ok) 70%, transparent); background:color-mix(in srgb, var(--ok) 14%, var(--tint-3)); color:var(--ok-hi)}
+.cap.warn{border-color:color-mix(in srgb, var(--warn) 70%, transparent); background:color-mix(in srgb, var(--warn) 14%, var(--tint-3)); color:var(--warn-hi)}
+.cap.orange{border-color:color-mix(in srgb, var(--orange) 70%, transparent); background:color-mix(in srgb, var(--orange) 14%, var(--tint-3)); color:var(--orange-hi)}
 .cf-list{list-style:none; margin:var(--s-3) 0 0; padding:0; display:flex; flex-direction:column; gap:var(--s-2)}
 .cf-list li{font-size:var(--t-14); line-height:1.45; overflow-wrap:anywhere}
 .cf-list li.moves b{color:var(--orange-hi)}
-.cap.err{border-color:color-mix(in srgb, var(--bad) 70%, transparent); background:color-mix(in srgb, var(--bad) 14%, rgba(8,4,28,.5)); color:var(--bad-hi)}
-.cap.cool{border-color:color-mix(in srgb, var(--mem) 70%, transparent); background:color-mix(in srgb, var(--mem) 14%, rgba(8,4,28,.5)); color:#dbe4ff}
+.cap.err{border-color:color-mix(in srgb, var(--bad) 70%, transparent); background:color-mix(in srgb, var(--bad) 14%, var(--tint-3)); color:var(--bad-hi)}
+.cap.cool{border-color:color-mix(in srgb, var(--mem) 70%, transparent); background:color-mix(in srgb, var(--mem) 14%, var(--tint-3)); color:var(--cool-ink)}
 .tag:empty{display:none}
 .tag{display:inline-flex; align-items:center; padding:2px 9px; border-radius:var(--r-chip); background:var(--ink-3);
   color:var(--fg-2); font-size:var(--t-12); font-weight:520; white-space:nowrap}
-.tag.gold{background:color-mix(in srgb, var(--brand) 22%, rgba(8,4,28,.55)); color:#ebe5ff}
-.tag.cool{background:color-mix(in srgb, var(--mem) 20%, rgba(8,4,28,.55)); color:#dbe4ff}
-.tag.warn{background:color-mix(in srgb, var(--warn) 20%, rgba(8,4,28,.55)); color:#ffe2a3}
-.tag.err{background:color-mix(in srgb, var(--bad) 20%, rgba(8,4,28,.55)); color:#ffd0cc}
+.tag.gold{background:color-mix(in srgb, var(--brand) 22%, var(--tint-4)); color:var(--gold-tag-ink)}
+.tag.cool{background:color-mix(in srgb, var(--mem) 20%, var(--tint-4)); color:var(--cool-ink)}
+.tag.warn{background:color-mix(in srgb, var(--warn) 20%, var(--tint-4)); color:var(--warn-tag-ink)}
+.tag.err{background:color-mix(in srgb, var(--bad) 20%, var(--tint-4)); color:var(--err-tag-ink)}
 
 /* ── buttons: the verb says what happens ── */
 .btn{display:inline-flex; align-items:center; justify-content:center; gap:var(--s-2); min-height:40px; padding:0 var(--s-5);
-  border-radius:var(--r-chip); border:1px solid rgba(255,255,255,.18); background:rgba(255,255,255,.08); color:var(--fg-1);
+  border-radius:var(--r-chip); border:1px solid var(--control-border); background:var(--control-bg); color:var(--fg-1);
   font-size:var(--t-14); font-weight:580; white-space:nowrap; text-decoration:none;
   transition:background .15s, border-color .15s, transform .08s, box-shadow .15s}
-.btn:hover:not(:disabled){background:rgba(255,255,255,.14); border-color:rgba(255,255,255,.3)}
+.btn:hover:not(:disabled){background:var(--control-bg-hover); border-color:var(--control-border-hover)}
 .btn:active:not(:disabled){transform:translateY(1px)}
 .btn:disabled,.btn[aria-disabled="true"]{opacity:.45}
 .btn svg{width:16px; height:16px; stroke:currentColor; fill:none; stroke-width:1.9; stroke-linecap:round; stroke-linejoin:round}
-.btn.primary{border-color:#fff; color:var(--brand-ink); background:#fff; font-weight:640}
-.btn.primary:hover:not(:disabled){background:#efeaff; border-color:#efeaff}
-.btn.danger{border-color:color-mix(in srgb, var(--bad) 55%, transparent); color:#ffe1dc; background:color-mix(in srgb, var(--bad) 10%, var(--ink-2))}
+.btn.primary{border-color:var(--primary-border); color:var(--primary-ink); background:var(--primary-bg); font-weight:640}
+.btn.primary:hover:not(:disabled){background:var(--primary-bg-hover); border-color:var(--primary-border-hover)}
+.btn.danger{border-color:color-mix(in srgb, var(--bad) 55%, transparent); color:var(--danger-ink); background:color-mix(in srgb, var(--bad) 10%, var(--ink-2))}
 .btn.danger:hover:not(:disabled){background:color-mix(in srgb, var(--bad) 16%, transparent); border-color:var(--bad)}
-.btn.danger.solid{background:linear-gradient(180deg, #ef8277, var(--bad)); color:#2a0b08; border-color:transparent}
+.btn.danger.solid{background:linear-gradient(180deg, var(--danger-solid-bg), var(--bad)); color:var(--danger-solid-ink); border-color:transparent}
 .btn.ghost{background:transparent; border-color:transparent; color:var(--fg-2)}
 .btn.ghost:hover:not(:disabled){background:var(--ink-2); color:var(--fg-1)}
 .btn.sm{min-height:32px; padding:0 var(--s-3); font-size:var(--t-13); border-radius:9px}
@@ -362,10 +524,10 @@ img,svg,video,canvas{display:block; max-width:100%}
 .field .help{font-size:var(--t-12); color:var(--fg-3)}
 .field .err{font-size:var(--t-13); color:var(--bad-hi)}
 .input, textarea.input, select.input{width:100%; min-height:42px; padding:9px 12px; border-radius:var(--r-ctl);
-  border:1px solid var(--rule-2); background:var(--ink-0); color:var(--fg-1); font-size:var(--t-15);
+  border:1px solid var(--rule-2); background:var(--field-bg); color:var(--fg-1); font-size:var(--t-15);
   transition:border-color .15s, box-shadow .15s}
 textarea.input{min-height:132px; resize:vertical; line-height:1.55}
-.input::placeholder{color:rgba(255,255,255,.5)}
+.input::placeholder{color:var(--placeholder)}
 .input:hover{border-color:var(--rule-3)}
 .input:focus{outline:none; border-color:color-mix(in srgb, var(--brand) 70%, transparent);
   box-shadow:0 0 0 3px color-mix(in srgb, var(--brand) 18%, transparent)}
@@ -379,15 +541,15 @@ select.input{appearance:none; padding-right:36px; cursor:pointer;
 .with-btn .input{flex:1}
 
 /* segmented control: a real radio group with a visible choice */
-.seg{display:inline-flex; position:relative; padding:4px; gap:4px; border-radius:24px; background:rgba(8,4,28,.40); border:1px solid rgba(255,255,255,.14)}
+.seg{display:inline-flex; position:relative; padding:4px; gap:4px; border-radius:24px; background:var(--tint-2); border:1px solid var(--control-border-soft)}
 .seg.block{display:flex}
 .seg button{flex:1; position:relative; z-index:1; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:2px;
   min-height:38px; padding:6px 14px; border:0; border-radius:20px; background:transparent; color:var(--fg-2);
   font-size:var(--t-14); font-weight:560; transition:color .2s, background .2s}
 .seg button small{font-size:var(--t-12); font-weight:450; color:var(--fg-3)}
-.seg button:hover{color:var(--fg-1); background:rgba(255,255,255,.08)}
-.seg button[aria-checked="true"]{color:var(--brand-ink); background:#fff}
-.seg button[aria-checked="true"] small{color:color-mix(in srgb, var(--brand-ink) 70%, transparent)}
+.seg button:hover{color:var(--fg-1); background:var(--control-bg)}
+.seg button[aria-checked="true"]{color:var(--primary-ink); background:var(--primary-bg)}
+.seg button[aria-checked="true"] small{color:var(--primary-ink-soft)}
 .seg button:disabled{opacity:.4}
 
 /* slider: the value is always said, the ends are named */
@@ -400,8 +562,8 @@ input[type=range]::-webkit-slider-runnable-track{height:6px; border-radius:6px;
 input[type=range]::-moz-range-track{height:6px; border-radius:6px; background:var(--ink-4)}
 input[type=range]::-moz-range-progress{height:6px; border-radius:6px; background:var(--brand)}
 input[type=range]::-webkit-slider-thumb{-webkit-appearance:none; width:20px; height:20px; margin-top:-7px; border-radius:50%;
-  background:radial-gradient(circle at 35% 30%, #f3efff, var(--brand) 60%, var(--brand-lo)); border:2px solid var(--ink-0);
-  box-shadow:0 0 0 1px var(--brand-lo), 0 4px 10px rgba(0,0,0,.5)}
+  background:radial-gradient(circle at 35% 30%, var(--thumb-hi), var(--brand) 60%, var(--brand-lo)); border:2px solid var(--ink-0);
+  box-shadow:0 0 0 1px var(--brand-lo), var(--shadow-slider)}
 input[type=range]::-moz-range-thumb{width:18px; height:18px; border-radius:50%; background:var(--brand); border:2px solid var(--ink-0)}
 input[type=range]:focus-visible{outline:none}
 input[type=range]:focus-visible::-webkit-slider-thumb{box-shadow:0 0 0 4px color-mix(in srgb, var(--brand) 35%, transparent)}
@@ -450,18 +612,18 @@ input[type=range]:focus-visible::-webkit-slider-thumb{box-shadow:0 0 0 4px color
 .scroll-x{overflow-x:auto; -webkit-overflow-scrolling:touch}
 
 /* code blocks: commands and logs, the only mono in the app */
-.cmd{position:relative; font-family:var(--f-code); font-size:var(--t-13); line-height:1.6; color:#e5e3f4;
-  background:#0d0926; border:1px solid var(--rule-2); border-radius:var(--r-ctl); padding:var(--s-3) var(--s-4);
+.cmd{position:relative; font-family:var(--f-code); font-size:var(--t-13); line-height:1.6; color:var(--code-ink);
+  background:var(--code-bg); border:1px solid var(--rule-2); border-radius:var(--r-ctl); padding:var(--s-3) var(--s-4);
   white-space:pre-wrap; word-break:break-word; overflow:auto}
 .cmd .p{color:var(--brand); user-select:none}
-.logview{font-family:var(--f-code); font-size:12.5px; line-height:1.6; color:#d2cfe6; background:#0d0926;
+.logview{font-family:var(--f-code); font-size:12.5px; line-height:1.6; color:var(--log-ink); background:var(--code-bg);
   border:1px solid var(--rule-2); border-radius:var(--r-ctl); padding:var(--s-3) var(--s-4); min-height:320px; max-height:62vh;
   overflow:auto; white-space:pre-wrap; word-break:break-word; tab-size:4}
-.logview .l-err{color:#ff9f95}
-.logview .l-warn{color:#ffe2a3}
+.logview .l-err{color:var(--log-err)}
+.logview .l-warn{color:var(--log-warn)}
 .logview .l-ok{color:var(--ok-hi)}
-.logview .l-dim{color:#8e8aac}
-.logview mark{background:color-mix(in srgb, var(--brand) 38%, transparent); color:#fff; border-radius:3px}
+.logview .l-dim{color:var(--log-dim)}
+.logview mark{background:color-mix(in srgb, var(--brand) 38%, transparent); color:var(--log-mark-ink); border-radius:3px}
 
 /* disclosure: the why, on demand */
 details.why{border-top:1px solid var(--rule-1); padding-top:var(--s-3); margin-top:var(--s-4)}
@@ -476,8 +638,8 @@ details.why > div{margin-top:var(--s-3); color:var(--fg-2); font-size:var(--t-14
    The hero: 121.6 GiB of unified memory, drawn as one reservoir, split live by what
    holds it. Its scale is the machine's own, and every lane is drawn against it. */
 .pool{position:relative; border-radius:var(--r-hero); padding:var(--s-6) var(--s-6) var(--s-5);
-  border:1px solid rgba(255,255,255,.12);
-  background:linear-gradient(180deg, rgba(255,255,255,.075), rgba(255,255,255,.04));
+  border:1px solid var(--surface-border);
+  background:var(--surface);
   box-shadow:var(--shadow-2)}
 .pool-top{display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:end; gap:var(--s-6); margin-bottom:var(--s-5)}
 .pool-title{min-width:0}
@@ -493,27 +655,27 @@ details.why > div{margin-top:var(--s-3); color:var(--fg-2); font-size:var(--t-14
 .pool-free .k{font-size:var(--t-13); color:var(--fg-2)}
 .pool-free.low .v{color:var(--warn)}
 .pool-free.crit .v{color:var(--bad-hi)}
-.reservoir{position:relative; height:88px; border-radius:14px; background:rgba(8,4,28,.55); border:1px solid rgba(255,255,255,.14);
-  box-shadow:inset 0 2px 10px rgba(0,0,0,.45); overflow:hidden; display:flex}
+.reservoir{position:relative; height:88px; border-radius:14px; background:var(--reservoir-bg); border:1px solid var(--reservoir-border);
+  box-shadow:var(--reservoir-shadow); overflow:hidden; display:flex}
 .reservoir .seg-m{position:relative; height:100%; min-width:0; transition:flex-basis .9s var(--ease), background .4s;
   display:flex; align-items:flex-end; padding:0 10px 9px; font-size:var(--t-12); font-weight:560; white-space:nowrap; overflow:hidden}
-.reservoir .seg-m + .seg-m{box-shadow:inset 1px 0 0 rgba(0,0,0,.55)}
-.reservoir .seg-m span{position:relative; z-index:1; text-shadow:0 1px 2px rgba(0,0,0,.6)}
+.reservoir .seg-m + .seg-m{box-shadow:inset 1px 0 0 var(--reservoir-rule)}
+.reservoir .seg-m span{position:relative; z-index:1; text-shadow:var(--reservoir-text-shadow)}
 /* the lane's share of the pool in the lane's own hue (now.js sets --hue) */
-.seg-m.lane{--hue:var(--brand); background:linear-gradient(180deg, color-mix(in srgb, var(--hue) 85%, #fff), var(--hue)); color:#0d0a24}
+.seg-m.lane{--hue:var(--lane-brand); background:linear-gradient(180deg, color-mix(in srgb, var(--hue) 85%, #fff), var(--hue)); color:var(--lane-seg-ink)}
 .seg-m.lane span{text-shadow:none}
 .seg-m.lane.filling{background:linear-gradient(180deg, color-mix(in srgb, var(--hue) 60%, #fff), var(--hue))}
 .seg-m.lane.filling::before{content:''; position:absolute; inset:0; z-index:0;
-  background:linear-gradient(100deg, transparent 0, rgba(255,255,255,.35) 50%, transparent 100%); background-size:40% 100%;
+  background:linear-gradient(100deg, transparent 0, var(--shine) 50%, transparent 100%); background-size:40% 100%;
   background-repeat:no-repeat; animation:shine 1.8s linear infinite}
 @keyframes shine{from{background-position:-40% 0} to{background-position:140% 0}}
-.seg-m.cache{background:var(--steel); color:#fff}
+.seg-m.cache{background:var(--steel); color:var(--cache-ink)}
 .seg-m.other{background:var(--slate); color:var(--fg-1)}
-.seg-m.free{background:repeating-linear-gradient(135deg, rgba(74,222,128,.14) 0 8px, rgba(74,222,128,.06) 8px 16px); color:#dcfce7}
+.seg-m.free{background:repeating-linear-gradient(135deg, var(--free-a) 0 8px, var(--free-b) 8px 16px); color:var(--free-ink)}
 .reservoir .floor{position:absolute; top:0; bottom:0; right:0; border-left:2px solid var(--bad); z-index:2;
   background:repeating-linear-gradient(135deg, color-mix(in srgb, var(--bad) 30%, transparent) 0 4px, transparent 4px 8px)}
 .reservoir .ticks{position:absolute; inset:0; pointer-events:none; z-index:2;
-  background:repeating-linear-gradient(90deg, transparent 0, transparent calc(var(--tick) - 1px), rgba(255,255,255,.07) calc(var(--tick) - 1px), rgba(255,255,255,.07) var(--tick))}
+  background:repeating-linear-gradient(90deg, transparent 0, transparent calc(var(--tick) - 1px), var(--tick-ink) calc(var(--tick) - 1px), var(--tick-ink) var(--tick))}
 .pool-legend{display:flex; flex-wrap:wrap; gap:var(--s-2) var(--s-5); margin-top:var(--s-4); font-size:var(--t-13); color:var(--fg-2)}
 .pool-legend span{display:inline-flex; align-items:center; gap:7px}
 .pool-legend i{width:12px; height:12px; border-radius:4px; display:inline-block}
@@ -525,14 +687,14 @@ details.why > div{margin-top:var(--s-3); color:var(--fg-2); font-size:var(--t-14
 /* three columns (two, then one, on narrower screens): the text lanes first, then the image and the video lanes */
 .rack{display:grid; grid-template-columns:repeat(3, minmax(0,1fr)); gap:var(--s-3); margin-top:var(--s-5)}
 .bay{position:relative; display:flex; flex-direction:column; gap:var(--s-3); padding:var(--s-4); border-radius:var(--r-panel);
-  border:1px solid rgba(255,255,255,.12); background:linear-gradient(180deg, rgba(255,255,255,.075), rgba(255,255,255,.04));
+  border:1px solid var(--surface-border); background:var(--surface);
   box-shadow:var(--shadow-1); min-height:190px; text-align:left; color:var(--fg-1);
   transition:border-color .25s, background .25s, box-shadow .25s}
-button.bay:hover{border-color:rgba(255,255,255,.22); background:linear-gradient(180deg, rgba(255,255,255,.10), rgba(255,255,255,.06))}
+button.bay:hover{border-color:var(--surface-border-hover); background:var(--surface-hover)}
 .bay .top{display:flex; justify-content:space-between; align-items:center; gap:var(--s-2); flex-wrap:wrap}
 .bay .top .cap{white-space:normal; max-width:100%}
 /* the maker's mark on a white tile */
-.bay .mark{flex:none; width:40px; height:40px; border-radius:11px; display:grid; place-items:center; background:#fff}
+.bay .mark{flex:none; width:40px; height:40px; border-radius:11px; display:grid; place-items:center; background:var(--mark-tile)}
 .bay .mark img{width:24px; height:24px}
 .bay .kind{font-size:var(--t-12); font-weight:500; color:var(--fg-3); margin-top:calc(-1 * var(--s-2))}
 .bay h3{font-size:var(--t-20); font-weight:640; line-height:1.15}
@@ -542,8 +704,8 @@ button.bay:hover{border-color:rgba(255,255,255,.22); background:linear-gradient(
 .bay .facts-line b{color:var(--fg-1); font-weight:600; font-variant-numeric:tabular-nums}
 .bay .foot{display:flex; justify-content:space-between; align-items:center; gap:var(--s-2); padding-top:var(--s-3); border-top:1px solid var(--rule-1)}
 .bay .foot .act{font-size:var(--t-13); font-weight:640; color:var(--fg-1); padding:6px 14px; border-radius:var(--r-chip);
-  background:rgba(255,255,255,.10); box-shadow:inset 0 0 0 1px rgba(255,255,255,.16)}
-.bay.seated .foot .act{background:#fff; color:var(--brand-ink); box-shadow:none}
+  background:var(--bay-act-bg); box-shadow:inset 0 0 0 1px var(--bay-act-rule)}
+.bay.seated .foot .act{background:var(--primary-bg); color:var(--primary-ink); box-shadow:none}
 /* seated: the lane that holds the box, a green rule on its top edge */
 .bay.seated{border-color:color-mix(in srgb, var(--ok) 55%, transparent); box-shadow:inset 0 2px 0 var(--ok), var(--shadow-1)}
 .bay.booting{border-color:color-mix(in srgb, var(--warn) 50%, transparent); box-shadow:inset 0 2px 0 var(--warn), var(--shadow-1)}
@@ -553,16 +715,16 @@ button.bay:hover{border-color:rgba(255,255,255,.22); background:linear-gradient(
    box made for it (img/qwen4-27b.webp, its making in img/NOTICE.md) under a veil that keeps its words readable, its
    words dimmed where the whole card was at half opacity, so the art is seen and the card still reads as not there yet */
 .bay.soon, button.bay.soon:hover{border-style:dashed; background:
-  linear-gradient(90deg, rgba(9,8,36,.94) 0%, rgba(9,8,36,.80) 45%, rgba(9,8,36,.15) 70%, rgba(9,8,36,0) 100%),
+  linear-gradient(90deg, var(--bay-veil-a) 0%, var(--bay-veil-b) 45%, var(--bay-veil-c) 70%, var(--bay-veil-d) 100%),
   url("/static/img/qwen4-27b.webp") right center / cover no-repeat}
-button.bay.soon:hover{border-color:rgba(120,150,255,.45)}
+button.bay.soon:hover{border-color:var(--bay-soon-border)}
 .bay.soon :is(h3, .kind, .desc, .foot){opacity:.8}
 .bay.soon .desc{max-width:58%}              /* its words beside the art, not over it */
 /* a narrow card is near square: the art fills it from its lower right, under a veil that darkens from the bottom up,
    the words on the dark and the art seen below them (a smaller art showed its own left edge as a seam) */
 @media (max-width: 640px){
   .bay.soon, button.bay.soon:hover{background:
-    linear-gradient(180deg, rgba(9,8,36,.90) 0%, rgba(9,8,36,.72) 50%, rgba(9,8,36,.10) 100%),
+    linear-gradient(180deg, var(--bay-veil-m-a) 0%, var(--bay-veil-m-b) 50%, var(--bay-veil-m-c) 100%),
     url("/static/img/qwen4-27b.webp") right bottom / cover no-repeat}
   .bay.soon .desc{max-width:none}
 }
@@ -573,13 +735,13 @@ button.bay.soon:hover{border-color:rgba(120,150,255,.45)}
 /* a lane's own card in Lanes: its mark beside its name */
 .lane-panel > header{align-items:center; flex-wrap:wrap}
 .lane-panel > header .who{display:flex; align-items:center; gap:var(--s-3)}
-.lane-panel .mark{flex:none; width:40px; height:40px; border-radius:12px; display:grid; place-items:center; background:#fff}
+.lane-panel .mark{flex:none; width:40px; height:40px; border-radius:12px; display:grid; place-items:center; background:var(--mark-tile)}
 .lane-panel .mark img{width:24px; height:24px}
 
 /* a lane's versions, all in sight: one segmented pill, the chosen segment white, its line under it */
 .pickbox{display:flex; flex-direction:column; gap:8px; max-width:640px}
 .pick-label{font-size:var(--t-12); font-weight:640; color:var(--fg-2); text-transform:uppercase; letter-spacing:.06em}
-.pick{display:flex; flex-wrap:wrap; gap:4px; padding:4px; border-radius:24px; background:rgba(8,4,28,.40); border:1px solid rgba(255,255,255,.14);
+.pick{display:flex; flex-wrap:wrap; gap:4px; padding:4px; border-radius:24px; background:var(--tint-2); border:1px solid var(--control-border-soft);
   width:fit-content; max-width:100%}
 .pick .opt{min-height:40px; padding:0 16px; border-radius:20px; border:0; background:transparent; color:var(--fg-2);
   font:600 var(--t-14) var(--f-ui); white-space:nowrap; cursor:pointer; transition:background .15s, color .15s; flex:1 1 auto}
@@ -588,8 +750,8 @@ button.bay.soon:hover{border-color:rgba(120,150,255,.45)}
    one under the other where they do not: two columns of "Abliterated NVFP4 · edp1096" (224 px) ran 45 px off a 390 px
    phone (the click storm of the CI, 2026-11-08) */
 .pick:has(> .opt:nth-child(4)){display:grid; grid-template-columns:repeat(auto-fit, minmax(min(100%, 240px), 1fr)); width:100%}
-.pick .opt:hover{color:var(--fg-1); background:rgba(255,255,255,.08)}
-.pick .opt[aria-checked="true"]{color:var(--brand-ink); background:#fff}
+.pick .opt:hover{color:var(--fg-1); background:var(--control-bg)}
+.pick .opt[aria-checked="true"]{color:var(--primary-ink); background:var(--primary-bg)}
 /* the version that serves now carries a small green dot */
 .pick .opt.served::after{content:''; display:inline-block; width:7px; height:7px; margin-left:8px; border-radius:50%; vertical-align:middle;
   background:var(--ok); box-shadow:0 0 8px var(--ok)}
@@ -615,8 +777,8 @@ button.bay.soon:hover{border-color:rgba(120,150,255,.45)}
 .timeline .dot.cool{background:var(--mem)}
 .timeline .m{color:var(--fg-1)}
 .timeline .m small{display:block; color:var(--fg-3); font-size:var(--t-12)}
-.vitals{display:grid; grid-template-columns:repeat(6, minmax(0,1fr)); gap:0; border-radius:var(--r-panel); border:1px solid rgba(255,255,255,.12); overflow:hidden;
-  background:linear-gradient(180deg, rgba(255,255,255,.075), rgba(255,255,255,.04));
+.vitals{display:grid; grid-template-columns:repeat(6, minmax(0,1fr)); gap:0; border-radius:var(--r-panel); border:1px solid var(--surface-border); overflow:hidden;
+  background:var(--surface);
   box-shadow:var(--shadow-1)}
 .vital{padding:var(--s-4); display:flex; flex-direction:column; gap:4px; background:var(--ink-1)}
 .vital + .vital{border-left:1px solid var(--rule-1)}
@@ -631,21 +793,21 @@ button.bay.soon:hover{border-color:rgba(120,150,255,.45)}
 .journey li{display:grid; grid-template-columns:34px 1fr; gap:var(--s-3); align-items:start}
 .journey .n{width:34px; height:34px; border-radius:50%; display:grid; place-items:center; font-weight:680;
   border:1px solid var(--rule-3); color:var(--fg-2); background:var(--ink-1); font-size:var(--t-14)}
-.journey li.run .n{border-color:var(--warn); color:#ffe2a3; box-shadow:0 0 0 4px color-mix(in srgb, var(--warn) 18%, transparent); animation:breathe 1.6s ease-in-out infinite}
-.journey li.done .n{background:var(--ok); color:#052e16; border-color:transparent}
-.journey li.fail .n{background:var(--bad); color:#2a0b08; border-color:transparent}
+.journey li.run .n{border-color:var(--warn); color:var(--journey-run-ink); box-shadow:0 0 0 4px color-mix(in srgb, var(--warn) 18%, transparent); animation:breathe 1.6s ease-in-out infinite}
+.journey li.done .n{background:var(--journey-done-bg); color:var(--journey-done-ink); border-color:transparent}
+.journey li.fail .n{background:var(--journey-fail-bg); color:var(--journey-fail-ink); border-color:transparent}
 .journey li.skip{opacity:.5}
 .journey .t{font-weight:600; padding-top:5px}
 .journey .d{font-size:var(--t-13); color:var(--fg-2); margin-top:2px}
 .journey .cmd{margin-top:var(--s-2)}
 
 /* ── sheet: every action asks first and shows its exact command ── */
-.scrim{position:fixed; inset:0; z-index:80; background:rgba(6,3,22,.66); backdrop-filter:blur(3px); -webkit-backdrop-filter:blur(3px);
+.scrim{position:fixed; inset:0; z-index:80; background:var(--scrim); backdrop-filter:blur(3px); -webkit-backdrop-filter:blur(3px);
   display:flex; align-items:center; justify-content:center;
   padding:max(var(--s-4), var(--sa-t)) max(var(--s-4), var(--sa-r)) max(var(--s-4), var(--sa-b)) max(var(--s-4), var(--sa-l)); animation:fade .2s ease both}
 @keyframes fade{from{opacity:0}}
 /* the image viewer: the picture over the whole window, fitted or at its own pixels */
-.scrim.viewer{padding:0; background:rgba(2,2,3,.94); display:block}
+.scrim.viewer{padding:0; background:var(--viewer-scrim); display:block}
 /* one track the size of the pane's box, so that the picture's 100 % caps resolve against it
    (an auto track takes the picture's own size, and a portrait ran off the window) */
 .viewer-pane{position:absolute; inset:0; overflow:auto; display:grid; grid-template:minmax(0, 1fr) / minmax(0, 1fr); place-items:center;
@@ -655,29 +817,29 @@ button.bay.soon:hover{border-color:rgba(120,150,255,.45)}
 .viewer-pane.actual{place-items:safe center}
 .viewer-pane.actual img{max-width:none; max-height:none}
 .viewer-bar{position:absolute; top:max(var(--s-3), var(--sa-t)); right:max(var(--s-3), var(--sa-r)); display:flex;
-  gap:var(--s-2); align-items:center; padding:var(--s-2); border-radius:var(--r-chip); background:rgba(0,0,0,.6)}
+  gap:var(--s-2); align-items:center; padding:var(--s-2); border-radius:var(--r-chip); background:var(--viewer-bar)}
 .viewer-bar .aside{padding:0 var(--s-2); color:var(--fg-2); font-variant-numeric:tabular-nums}
 .sheet{width:min(640px, 100%); max-height:calc(100dvh - 32px - var(--sa-t) - var(--sa-b)); overflow:auto; border-radius:var(--r-hero); border:1px solid var(--rule-2);
-  background:linear-gradient(180deg, var(--raised-hi), var(--raised)); box-shadow:0 40px 120px -30px rgba(0,0,0,.95), var(--shadow-1);
+  background:linear-gradient(180deg, var(--raised-hi), var(--raised)); box-shadow:var(--shadow-sheet), var(--shadow-1);
   padding:var(--s-6); display:flex; flex-direction:column; gap:var(--s-4); animation:pop .28s var(--ease) both}
 @keyframes pop{from{opacity:0; transform:translateY(10px) scale(.985)}}
 .sheet h2{font-size:var(--t-24); font-weight:640; line-height:1.2}
 .sheet .lede{color:var(--fg-2); white-space:pre-line}
 .sheet .warns{display:flex; flex-direction:column; gap:var(--s-2)}
-.sheet .warns p{display:grid; grid-template-columns:auto 1fr; gap:var(--s-2); font-size:var(--t-14); color:#ffe2a3;
+.sheet .warns p{display:grid; grid-template-columns:auto 1fr; gap:var(--s-2); font-size:var(--t-14); color:var(--warn-ink);
   padding:var(--s-3); border-radius:var(--r-ctl); background:color-mix(in srgb, var(--warn) 9%, transparent);
   border:1px solid color-mix(in srgb, var(--warn) 32%, transparent)}
 .sheet .warns p::before{content:''; width:8px; height:8px; border-radius:50%; background:var(--warn); margin-top:6px}
 .sheet .foot{display:flex; justify-content:flex-end; gap:var(--s-2); flex-wrap:wrap; margin-top:var(--s-2)}
 .sheet .status{font-size:var(--t-13); color:var(--fg-2); margin-right:auto; align-self:center}
-.sheet .status.err{color:#ffb2a9}
+.sheet .status.err{color:var(--err-ink)}
 .sheet .cmd-lbl{font-size:var(--t-12); color:var(--fg-3); margin-bottom:-8px}
 
 /* ── dock: the job that is running, from every view and every browser ── */
 .dock{position:fixed; right:calc(var(--s-5) + var(--sa-r)); bottom:calc(var(--s-5) + var(--sa-b)); z-index:60;
   width:min(440px, calc(100vw - 32px - var(--sa-l) - var(--sa-r))); border-radius:var(--r-panel);
   border:1px solid var(--rule-2); background:color-mix(in srgb, var(--raised) 94%, transparent); backdrop-filter:blur(16px);
-  -webkit-backdrop-filter:blur(16px); box-shadow:0 30px 80px -30px rgba(0,0,0,.9); overflow:hidden; animation:pop .3s var(--ease) both}
+  -webkit-backdrop-filter:blur(16px); box-shadow:var(--shadow-dock); overflow:hidden; animation:pop .3s var(--ease) both}
 .dock .close{width:36px; height:36px}
 .dock .row{display:flex; align-items:center; gap:var(--s-3); padding:var(--s-3) var(--s-4)}
 .dock .what{flex:1; min-width:0}
@@ -692,7 +854,7 @@ button.bay.soon:hover{border-color:rgba(120,150,255,.45)}
 .toasts{position:fixed; left:50%; bottom:calc(var(--s-5) + var(--sa-b)); transform:translateX(-50%); z-index:90; display:flex; flex-direction:column; gap:var(--s-2);
   align-items:center; pointer-events:none; width:min(560px, calc(100vw - 32px))}
 .toast{pointer-events:auto; padding:11px 16px; border-radius:12px; border:1px solid var(--rule-2); background:var(--raised-hi);
-  box-shadow:0 18px 50px -18px rgba(0,0,0,.9); font-size:var(--t-14); animation:pop .25s var(--ease) both; max-width:100%}
+  box-shadow:var(--shadow-toast); font-size:var(--t-14); animation:pop .25s var(--ease) both; max-width:100%}
 .toast.ok{border-color:color-mix(in srgb, var(--ok) 50%, transparent)}
 .toast.warn{border-color:color-mix(in srgb, var(--warn) 50%, transparent)}
 .toast.err{border-color:color-mix(in srgb, var(--bad) 55%, transparent)}
@@ -704,7 +866,7 @@ button.bay.soon:hover{border-color:rgba(120,150,255,.45)}
 .composer .group:first-child{border-top:0; padding-top:0}
 .composer .group > h3{font-size:var(--t-13); font-weight:600; color:var(--fg-2)}
 .examples{display:flex; flex-wrap:wrap; gap:var(--s-2)}
-.examples button{border:1px solid var(--rule-2); background:rgba(8,4,28,.35); color:var(--fg-2); border-radius:var(--r-chip);
+.examples button{border:1px solid var(--rule-2); background:var(--tint-1); color:var(--fg-2); border-radius:var(--r-chip);
   padding:5px 12px; font-size:var(--t-13); transition:border-color .15s, color .15s}
 .examples button:hover{color:var(--fg-1); border-color:var(--rule-3)}
 .examples button[aria-pressed="true"]{border-color:color-mix(in srgb, var(--brand) 55%, transparent); color:var(--brand-hi)}
@@ -722,9 +884,9 @@ button.bay.soon:hover{border-color:rgba(120,150,255,.45)}
    height at most through the max-width the script derives from the ratio, centred */
 .screen.fit{width:100%; align-self:center}
 .screen.fit img{cursor:zoom-in}
-.screen .empty{display:flex; flex-direction:column; align-items:center; gap:var(--s-3); color:var(--fg-3); text-align:center; padding:var(--s-6)}
-.screen .empty svg{width:56px; height:56px; stroke:var(--rule-3); fill:none; stroke-width:1.2}
-.screen .empty b{color:var(--fg-2); font-weight:560; font-size:var(--t-17)}
+.screen .empty{display:flex; flex-direction:column; align-items:center; gap:var(--s-3); color:var(--stage-3); text-align:center; padding:var(--s-6)}
+.screen .empty svg{width:56px; height:56px; stroke:var(--stage-track); fill:none; stroke-width:1.2}
+.screen .empty b{color:var(--stage-1); font-weight:560; font-size:var(--t-17)}
 .screen .scan{position:absolute; inset:0; background:
   linear-gradient(180deg, transparent, color-mix(in srgb, var(--brand) 7%, transparent) 50%, transparent);
   background-size:100% 220%; animation:scan 3.2s linear infinite; pointer-events:none}
@@ -736,7 +898,7 @@ button.bay.soon:hover{border-color:rgba(120,150,255,.45)}
 .progress-card .eta{font-size:var(--t-14); color:var(--fg-2); font-variant-numeric:tabular-nums}
 .phases{display:flex; gap:var(--s-2); flex-wrap:wrap}
 .phases span{display:inline-flex; align-items:center; gap:6px; font-size:var(--t-12); color:var(--fg-3); padding:3px 10px; border-radius:var(--r-chip); border:1px solid var(--rule-1);
-  background:rgba(8,4,28,.35)}
+  background:var(--tint-1)}
 .phases span::before{content:''; width:6px; height:6px; border-radius:50%; background:var(--rule-3)}
 .phases span.done{color:var(--fg-2)}
 .phases span.done::before{background:var(--ok)}
@@ -745,7 +907,7 @@ button.bay.soon:hover{border-color:rgba(120,150,255,.45)}
 .gallery{display:grid; grid-template-columns:repeat(auto-fill, minmax(150px, 1fr)); gap:var(--s-3)}
 .gallery button{padding:0; border:1px solid var(--rule-2); border-radius:12px; overflow:hidden; background:#050506; aspect-ratio:16 / 9; position:relative}
 .gallery button img{width:100%; height:100%; object-fit:cover}
-.gallery button span{position:absolute; left:6px; bottom:6px; font-size:var(--t-12); padding:1px 7px; border-radius:var(--r-chip); background:rgba(0,0,0,.65)}
+.gallery button span{position:absolute; left:6px; bottom:6px; font-size:var(--t-12); padding:1px 7px; border-radius:var(--r-chip); background:rgba(0,0,0,.65); color:var(--overlay-ink)}
 .gallery button[aria-pressed="true"]{border-color:var(--brand)}
 .dropzone{display:flex; flex-direction:column; align-items:center; justify-content:center; gap:var(--s-2); min-height:120px;
   border:1.5px dashed var(--rule-3); border-radius:var(--r-ctl); background:var(--ink-0); color:var(--fg-3); font-size:var(--t-13);
@@ -760,14 +922,14 @@ button.bay.soon:hover{border-color:rgba(120,150,255,.45)}
 .ring{position:relative; width:min(46%, 260px); aspect-ratio:1; display:grid; place-items:center}
 .ring svg{position:absolute; inset:0; width:100%; height:100%; transform:rotate(-90deg)}
 .ring circle{fill:none; stroke-width:6}
-.ring .track{stroke:var(--ink-3)}
+.ring .track{stroke:var(--stage-track)}
 .ring .fill{stroke:url(#ringg); stroke-linecap:round; transition:stroke-dashoffset 1s var(--ease)}
 .ring.indet .fill{animation:spin 1.6s linear infinite; transform-origin:50% 50%}
 @keyframes spin{to{transform:rotate(360deg)}}
 .ring .in{display:flex; flex-direction:column; align-items:center; gap:2px; text-align:center; z-index:1}
-.ring .in b{font-size:var(--t-38); font-weight:620; font-variant-numeric:tabular-nums; line-height:1}
-.ring .in span{font-size:var(--t-13); color:var(--fg-2)}
-.screen .worklab{position:absolute; left:0; right:0; bottom:18px; text-align:center; color:var(--fg-2); font-size:var(--t-14); padding:0 var(--s-5)}
+.ring .in b{color:var(--stage-1); font-size:var(--t-38); font-weight:620; font-variant-numeric:tabular-nums; line-height:1}
+.ring .in span{font-size:var(--t-13); color:var(--stage-2)}
+.screen .worklab{position:absolute; left:0; right:0; bottom:18px; text-align:center; color:var(--stage-2); font-size:var(--t-14); padding:0 var(--s-5)}
 
 /* System One answers */
 .answer{padding:var(--s-4) 0; border-top:1px solid var(--rule-1)}
@@ -798,7 +960,7 @@ body:not(.agentmax) .agentframe.mounted.fitted{height:var(--agh); min-height:0} 
 .agentframe:not(.mounted){height:auto; min-height:220px}
 .agentframe iframe{width:100%; height:100%; border:0; display:block; background:#0a0a0b}
 .agentframe .msg{position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:var(--s-3);
-  padding:var(--s-6); text-align:center; color:var(--fg-2)}
+  padding:var(--s-6); text-align:center; color:var(--stage-2)}
 /* the frame covers the whole screen and opencode inside it keeps to the safe area: a frame
    gets no safe-area inset of its own, so its composer sat under the home indicator */
 body.agentmax .agentframe{position:fixed; inset:0; z-index:70; border-radius:0; height:var(--vvh, 100dvh); top:var(--vvtop, 0); border:0;
@@ -854,9 +1016,9 @@ body.agentmax .view{animation:none}
      scrolled and its last items sat below the screen, out of reach. */
   .rail{position:fixed; top:var(--head); left:0; bottom:0; z-index:65; width:min(300px, 86vw); height:auto; align-self:normal; background:var(--raised);
     transform:translateX(-102%); visibility:hidden; transition:transform .3s var(--ease), visibility 0s linear .3s;
-    box-shadow:30px 0 80px -30px rgba(0,0,0,.9)}
+    box-shadow:var(--shadow-drawer)}
   body.railopen .rail{transform:none; visibility:visible; transition:transform .3s var(--ease)}
-  body.railopen::after{content:''; position:fixed; inset:var(--head) 0 0 0; z-index:64; background:rgba(6,3,22,.55)}
+  body.railopen::after{content:''; position:fixed; inset:var(--head) 0 0 0; z-index:64; background:var(--drawer-veil)}
   .rail .collapse{display:none}
   .serving{max-width:none}
   /* the family and its state: the whole name pushed "ready" out, on phones and on a tablet upright too (820 px read

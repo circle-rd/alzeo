@@ -73,15 +73,28 @@ void main(){
     if (!once) raf = requestAnimationFrame(frame);
   }
   function start(){ if (dead) return; size(); if (!raf) raf = requestAnimationFrame(frame); }
+  // The halos belong to the indigo ground. The other themes draw their own light in CSS,
+  // and this stops asking for frames while they are up; the canvas stays for the way back.
+  function halos(){ return (document.documentElement.dataset.theme || 'indigo') === 'indigo'; }
+  function sync(){
+    if (!halos()){
+      if (raf) cancelAnimationFrame(raf);
+      raf = 0;
+      document.documentElement.classList.remove('has-backdrop');
+      return;
+    }
+    document.documentElement.classList.add('has-backdrop');
+    start();
+  }
+  window.cockpitBackdrop = {sync};
   // a new size clears the canvas: it is drawn again at once, not at the next frame's turn
-  window.addEventListener('resize', () => { if (dead) return; size(); draw(performance.now()); });
-  document.addEventListener('visibilitychange', () => { if (!document.hidden) start(); });
-  if (still && still.addEventListener) still.addEventListener('change', start);
+  window.addEventListener('resize', () => { if (dead || !halos()) return; size(); draw(performance.now()); });
+  document.addEventListener('visibilitychange', () => { if (!document.hidden && halos()) start(); });
+  if (still && still.addEventListener) still.addEventListener('change', () => { if (halos()) start(); });
   // a lost context (the GPU reset, the tab evicted) leaves the CSS light, never a reload
   canvas.addEventListener('webglcontextlost', () => {
     dead = true; if (raf) cancelAnimationFrame(raf); raf = 0;
     canvas.remove(); document.documentElement.classList.remove('has-backdrop');
   });
-  start();
-  document.documentElement.classList.add('has-backdrop');
+  sync();
 })();

@@ -111,13 +111,27 @@ the last point below is real: one job at a time. The design, as written:
   a registry; the UI renders from the registry. New engines/models = registry
   entries, not new UI code.
 
-## Palette (own identity, light+dark)
+## Palette (three themes, one set of roles)
 
-- Ink `#0b1020` / Paper `#f6f7fb` bases; accent `#5b8cff` (actions),
-  `#22c58b` (healthy), `#f2a93b` (warnings), `#e5484d` (danger),
-  `#8b5cf6` (flash lane), `#0ea5e9` (27B lane). Lane colors used consistently
-  everywhere a lane appears. Typography: system stack, tabular numerals for
-  metrics. Motion: 150-250 ms ease-out, no gratuitous animation.
+The stylesheet names roles (`--surface`, `--surface-border`, `--primary-bg`,
+`--field-bg`, `--code-bg`, `--reservoir-bg`, state colours, lane hues) and three
+theme blocks fill them. `data-theme` on `<html>` is the only switch.
+
+- **Deep indigo**, the default: `#170b38` ground, translucent white panels, violet
+  accent `#9a6bff`, and the two WebGL halos. This is the palette the cockpit
+  shipped with and the one an unset preference gets.
+- **Graphite**, dark: `#09090b` ground, `#111113` surfaces, cyan accent `#22d3ee`,
+  emerald, amber and red states. Flat surfaces, no halos, tighter panel radii.
+- **Paper**, light: `#f6f7fb` ground, white surfaces, cyan and teal accent
+  `#0e7490`, darker state colours for contrast on white. The same geometry as
+  Graphite, with quieter shadows and no halos.
+
+The choice is stored in this browser as `cockpit.theme`, applied before the page
+renders, and reflected in the `theme-color` meta tag. Text and state pairs meet
+WCAG AA on their surface in every theme; `dashboard/tests/test_page_theme.py`
+holds the roles and the measured pairs. Typography stays Geist and IBM Plex
+Mono, served by the box. Motion stays 150 to 250 ms ease-out, with no
+gratuitous animation.
 
 ## Phases
 
