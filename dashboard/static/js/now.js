@@ -62,7 +62,7 @@ function renderPool(){
   });
   $('seg-lane').classList.toggle('filling', !!(s && TRANSITIONAL.has(s[1].state)));
   // the lane's share of the pool in the lane's own hue
-  $('seg-lane').style.setProperty('--hue', s ? `var(--lane-${LANE_META[s[0]].lane})` : 'var(--lane-brand)');
+  $('seg-lane').style.setProperty('--hue', s ? `var(--lane-${LANE_META[s[0]].lane})` : 'var(--brand-lane)');
   $('floor').style.width = (100 * FLOOR() / p.total).toFixed(2) + '%';
   $('ticks').style.setProperty('--tick', (100 * 16 * GIB / p.total).toFixed(3) + '%');
   const scale = $('pool-scale');
@@ -74,7 +74,7 @@ function renderPool(){
   $('reservoir').setAttribute('aria-label', `Unified memory: ${fmtGiB(p.inUse)} in use of ${fmtGiB(p.total)}, ${fmtGiB(p.avail)} available`);
   const lg = $('pool-legend'); clear(lg);
   const item = (color, label, v) => { const sp = el('span'); const i = el('i'); i.style.background = color; sp.append(i, label + ' '); sp.append(el('b', null, v)); lg.append(sp); };
-  item(s ? `var(--lane-${LANE_META[s[0]].lane})` : 'var(--lane-brand)', laneName ? `${laneName}, GPU allocations` : 'lane, GPU allocations', fmtGiB(p.lane));
+  item(s ? `var(--lane-${LANE_META[s[0]].lane})` : 'var(--brand-lane)', laneName ? `${laneName}, GPU allocations` : 'lane, GPU allocations', fmtGiB(p.lane));
   item('var(--slate)', 'System and apps', fmtGiB(p.other));
   item('var(--steel)', 'Page cache', fmtGiB(p.cache));
   item('color-mix(in srgb, var(--ok) 45%, transparent)', 'Free', fmtGiB(p.free));
@@ -82,7 +82,7 @@ function renderPool(){
   // the spine's gauge
   setText('minipool-v', `${(p.avail / GIB).toFixed(1)} GiB free`);
   $('mp-used').style.width = (100 * p.inUse / p.total).toFixed(1) + '%';
-  $('mp-used').style.background = s ? `var(--lane-${LANE_META[s[0]].lane})` : 'var(--lane-brand)';
+  $('mp-used').style.background = s ? `var(--lane-${LANE_META[s[0]].lane})` : 'var(--brand-lane)';
   $('mp-cache').style.width = (100 * p.cache / p.total).toFixed(1) + '%';
   $('mp-free').style.width = (100 * p.free / p.total).toFixed(1) + '%';
 }

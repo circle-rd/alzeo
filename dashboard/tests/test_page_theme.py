@@ -23,7 +23,9 @@ THEMES = {
 }
 ROLES = ("--ink-0", "--rule-1", "--fg-1", "--brand", "--ok", "--warn", "--bad",
          "--surface", "--surface-border", "--primary-bg", "--primary-ink", "--primary-ink-soft",
-         "--field-bg", "--code-bg", "--reservoir-bg", "--mark-tile", "--overlay-ink", "--lane-brand", "--stage-1", "--stage-2", "--stage-3", "--scrim",
+         "--field-bg", "--code-bg", "--reservoir-bg", "--mark-tile", "--overlay-ink", "--brand-lane", "--seg-ink", "--stage-1", "--stage-2", "--stage-3", "--scrim",
+         "--backdrop-ground", "--backdrop-a", "--backdrop-b", "--bootbar-top", "--bootbar-bottom",
+         "--screen-bg", "--badge-sel-ink", "--badge-sel-border", "--badge-sel-edge",
          "--tick-ink", "--spark-grid", "--r-panel")
 
 
@@ -59,8 +61,8 @@ def rgba(value):
     return int(r), int(g), int(b), float(a)
 
 
-def halo_peak(theme):
-    """The ground under the text where both halos lie at full strength, as one hex colour."""
+def gradient_peak(theme):
+    """The ground under the text where both gradients lie at full strength, as one hex colour."""
     base = [int(c * 255) for c in hex_rgb(token(theme, "--ground"))]
     for name in ("--ground-a", "--ground-b"):
         r, g, b, a = rgba(token(theme, name))
@@ -168,15 +170,15 @@ class EveryThemeAnswersWithItsWholePalette(unittest.TestCase):
                 self.assertGreaterEqual(contrast(token(theme, fg), token(theme, bg)), 4.5,
                                         "%s %s on %s" % (theme, fg, bg))
 
-    def test_text_meets_aa_where_the_halos_lie(self):
+    def test_text_meets_aa_on_the_gradient_peak(self):
         for theme in ("graphite", "paper"):
-            peak = halo_peak(theme)
+            peak = gradient_peak(theme)
             for fg in ("--fg-1", "--fg-2", "--fg-3"):
                 with self.subTest(theme=theme, fg=fg):
                     self.assertGreaterEqual(contrast(token(theme, fg), peak), 4.5,
-                                            "%s %s on the halo peak %s" % (theme, fg, peak))
+                                            "%s %s on the gradient peak %s" % (theme, fg, peak))
 
-    def test_the_halos_are_the_indigo_gradient_in_every_theme(self):
+    def test_the_ground_gradient_is_the_indigo_one_in_every_theme(self):
         shape = re.search(r"body::before\{.*?\n.*?\}", CSS, re.S).group(0)
         self.assertIn("var(--ground-a)", shape)
         self.assertIn("var(--ground-b)", shape)
@@ -218,6 +220,150 @@ class TheThemeIsAnEntryOfTheCockpitPanel(unittest.TestCase):
         self.assertTrue(panel.group(1).rstrip().endswith("</dd>"))
         self.assertEqual(re.findall(r"<dt>(?:<label[^>]*>)?([^<]+)", panel.group(1))[-1], "Theme")
         self.assertNotIn("Appearance", html)
+
+
+class TheThemesDidNotMoveTheDefault(unittest.TestCase):
+    """The theming branch changed four indigo rules, resolved rule by rule against
+    main: the empty screen's stroke and word, the gallery's caption and the ring's
+    figure. The default theme is the page the cockpit shipped with, so those four
+    stay the rules they were."""
+
+    def test_the_four_rules_the_branch_had_moved(self):
+        rules = {
+            r".screen \.empty svg": "stroke:var(--rule-3)",
+            r".screen \.empty b": "color:var(--fg-2)",
+            r".gallery button span": "background:rgba(0,0,0,.65)",
+            r".ring \.in b": "font-weight:620",
+        }
+        for rule, want in rules.items():
+            with self.subTest(rule=rule):
+                body = re.search(rule + r"\{([^}]*)\}", CSS).group(1)
+                self.assertIn(want, body)
+        for rule in (r".gallery button span", r".ring \.in b"):
+            with self.subTest(rule=rule):
+                self.assertNotIn("color:", re.search(rule + r"\{([^}]*)\}", CSS).group(1))
+
+
+class TheSoonCardKeepsItsWordsOnTheArt(unittest.TestCase):
+    """Qwen4's card draws a dark picture under its words. In Paper the veil is
+    light, so the chip, which sits over the art and not under the veil, needed its
+    own dark ground, and the veil had to hold over the width its words use."""
+
+    def test_the_chip_has_its_own_ground_in_every_theme(self):
+        self.assertIn("background:var(--art-chip-bg)", CSS)
+        self.assertIn("color:var(--art-chip-ink)", CSS)
+        for theme in THEMES:
+            with self.subTest(theme=theme):
+                self.assertIsNotNone(token(theme, "--art-chip-bg"))
+                self.assertIsNotNone(token(theme, "--art-chip-ink"))
+        r, g, b, a = rgba(token("paper", "--art-chip-bg"))
+        self.assertGreaterEqual(a, .6, "paper's chip ground is too thin over the picture")
+        self.assertEqual(token("paper", "--art-chip-ink"), "#ffffff")
+
+    def test_paper_holds_its_veil_over_the_words(self):
+        paper = re.search(r':root\[data-theme="paper"\] \.bay\.soon[^}]*\{([^}]*)\}', CSS, re.S).group(1)
+        self.assertIn("var(--bay-veil-b) 62%", paper)
+        self.assertIn("var(--bay-veil-c) 88%", paper)
+        self.assertGreaterEqual(rgba(token("paper", "--bay-veil-b"))[3], .8)
+        self.assertGreaterEqual(rgba(token("paper", "--bay-veil-c"))[3], .3)
+
+
+class TheOtherThemesKeepTheIndigoGradientInTheirOwnGreys(unittest.TestCase):
+    """Graphite and Paper take the indigo ground's radial gradient, not bubbles
+    of another colour: black into dark grey, white into light grey."""
+
+    def test_their_gradient_is_a_neutral_grey(self):
+        for theme in ("graphite", "paper"):
+            for name in ("--ground-a", "--ground-b", "--backdrop-a", "--backdrop-b"):
+                with self.subTest(theme=theme, name=name):
+                    r, g, b, a = rgba(token(theme, name))
+                    self.assertLessEqual(max(r, g, b) - min(r, g, b), 4,
+                                         "%s %s is not a neutral grey" % (theme, name))
+            # the CSS light under the canvas is the same light the shader draws
+            for name in ("--backdrop-a", "--backdrop-b"):
+                with self.subTest(theme=theme, name=name, fallback=True):
+                    self.assertEqual(token(theme, name), token(theme, name.replace("--backdrop", "--ground")))
+
+
+class TheBackdropRunsInEveryTheme(unittest.TestCase):
+    """The moving halos are the cockpit's ground, not an indigo decoration: each
+    theme gives the shader its own ground and two halo colours, and no theme hides
+    the canvas and leaves a still gradient behind."""
+
+    def test_every_theme_feeds_the_shader(self):
+        for theme in THEMES:
+            for name in ("--backdrop-ground", "--backdrop-a", "--backdrop-b"):
+                with self.subTest(theme=theme, name=name):
+                    self.assertIsNotNone(token(theme, name))
+        js = (DASH / "static" / "js" / "backdrop.js").read_text()
+        for name in ("--backdrop-ground", "--backdrop-a", "--backdrop-b"):
+            self.assertIn(name, js)
+        self.assertNotIn(':root[data-theme="graphite"] #backdrop', CSS)
+        self.assertNotIn(':root[data-theme="paper"] #backdrop', CSS)
+
+
+class TheBootBarsFollowTheTheme(unittest.TestCase):
+    """The boot history is a small gradient chart in each lane card. Indigo takes
+    its violet brand, while graphite and paper take the dominant neutral of their
+    room, not their cyan or teal accent."""
+
+    def resolved(self, theme, name):
+        value = token(theme, name)
+        m = re.fullmatch(r"var\((--[\w-]+)\)", value.strip())
+        return token(theme, m.group(1)) if m else value
+
+    def test_the_boot_history_takes_the_theme_gradient(self):
+        js = (DASH / "static" / "js" / "lanes.js").read_text()
+        self.assertIn("var(--bootbar-top)", js)
+        self.assertIn("var(--bootbar-bottom)", js)
+        for theme in THEMES:
+            for name in ("--bootbar-top", "--bootbar-bottom"):
+                with self.subTest(theme=theme, name=name):
+                    self.assertIsNotNone(token(theme, name))
+
+    def test_graphite_and_paper_take_their_dominant_grey(self):
+        for theme in ("graphite", "paper"):
+            for name in ("--bootbar-top", "--bootbar-bottom"):
+                with self.subTest(theme=theme, name=name):
+                    self.assertNotIn("--brand", token(theme, name))
+                    value = self.resolved(theme, name)
+                    self.assertRegex(value, r"^#[0-9a-f]{6}$")
+                    r, g, b = hex_rgb(value)
+                    self.assertLessEqual(max(r, g, b) - min(r, g, b), 4,
+                                         "%s %s is not a neutral grey" % (theme, name))
+        self.assertIn("--brand", token("indigo", "--bootbar-top"))
+        self.assertIn("--brand", token("indigo", "--bootbar-bottom"))
+
+
+class TheStudioFollowsTheTheme(unittest.TestCase):
+    """Image and Video: the result well used to keep an indigo background, and the
+    selected example/reference badges were outlined in the accent. The badges keep
+    the outline, but graphite and paper draw it in their inverse (the primary)
+    colour, as the solid primary buttons already do."""
+
+    def test_the_result_well_is_a_theme_role(self):
+        self.assertIn("background:var(--screen-bg)", CSS)
+        self.assertNotIn("background:#0b0720", CSS)
+        self.assertEqual(token("indigo", "--screen-bg"), "#0b0720")
+        for theme in THEMES:
+            with self.subTest(theme=theme):
+                self.assertIsNotNone(token(theme, "--screen-bg"))
+
+    def test_the_selected_badges_keep_an_outline_in_the_inverse_colour(self):
+        self.assertIn("border-color:var(--badge-sel-border)", CSS)
+        self.assertIn("color:var(--badge-sel-ink)", CSS)
+        self.assertIn("border-color:var(--badge-sel-edge)", CSS)
+        for theme in THEMES:
+            for name in ("--badge-sel-ink", "--badge-sel-border", "--badge-sel-edge"):
+                with self.subTest(theme=theme, name=name):
+                    self.assertIsNotNone(token(theme, name))
+        for theme in ("graphite", "paper"):
+            for name in ("--badge-sel-ink", "--badge-sel-border", "--badge-sel-edge"):
+                with self.subTest(theme=theme, name=name, inverse=True):
+                    self.assertIn("--primary-bg", token(theme, name))
+        for name in ("--badge-sel-ink", "--badge-sel-border", "--badge-sel-edge"):
+            with self.subTest(theme="indigo", name=name):
+                self.assertIn("--brand", token("indigo", name))
 
 
 if __name__ == "__main__":

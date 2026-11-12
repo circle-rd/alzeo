@@ -73,7 +73,7 @@ function bootChart(box, e, unit){
   if (!boots.length){ box.append(el('p', 'help', 'No boot of this lane seen by the cockpit yet: estimates use the reference box.')); return; }
   const wrap = el('div'); wrap.style.cssText = 'display:flex; align-items:flex-end; gap:6px; height:54px';
   const mx = Math.max(...boots, READY_DEFAULT[unit] || 0);
-  boots.forEach(b => { const bar = el('span'); bar.title = fmtDur(b); bar.style.cssText = `flex:0 0 18px; border-radius:4px 4px 2px 2px; height:${Math.max(6, 50 * b / mx).toFixed(0)}px; background:linear-gradient(180deg, var(--brand-hi), var(--brand-lo)); opacity:.85`; wrap.append(bar); });
+  boots.forEach(b => { const bar = el('span'); bar.title = fmtDur(b); bar.style.cssText = `flex:0 0 18px; border-radius:4px 4px 2px 2px; height:${Math.max(6, 50 * b / mx).toFixed(0)}px; background:linear-gradient(180deg, var(--bootbar-top), var(--bootbar-bottom)); opacity:.85`; wrap.append(bar); });
   // one boot is said in the singular, with no median of one beside it
   const lab = el('p', 'help'); lab.textContent = boots.length === 1 ? `Last boot: ${fmtDur(boots[0])}.`
     : `Last ${boots.length} boots: ${boots.map(fmtDur).join(', ')}. Median ${fmtDur(bootSeconds(unit))}.`;

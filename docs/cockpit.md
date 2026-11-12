@@ -89,10 +89,11 @@ marks and scripts are all served by the box: the page fetches nothing from elsew
 
 Settings, in the Cockpit panel, has a Theme choice with three themes: Deep indigo, the default;
 Graphite, a near-black room with a cyan accent and flat surfaces; and Paper, the same room in
-daylight. Graphite and Paper keep the indigo's two halos of light, in their own accent colour.
-The choice is kept in this browser, like the rail, and changes the tokens, the meta
-theme-color and the backdrop together. No theme comes from the network and no server state
-follows it: two browsers on the same box may show different themes.
+daylight. Graphite and Paper keep the indigo's two moving halos, in neutral greys (black into
+dark grey, white into light grey). The choice is kept in this browser, like the rail, and
+changes the tokens, the meta theme-color and the backdrop together. No theme comes from the
+network and no server state follows it: two browsers on the same box may show different
+themes.
 
 ## What it does that a terminal does not
 

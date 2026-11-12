@@ -115,16 +115,20 @@ the last point below is real: one job at a time. The design, as written:
 
 The stylesheet names roles (`--surface`, `--surface-border`, `--primary-bg`,
 `--field-bg`, `--code-bg`, `--reservoir-bg`, state colours, lane hues) and three
-theme blocks fill them. `data-theme` on `<html>` is the only switch.
+theme blocks fill them. `data-theme` on `<html>` is the only switch. The lane
+hues are the lanes' identity, not a theme role: they are the same in every
+theme.
 
 - **Deep indigo**, the default: `#170b38` ground, translucent white panels, violet
   accent `#9a6bff`, and the two WebGL halos. This is the palette the cockpit
   shipped with and the one an unset preference gets.
 - **Graphite**, dark: `#09090b` ground, `#111113` surfaces, cyan accent `#22d3ee`,
-  emerald, amber and red states. Flat surfaces, no halos, tighter panel radii.
+  emerald, amber and red states. Flat surfaces, tighter panel radii, and the
+  indigo's two moving halos in neutral greys (black into dark grey).
 - **Paper**, light: `#f6f7fb` ground, white surfaces, cyan and teal accent
   `#0e7490`, darker state colours for contrast on white. The same geometry as
-  Graphite, with quieter shadows and no halos.
+  Graphite, with quieter shadows and the indigo's two moving halos in neutral
+  greys (white into light grey).
 
 The choice is stored in this browser as `cockpit.theme`, applied before the page
 renders, and reflected in the `theme-color` meta tag. Text and state pairs meet

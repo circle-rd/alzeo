@@ -2330,7 +2330,7 @@ class EachLaneWearsItsMakersMark(unittest.TestCase):
         # the mark is decoration beside the lane's name: no alt text to read twice
         self.assertEqual(set(r["alts"]), {""})
         self.assertEqual(set(r["hidden"]), {"true"})
-        self.assertEqual(r["none"], {"mark": None, "hue": "var(--lane-brand)", "gauge": "var(--lane-brand)"})
+        self.assertEqual(r["none"], {"mark": None, "hue": "var(--brand-lane)", "gauge": "var(--brand-lane)"})
         self.assertEqual(r["flash"], {"mark": "qwen.svg", "hue": "var(--lane-flash)", "gauge": "var(--lane-flash)"})
         self.assertEqual(r["video"], {"mark": "minimax.svg", "hue": "var(--lane-video)", "gauge": "var(--lane-video)"})
 
