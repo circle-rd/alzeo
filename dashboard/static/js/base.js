@@ -1237,7 +1237,7 @@ function drawSpark(canvas, name, color, yMax, opts = {}){
   const c = canvas.getContext('2d'); if (!c) return;
   c.setTransform(dpr, 0, 0, dpr, 0, 0); c.clearRect(0, 0, w, h);
   const data = SERIES[name] || [];
-  c.strokeStyle = 'rgba(255,255,255,.06)'; c.lineWidth = 1;
+  c.strokeStyle = cssVar('--spark-grid') || 'rgba(255,255,255,.06)'; c.lineWidth = 1;
   [0.25, 0.5, 0.75].forEach(f => { c.beginPath(); c.moveTo(0, Math.round(h * f) + .5); c.lineTo(w, Math.round(h * f) + .5); c.stroke(); });
   if (data.length < 2){ c.fillStyle = cssVar('--fg-3'); c.font = '12px Geist, system-ui'; c.textAlign = 'center'; c.fillText(opts.empty || 'collecting…', w / 2, h / 2 + 4); return; }
   const m = yMax || Math.max(...data, 1e-9);

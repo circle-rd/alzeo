@@ -6,6 +6,7 @@
 <meta name="description" content="The control room of one DGX Spark: one pool of unified memory, the lanes that take turns in it, and the tools that run on them.">
 <meta name="theme-color" content="#170b38">
 <title>Alzeo cockpit</title>
+<script src="/static/js/theme.js"></script>
 <link rel="icon" href="/static/favicon.svg">
 <link rel="stylesheet" href="/static/css/cockpit.css">
 </head>
@@ -620,6 +621,18 @@
         <div class="vhead-title"><h1 id="h-settings">Settings</h1><p>The repo this box runs, the agent CLI's limits, and the cockpit itself.</p></div>
       </div>
       <div class="grid g2">
+        <section class="panel">
+          <header><h2>Appearance</h2><span class="aside">this browser</span></header>
+          <div class="field">
+            <label for="theme-select">Theme</label>
+            <select class="input" id="theme-select">
+              <option value="indigo">Deep indigo (default)</option>
+              <option value="graphite">Graphite (dark)</option>
+              <option value="paper">Paper (light)</option>
+            </select>
+            <p class="help">Every view follows it, and this browser remembers it.</p>
+          </div>
+        </section>
         <section class="panel" data-src="opencode">
           <header><h2>opencode</h2><span class="cap" id="oc-cap">…</span></header>
           <dl class="facts">
