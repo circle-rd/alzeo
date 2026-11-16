@@ -1158,6 +1158,9 @@ body.agentmax .view{animation:none}
   .btn.sm{min-width:44px}
   .brand{min-height:44px; min-width:44px}
   .serving{min-height:44px}
+  .copy-icon, .copy-icon.copy-inline{width:44px; height:44px}
+  .copy-icon{top:0; right:0}
+  .copy-field > .cmd, .copy-field > .logview{min-height:44px}
   input[type=range]{height:44px}
   .switch{min-height:44px}
   .switch input{width:44px; height:26px}

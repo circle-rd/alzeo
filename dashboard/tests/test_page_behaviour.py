@@ -928,6 +928,35 @@ class TheTopBarCanEndTheSession(unittest.TestCase):
         self.assertEqual(r["asked"], [{"csrf": "t"}])
         self.assertEqual(r["href"], "/")
 
+    def test_a_refused_or_failed_logout_stays_on_the_page_and_says_so(self):
+        r = run(self, r"""
+        const out = {};
+        for (const [name, answer] of [['refused', () => __response(403, {error: 'csrf'})],
+                                      ['down', () => { throw new Error('network down'); }]]){
+          __fetch = async (url) => url === '/api/csrf' ? __response(200, {token: 't'}) : answer();
+          $('logoutbtn').click(); await __settle();
+          out[name] = {href: location.href, toast: [...$('toasts').children].map(t => t.textContent).pop()};
+        }
+        report(out);
+        """)
+        for name in ("refused", "down"):
+            with self.subTest(answer=name):
+                self.assertNotEqual(r[name]["href"], "/", "the session is still open: do not open the dashboard")
+                self.assertIn("Could not sign out", r[name]["toast"])
+
+
+class TheCopyIconsAreAFingerTarget(unittest.TestCase):
+    """The inline copy icon (28 px) out-ranked the coarse-pointer rule of .icon-btn, so under a
+    finger it stayed under the 44 px the cockpit asks for."""
+
+    def test_every_copy_icon_is_44_px_under_a_coarse_pointer(self):
+        coarse = [(s, d) for s, m, d in css_rules() if any("pointer:coarse" in c.replace(" ", "") for c in m)]
+        for sel in (".copy-icon", ".copy-icon.copy-inline"):
+            with self.subTest(sel=sel):
+                decl = next((d for s, d in coarse if sel in [p.strip() for p in s.split(",")]
+                             and "width:44px" in d and "height:44px" in d), None)
+                self.assertIsNotNone(decl, sel)
+
 
 class ATableCellCarriesItsColumnName(unittest.TestCase):
     """On a phone the Library's wide tables stack each row into a card, and a line without
@@ -1174,7 +1203,10 @@ class TheVitalsWearTheirReading(unittest.TestCase):
         const cards = {temp: $('vt-temp').className, nvrm: $('vt-nvrm').className};
         feed({machine: {cpu_pct: {cpu: 60}, load: [0.5], disks: {}, mem: {}},
               gpu: {power_w: 95, temp_c: 85, procs: []}, kernel: {nvrm_oom_1h: 250, nvrm_last: null}});
-        const at85 = {kind: glyph('vt-temp-glyph').kind, card: $('vt-temp').className};
+        const at85 = {kind: glyph('vt-temp-glyph').kind, card: $('vt-temp').className, word: $('vt-temp').children[2].textContent};
+        feed({machine: {cpu_pct: {cpu: 60}, load: [0.5], disks: {}, mem: {}},
+              gpu: {power_w: 95, temp_c: 75, procs: []}, kernel: {nvrm_oom_1h: 250, nvrm_last: null}});
+        const at75 = {kind: glyph('vt-temp-glyph').kind, word: $('vt-temp').children[2].textContent};
         feed({machine: {cpu_pct: {cpu: 0}, load: [], disks: {}, mem: {SwapTotal: 10 * GIB, SwapFree: 5 * GIB}},
               gpu: {}, kernel: {}});
         const half = clip('vt-swap-glyph');
@@ -1185,7 +1217,7 @@ class TheVitalsWearTheirReading(unittest.TestCase):
               gpu: {power_w: null, temp_c: null, procs: null}, kernel: {nvrm_oom_1h: null, nvrm_last: null}});
         const silent = {cpu: glyph('vt-cpu-glyph'), gpu: glyph('vt-gpu-glyph'), temp: glyph('vt-temp-glyph'),
                         disk: glyph('vt-disk-glyph'), swap: glyph('vt-swap-glyph'), nvrm: glyph('vt-nvrm-glyph')};
-        report({read, cards, at85, half, small, silent});
+        report({read, cards, at85, at75, half, small, silent});
         """)
         self.assertEqual(r["read"]["cpu"], {"kind": "bars", "pct": "60", "lit": 3})
         self.assertEqual(r["read"]["gpu"], {"kind": "bad", "pct": "95", "lit": 0})
@@ -1195,7 +1227,9 @@ class TheVitalsWearTheirReading(unittest.TestCase):
         self.assertEqual(r["read"]["swap"], {"kind": "bad", "pct": "90", "lit": 0})
         self.assertEqual(r["read"]["nvrm"], {"kind": "bad", "pct": "100", "lit": 0})
         self.assertEqual(r["cards"], {"temp": "vital err", "nvrm": "vital err"})
-        self.assertEqual(r["at85"], {"kind": "bad", "card": "vital err"})
+        self.assertEqual(r["at85"], {"kind": "bad", "card": "vital err", "word": "hot: give it air"},
+                         "the words change at the same degrees as the glyph and the card")
+        self.assertEqual(r["at75"], {"kind": "warn", "word": "warm"})
         self.assertEqual(r["half"], {"y": "9", "h": "4"}, "half swap fills half of the memory stick body")
         for name in ("cpu", "gpu", "temp", "disk", "swap", "nvrm"):
             with self.subTest(glyph=name):

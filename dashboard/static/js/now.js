@@ -437,7 +437,7 @@ function renderVitals(){
   setGauge('vt-gpu-glyph', pwRatio, pwRatio == null ? 'none' : pwRatio >= .9 ? 'bad' : pwRatio >= .7 ? 'orange' : pwRatio >= .5 ? 'warn' : 'ok');
   const t = g.temp_c;
   const tempKind = t == null ? 'none' : t >= 85 ? 'bad' : t >= 80 ? 'orange' : t >= 75 ? 'warn' : 'ok';
-  vital('vt-temp', t != null ? t.toFixed(0) + ' °C' : unread(F.gpu), t == null ? '' : t > 85 ? 'hot: give it air' : t > 75 ? 'warm' : 'cool', t == null ? '' : tempKind === 'bad' ? 'err' : tempKind === 'warn' || tempKind === 'orange' ? 'warn' : '');
+  vital('vt-temp', t != null ? t.toFixed(0) + ' °C' : unread(F.gpu), t == null ? '' : t >= 85 ? 'hot: give it air' : t >= 75 ? 'warm' : 'cool', t == null ? '' : tempKind === 'bad' ? 'err' : tempKind === 'warn' || tempKind === 'orange' ? 'warn' : '');
   setGauge('vt-temp-glyph', t == null ? null : t / 100, tempKind);
   const dk = (m.disks || {}).home;
   const diskRatio = dk && dk.total ? dk.free / dk.total : null;

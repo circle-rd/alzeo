@@ -1538,7 +1538,12 @@ function wireShell(){
   // the actions menu
   $('actbtn').addEventListener('click', openMenu);
   $('logoutbtn').addEventListener('click', async () => {
-    try { await postJSON('/api/logout', {}); } catch { /* already signed out */ }
+    try {
+      const r = await postJSON('/api/logout', {});
+      if (!r.ok) return toast('Could not sign out (' + r.status + '): the session is still open.', 'err');
+    } catch (e) {
+      if (e.message !== 'signed out') return toast('Could not sign out: ' + e.message, 'err');
+    }
     leavingForLogin = true;
     location.href = '/';
   });
