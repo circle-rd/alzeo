@@ -88,7 +88,10 @@ Environment=EMBED_UPSTREAM=http://127.0.0.1:30026
 EnvironmentFile=-/home/<user>/.config/qwen38/embed.env
 ```
 
-The proxy reads `EMBED_UPSTREAM` at start, so the installer restarts it once. The box runs
+The proxy reads `EMBED_UPSTREAM` at start, so the installer restarts it once. Its
+embedding timeout is 900 s: a 32,000-token batch takes about 86 s on the small cores, and
+the default 60 s cut the proxy's connection while TEI kept working, which then answered
+later requests 429 until its permits returned (seen on 2026-11-17). The box runs
 the copy `install.sh` put in `~/.config/qwen38/keepalive-proxy.py`, not the clone's, so
 `install-embed.sh` also installs this branch's proxy when the deployed copy has no
 `EMBED_UPSTREAM` at all. Without that, a git update alone left the old proxy in memory and

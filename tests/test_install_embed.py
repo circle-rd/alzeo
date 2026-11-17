@@ -34,6 +34,11 @@ class TheRouteAndTheProxy(unittest.TestCase):
                         INSTALLER.index("Environment=EMBED_UPSTREAM"))
         self.assertIn('grep -q \'^EMBED_UPSTREAM\' "$HERE/keepalive-proxy.py"', INSTALLER)
 
+    def test_the_proxy_timeout_outlives_a_full_batch(self):
+        # 32,000 tokens took 86 s on the small cores; the default 60 s cut the connection
+        self.assertIn('EMBED_TIMEOUT_S = float(os.environ.get("EMBED_TIMEOUT_S", "900"))', PROXY)
+        self.assertIn("Environment=EMBED_TIMEOUT_S=900", INSTALLER)
+
     def test_the_default_batch_is_the_default_concurrency(self):
         # TEI takes one permit per input, not per request: 8 permits answered 429 on a
         # 64-input index batch (reference box, 2026-11-17)
