@@ -145,6 +145,58 @@ For a query, the lane is fast: 60 ms for two short texts. Bulk indexing is the s
 At 382 tokens/s, 10M tokens take 7.3 hours, 100M take 73 hours, and 1B take 30 days; on all
 twenty cores, 3.8 hours, 37.5 hours and 15.6 days.
 
+### The same model in llama.cpp, on the GPU
+
+Measured on 2026-11-17 with the Flash-Next lane stopped, the pinned llama.cpp image
+(`ghcr.io/ggml-org/llama.cpp@sha256:a5600a59...`, b12316) and the F16 GGUF of
+`bowang0911/pplx-embed-v1-0.6b-gguf` (sha256 `08ba3d20...`), all 29 layers on the GB10:
+
+```bash
+llama-server -m pplx-embed-v1-0.6b-f16.gguf \
+  --embedding --pooling mean \
+  --override-kv qwen3.attention.causal=bool:false \
+  -c 8192 -b 8192 -ub 8192 -ngl 999 -fa on
+```
+
+Two flags are mandatory, and one of them is not in `llama-server`'s help:
+
+- `--pooling mean`: the GGUF's own pooling is `-1`; without it the vector is wrong.
+- `--override-kv qwen3.attention.causal=bool:false`: the GGUF records causal attention
+  (`causal attn = 1` in llama.cpp's log), but PPLX is a bidirectional encoder. `llama-server`
+  has no `--attention` option; that flag belongs to `llama-embedding` only. With the GGUF as
+  published, causal attention gives cosine 0.58 against TEI; with the override, raw float
+  gives 0.9994, and after the model's own int8 step (`round(tanh(x) * 127)`, then L2) gives
+  **0.99996**. The vectors match the reference.
+
+  That last number used `--embd-normalize -1`, which returns the raw float vector so the
+  model's own int8 step can be applied. `llama-server`'s default normalizes the float vector
+  instead, which is 0.9994 against TEI and different bytes for the same text. A lane that
+  mixes the two must either post-process the float or keep one source per index.
+
+| context | inputs | tokens | time | tokens/s | device memory (llama.cpp's projection) |
+|---:|---:|---:|---:|---:|---:|
+| 8K | 8 x 512 | 4,096 | 0.21 s | 19,858 | 2.6 GB |
+| 8K | 16 x 512 | 8,192 | 0.39 s | 21,176 | 2.6 GB |
+| 8K | 2 requests x 8 x 512 | 8,192 | 0.38 s | 21,802 | 2.6 GB |
+| 32K | 64 x 512 | 32,765 | 1.53 s | 21,407 | 8.4 GB |
+| 32K | 8 x 2048 | 16,384 | 0.97 s | 16,835 | 8.4 GB |
+
+That is **56 times** the CPU lane for 512-token chunks (21,176 against 382 tokens/s), and a
+64-chunk batch in 1.5 s instead of 86 s. At 21,000 tokens/s, 10M tokens take 7.9 minutes,
+100M take 79 minutes. The 8K context keeps the GPU footprint to 2.6 GB, small enough to sit
+beside a text lane; the 32K context costs 8.4 GB and fits only while the text lane leaves
+room.
+
+Two caveats remain before this is a lane:
+
+- **The GGUF is a community conversion**, not an official one: llama.cpp's converter still
+  rejects `PPLXQwen3Model` (`ggml-org/llama.cpp#20055`, closed as not planned). The project
+  should either pin this file and its hash, or convert the official checkpoint with a
+  patched converter that writes `causal_attention=false` and check the vectors as above.
+- **Co-residency with a text lane is not measured.** The speech lane's measurement showed a
+  GPU side lane can cost 45% of the text lane's decode. The embedding lane is bursty and
+  small, but that needs a run with Flash-Next active before promising both at once.
+
 ## Against Perplexity's cloud
 
 Perplexity's Embeddings API publishes, for `pplx-embed-v1-0.6b`:
@@ -169,9 +221,10 @@ with no batching across clients, and the CPU is the limit.
 - **Queries belong on the box.** 60 ms for a short query beats the cloud's 180 ms P50, and
   the vectors never leave the network.
 - **Bulk indexing does not, unless privacy or offline use decides it.** Use the cloud for a
-  one-off index of a large codebase, or run the local lane on all twenty cores overnight.
-  The cloud and the local lane serve the same checkpoint, but pin the revision and compare
-  one batch before mixing vectors from both.
+  one-off index of a large codebase, or llama.cpp on the GPU if it can have the GPU: 10M
+  tokens in 8 minutes, against 7.3 hours on the CPU lane. The cloud and both local paths
+  serve the same checkpoint family, but pin the revision and compare one batch before mixing
+  vectors from them.
 - **Chunk at 512 tokens, not 2048**, when the content allows: 45% more tokens per second.
 - **Do not expect CPU tuning to close the gap.** int8 weights or an ARM64 ONNX Runtime image
   could give a factor of 2 to 4; the cloud's gap is three to four orders of magnitude.
@@ -184,8 +237,9 @@ with no batching across clients, and the CPU is the limit.
   box, or with the text lane stopped.
 - **vLLM on the CPU** adds its scheduler and image for no measured gain on an embedding
   model; TEI is the server the model card names.
-- **llama.cpp GGUF** is small (0.6 GB at Q8) but the PPLX architecture is not officially
-  convertible (`ggml-org/llama.cpp#20055`); community GGUFs rewrite it as Qwen3 and
-  compare at cosine 0.99998, which is not a promise for an index.
+- **llama.cpp GGUF** is now measured: F16, 2.6 GB of GPU at 8K context, 21,000 tokens/s,
+  and 0.99996 cosine against TEI once the causal-attention metadata is overridden. It is no
+  longer a "not a promise" path, but it needs a pinned community GGUF or a patched official
+  conversion, and the co-residency question above.
 - **ONNX Runtime int8** would be leaner, but the official TEI image for it is amd64 only,
   and this box is arm64.

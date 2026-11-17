@@ -718,7 +718,10 @@ EMBED_BOOT=1 ./install-embed.sh # start it now, and with the box
 ```
 
 TEI clamps the longest input to the batch budget, so chunk a codebase at or below 2048
-tokens. Every number, the wiring, the key and the alternatives:
+tokens. The same checkpoint in llama.cpp on the GPU measured 21,000 tokens/s at 2.6 GB of
+device memory with an 8K context, 56 times this CPU lane; its GGUF needs `--pooling mean`
+and `--override-kv qwen3.attention.causal=bool:false`, or the vectors are wrong. Every
+number, the wiring, the key and the alternatives:
 **[docs/embedding-lane.md](docs/embedding-lane.md)**.
 
 ## The 1M context mode
