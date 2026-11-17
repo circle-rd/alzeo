@@ -24,12 +24,18 @@ reference box:
 | settings | memory | note |
 |---|---|---|
 | defaults: `--max-batch-tokens 16384`, 512 concurrent requests, 19 tokenizers | **22.4 GiB**, 33.8 GiB peak | enough to take the flash lane's load down |
-| `--max-batch-tokens 2048`, 8 concurrent requests, 2 tokenizers | **2.5 GiB** | 59 ms for one short request, ready in 9 s |
+| `--max-batch-tokens 2048`, 64 concurrent requests, 2 tokenizers | **2.5 GiB** | 59 ms for one short request, 1.9 s for a 64-input batch, ready in 9 s |
 
 TEI clamps `max_input_length` to the batch budget, so 2048 tokens is also the longest text
 this lane takes. That suits codebase chunks of 400 to 1000 tokens; a longer text is cut by
 TEI, silently. To index longer files, raise `EMBED_BATCH_TOKENS` and `EMBED_MEM_MAX`
 together, and measure: 16384 tokens costs the 22 GiB above.
+
+`max_concurrent_requests` counts **inputs**, not requests: TEI takes one permit per input
+of a batch. A 64-input request with the old default of 8 permits answered 429, "Model is
+overloaded", on the first index run (2026-11-17). The installer sets 64, so one client can
+send a full 64-input batch; several clients sending batches at once want a multiple of
+that. `max_client_batch_size` is 64 to match.
 
 The lane keeps to the ten Cortex-A725 cores (CPUs 0-4 and 10-14), as the speech lane does,
 with Docker's `--memory` cap at 4 GiB by default. A container's cgroup is Docker's, not the

@@ -34,6 +34,14 @@ class TheRouteAndTheProxy(unittest.TestCase):
                         INSTALLER.index("Environment=EMBED_UPSTREAM"))
         self.assertIn('grep -q \'^EMBED_UPSTREAM\' "$HERE/keepalive-proxy.py"', INSTALLER)
 
+    def test_the_default_batch_is_the_default_concurrency(self):
+        # TEI takes one permit per input, not per request: 8 permits answered 429 on a
+        # 64-input index batch (reference box, 2026-11-17)
+        self.assertIn('EMBED_CONCURRENCY="${EMBED_CONCURRENCY:-64}"', INSTALLER)
+        self.assertIn("per INPUT", INSTALLER)
+        self.assertIn("--max-client-batch-size __EMBED_CLIENT_BATCH__", LAUNCH)
+        self.assertIn("--max-concurrent-requests __EMBED_CONCURRENCY__", LAUNCH)
+
     def test_the_proxy_is_not_in_conflict_with_a_text_lane(self):
         self.assertFalse([ln for ln in UNIT.splitlines() if ln.startswith("Conflicts=")])
         self.assertIn("--memory __EMBED_MEM_MAX__", LAUNCH)

@@ -9,14 +9,14 @@
 #
 # Variables: EMBED_PORT (30026), EMBED_BOOT=1 (start it with the box, off by default),
 # EMBED_LANE_DIR (~/.local/share/qwen38-embed), EMBED_BATCH_TOKENS (2048, which is also
-# the longest input it takes), EMBED_CONCURRENCY (8), EMBED_MEM_MAX (4g), EMBED_CPUS.
+# the longest input it takes), EMBED_CONCURRENCY (64), EMBED_MEM_MAX (4g), EMBED_CPUS.
 #
 # WHY THE CPU. The box serves one GPU lane at a time, and the flash lane holds almost all
 # of the unified memory. Measured on the reference box on 2026-11-17: TEI's defaults
 # (--max-batch-tokens 16384, 512 concurrent requests, 19 tokenizers) held 22.4 GiB and
-# 33.8 GiB at peak, enough to take the flash lane's load down; at 2048 batch tokens, 8
-# concurrent requests and 2 tokenizers, the same model held 2.5 GiB and answered a short
-# request in 59 ms. TEI clamps max_input_length to the batch budget, so 2048 tokens is
+# 33.8 GiB at peak, enough to take the flash lane's load down; at 2048 batch tokens, 64
+# concurrent requests and 2 tokenizers, the same model held 2.5 GiB, answered a short
+# request in 59 ms and a 64-input batch in 1.9 s. TEI clamps max_input_length to the batch budget, so 2048 tokens is
 # the longest text this lane takes: chunk a codebase at or below it.
 #
 # NOT IN THE ONE COMMAND YET. ./install.sh does not run this: the lane is installed on
@@ -62,7 +62,7 @@ EMBED_REV="${EMBED_REV:-2c4d510dd4a732063c31a0f70193e35067b51fd8}"
 EMBED_NAME="${EMBED_NAME:-pplx-embed-v1-0.6b}"
 EMBED_DTYPE="${EMBED_DTYPE:-float32}"
 EMBED_BATCH_TOKENS="${EMBED_BATCH_TOKENS:-2048}"
-EMBED_CONCURRENCY="${EMBED_CONCURRENCY:-8}"
+EMBED_CONCURRENCY="${EMBED_CONCURRENCY:-64}"   # TEI's semaphore is per INPUT, not per request: a 64-input batch needs 64 permits
 EMBED_CLIENT_BATCH="${EMBED_CLIENT_BATCH:-64}"
 EMBED_TOKENIZER_WORKERS="${EMBED_TOKENIZER_WORKERS:-2}"
 EMBED_MEM_MAX="${EMBED_MEM_MAX:-4g}"
