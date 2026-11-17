@@ -25,7 +25,8 @@ MIN_128_GIB = 110
 # MemTotal from which a box is of the 64 GB class; below it nothing here fits with room to spare.
 MIN_64_GIB = 48
 # The lanes of the 64 GB class, by the names install.sh gives them: the 27B (23.5 GB of weights
-# and drafter on disk), Nemotron 3.5 Bolt (24.1 GiB in memory) and the speech lane, on the CPU.
+# and drafter on disk), Nemotron 3.5 Bolt (24.1 GiB in memory), the speech lane and the embedding
+# lane, both on the CPU and both under a host-memory cap of a few GiB.
 # The text lanes left out weigh 45.8 GB (Kolibri) to 135.3 GB (the flash); the video lane peaks
 # at 75 to 80 GiB (docs/video-lane.md); the image lane waits for its own measurement on a 64 GB
 # budget; MiniMax-H3-Image peaked at 92.3 GB and its recipe asks 106 GiB free at its start
@@ -33,9 +34,9 @@ MIN_64_GIB = 48
 # (2026-11-14): no 64 GB run, so none is claimed; nor was the Liquid AI LFM2.5 24B-A2B lane, which left 24 GiB
 # available at its lowest on a 128 GB box (2026-11-14), nor the Liquid AI LFM3 lane, whose share of 0.75 of the memory
 # the engine sees is about 91 GiB on a 128 GB box: no 64 GB share was measured.
-FITS_64 = ("27b", "nemotron", "speech")
+FITS_64 = ("27b", "nemotron", "speech", "embedding")
 LANES = ("27b", "flash", "image", "video", "kolibri", "nemotron", "nemotron-super", "flash-local",
-         "ornith-122b", "flash-unsloth", "image-h3", "transcribe", "lfm25", "lfm3", "speech")
+         "ornith-122b", "flash-unsloth", "image-h3", "transcribe", "lfm25", "lfm3", "speech", "embedding")
 # Each target switch-model.sh and MODEL_CHOICE name, and its lane.
 TARGETS = {"stock": "27b", "uncensored": "27b", "fp8": "27b", "uncensored-fp8": "27b", "arete": "27b",
            "daisyrose": "27b",

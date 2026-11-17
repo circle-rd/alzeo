@@ -1,0 +1,27 @@
+[Unit]
+Description=Embedding lane (PPLX Embed v1 0.6B, TEI, CPU only), OpenAI embeddings API :__EMBED_PORT__
+Wants=network-online.target docker.service
+After=network-online.target docker.service
+# No Conflicts=, unlike the text lanes: this one never touches the GPU. It runs beside
+# whichever lane serves, flash included, on the small cores and under the memory cap its
+# launcher gives its container. Measured on the reference box on 2026-11-17: at
+# --max-batch-tokens 2048 it held 2.5 GiB, where TEI's defaults held 22.4 GiB and took
+# the load of the flash lane down with them.
+
+[Service]
+Type=simple
+User=__USER__
+Group=__GROUP__
+WorkingDirectory=__EMBED_LANE_DIR__
+ExecStartPre=-/usr/bin/docker rm -f qwen38-embed
+ExecStart=/bin/bash __HOME__/.config/qwen38/launch-embed.sh
+ExecStop=-/usr/bin/docker stop -t 20 qwen38-embed
+Restart=always
+RestartSec=15
+# Docker's own container cgroup is the one that holds the lane's memory, not this unit's:
+# the launcher gives it --memory and --memory-swap. A unit cap here would watch the docker
+# client alone and let the container grow past it.
+TimeoutStartSec=600
+TimeoutStopSec=30
+[Install]
+WantedBy=multi-user.target

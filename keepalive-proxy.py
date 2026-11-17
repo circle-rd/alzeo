@@ -812,6 +812,14 @@ def engine_gone_reason():
 # may legitimately point at this port.
 BIND          = os.environ.get("PROXY_BIND", "0.0.0.0").strip() or "0.0.0.0"
 UPSTREAM      = os.environ.get("UPSTREAM", "http://127.0.0.1:30000")
+# The embedding side lane (install-embed.sh): its own upstream, on loopback, and its own
+# routes. Unset means this proxy relays no embedding request, as before the lane existed.
+# The OpenAI spelling is /v1/embeddings; /v1/embedding is kept as an alias for a client
+# that wrote it the other way, and both reach the same upstream route.
+EMBED_UPSTREAM = os.environ.get("EMBED_UPSTREAM", "").strip().rstrip("/")
+EMBED_API_KEY = os.environ.get("EMBED_API_KEY", "")
+EMBED_TIMEOUT_S = float(os.environ.get("EMBED_TIMEOUT_S", "60"))
+EMBED_ROUTES = frozenset({"/v1/embeddings", "/v1/embedding"})
 KEEPALIVE_S   = float(os.environ.get("KEEPALIVE_S", "10"))
 MAX_SILENCE_S = float(os.environ.get("MAX_SILENCE_S", "3600"))
 CLIENT_IO_S   = float(os.environ.get("CLIENT_IO_S", "900"))   # write blocked toward a frozen client
@@ -1357,6 +1365,12 @@ def _door_key():
         return _api_key() or None
     except Exception:
         return None
+
+
+def _embed_key():
+    """The key the embedding upstream checks: its own when EMBED_API_KEY names one, else the
+    box's serving key, which install-embed.sh gives the lane so one key opens both doors."""
+    return EMBED_API_KEY or _door_key()
 KEY_FIELDS = ("api_key", "admin_api_key", "ssl_keyfile_password")
 # A secret flag's value, wherever a string of the answer repeats a command line (SGLang's
 # launch_command, v6.32): `--api-key K`, `--api-key=K`, quoted or not.
@@ -6076,6 +6090,49 @@ class H(BaseHTTPRequestHandler):
             h["X-Override-Rid"] = rid
         return h
 
+    def _embedding(self, body):
+        """POST /v1/embeddings (and its singular alias) to the embedding lane.
+
+        Nothing of the engine's guards applies: the lane measures its own inputs, and the
+        body is relayed as the caller wrote it. The answer is not streamed, so it is read
+        whole and answered whole, as TEI writes it. A lane that does not answer is a 503,
+        never a fallback to the text engine, which serves no embedding route.
+        """
+        key = _embed_key()
+        headers = {"Content-Type": "application/json"}
+        if key:
+            headers["Authorization"] = "Bearer " + key
+        req = urllib.request.Request(EMBED_UPSTREAM + "/v1/embeddings", data=body,
+                                     headers=headers, method="POST")
+        try:
+            with _UPSTREAM_OPENER.open(req, timeout=EMBED_TIMEOUT_S) as r:
+                data = r.read()
+                self._plain(r.status, {"Content-Type": r.headers.get("Content-Type", "application/json")}, data)
+                self._done("ok embed")
+        except urllib.error.HTTPError as e:
+            try:
+                data = e.read()
+            except Exception:
+                data = b""
+            finally:
+                try:
+                    e.close()
+                except Exception:
+                    pass
+            self._plain(e.code, {"Content-Type": e.headers.get("Content-Type", "application/json")},
+                        data or json.dumps({"error": {"type": "engine_error",
+                                                      "message": f"keepalive-proxy: the embedding lane answered HTTP {e.code}"}}).encode())
+            self._done("502 embed upstream")
+        except (urllib.error.URLError, OSError) as e:
+            log(f"{self._peer} the embedding lane behind {EMBED_UPSTREAM} is not answering ({e})")
+            self._plain(503, {"Content-Type": "application/json", "Retry-After": "15"},
+                        json.dumps({"error": {"type": "engine_unavailable",
+                                              "message": f"keepalive-proxy: the embedding lane behind "
+                                                         f"{EMBED_UPSTREAM} is not answering. It is a side "
+                                                         f"lane of this box: start qwen38-embed.service, "
+                                                         f"or run ./install-embed.sh."}}).encode())
+            self._done("503 embed unreachable")
+
     def _open(self, body):
         req = urllib.request.Request(UPSTREAM + self.path, data=body,
                                      headers=self._hdrs(), method=self.command)
@@ -7474,6 +7531,12 @@ class H(BaseHTTPRequestHandler):
                                               "keepalive-proxy: send the request body as UTF-8 JSON (RFC 8259): this "
                                               "proxy reads every body to guard the engine"}}).encode())
             self._done("415 body not in UTF-8"); return
+        # The embedding lane is another upstream, with none of this engine's guards: its
+        # routes go there before any of them reads the body, and before the pair, which
+        # routes this box's text engine only. The identity wall and the door have already
+        # admitted the caller, so the same key opens this lane.
+        if self.command == "POST" and route in EMBED_ROUTES and EMBED_UPSTREAM:
+            self._embedding(body); return
         if body and self._rid_not_its_own():
             # the engine's request id is this box's to give, never the other box's nor a listed key's: SGLang aborts
             # by prefix, and their ids "0" to "f" ended every generation (found in reviews, 2026-11-03). Once, here,

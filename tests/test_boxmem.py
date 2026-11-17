@@ -90,9 +90,9 @@ class Fits(Base):
             with self.subTest(lane=lane):
                 self.assertTrue(boxmem.fits(lane, "128"))
 
-    def test_the_64_gb_class_takes_the_27b_bolt_and_speech_only(self):
+    def test_the_64_gb_class_takes_the_27b_bolt_and_the_cpu_lanes_only(self):
         got = {lane for lane in boxmem.LANES if boxmem.fits(lane, "64")}
-        self.assertEqual(got, {"27b", "nemotron", "speech"})
+        self.assertEqual(got, {"27b", "nemotron", "speech", "embedding"})
 
     def test_no_lane_fits_a_box_without_a_class(self):
         self.assertFalse(any(boxmem.fits(lane, None) for lane in boxmem.LANES))

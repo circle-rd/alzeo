@@ -496,7 +496,7 @@ class TheRunSaysIt(unittest.TestCase):
     def test_the_lanes_that_fit_come_from_boxmem(self):
         r = subprocess.run([sys.executable, "-I", str(REPO / "boxmem.py"), "fitting", "--class", "64"],
                            capture_output=True, text=True)
-        self.assertEqual(r.stdout.split(), ["27b", "nemotron", "speech"])
+        self.assertEqual(r.stdout.split(), ["27b", "nemotron", "speech", "embedding"])
         self.assertNotIn("the 27B and Nemotron 3.5 Bolt here", INSTALL, "a second list of them in install.sh")
 
 class NothingUnmeasured(unittest.TestCase):
