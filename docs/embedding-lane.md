@@ -82,10 +82,16 @@ Environment=EMBED_UPSTREAM=http://127.0.0.1:30026
 EnvironmentFile=-/home/<user>/.config/qwen38/embed.env
 ```
 
-The proxy reads `EMBED_UPSTREAM` at start, so the installer restarts it once. The lane
-itself has no `Conflicts=` with the text lanes: it never touches the GPU. It is not started
-at boot unless `EMBED_BOOT=1`, as the speech lane is not: at rest it holds 2.5 GiB of host
-memory that a flash lane's long prompts also want.
+The proxy reads `EMBED_UPSTREAM` at start, so the installer restarts it once. The box runs
+the copy `install.sh` put in `~/.config/qwen38/keepalive-proxy.py`, not the clone's, so
+`install-embed.sh` also installs this branch's proxy when the deployed copy has no
+`EMBED_UPSTREAM` at all. Without that, a git update alone left the old proxy in memory and
+`/v1/embeddings` reached the text engine, which answered 400 with SGLang's
+"does not appear to be an embedding model" (seen on the reference box, 2026-11-17).
+
+The lane itself has no `Conflicts=` with the text lanes: it never touches the GPU. It is
+not started at boot unless `EMBED_BOOT=1`, as the speech lane is not: at rest it holds
+2.5 GiB of host memory that a flash lane's long prompts also want.
 
 The same key opens both doors. `embed.env` holds `EMBED_API_KEY`, read from the box's own
 `~/.config/qwen38/api-key` (0600), and the launcher gives TEI that key in its environment,

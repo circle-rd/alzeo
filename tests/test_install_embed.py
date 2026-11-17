@@ -1,0 +1,46 @@
+#!/usr/bin/env python3
+"""The embedding lane's installer and the proxy it depends on.
+
+The first run on the reference box installed the unit and the drop-in, restarted the
+proxy, and the route still reached the text engine: the box runs the copy install.sh put
+in ~/.config/qwen38/keepalive-proxy.py, not the clone's, and a git update alone left the
+old copy in memory. install-embed.sh now installs this branch's proxy when the deployed
+one has no route at all. These are the static facts that keep that from regressing.
+"""
+import pathlib
+import re
+import unittest
+
+REPO = pathlib.Path(__file__).resolve().parents[1]
+INSTALLER = (REPO / "install-embed.sh").read_text()
+PROXY = (REPO / "keepalive-proxy.py").read_text()
+UNIT = (REPO / "qwen38-embed.service.template").read_text()
+LAUNCH = (REPO / "qwen38-embed-launch.sh.template").read_text()
+
+
+class TheRouteAndTheProxy(unittest.TestCase):
+    def test_the_proxy_carries_both_spellings_and_the_upstream(self):
+        for needle in ("EMBED_UPSTREAM", '"/v1/embeddings"', '"/v1/embedding"'):
+            self.assertIn(needle, PROXY)
+        # the branch is before the engine's own request handling, not after it
+        self.assertIn('if self.command == "POST" and route in EMBED_ROUTES and EMBED_UPSTREAM:', PROXY)
+        self.assertLess(PROXY.index('if self.command == "POST" and route in EMBED_ROUTES and EMBED_UPSTREAM:'),
+                        PROXY.index("if body and self._rid_not_its_own():"))
+
+    def test_the_installer_installs_the_proxys_route_when_the_deployed_copy_has_none(self):
+        self.assertIn('$CONFIG_DIR/keepalive-proxy.py', INSTALLER)
+        self.assertIn('install -m 755 "$HERE/keepalive-proxy.py" "$CONFIG_DIR/keepalive-proxy.py"', INSTALLER)
+        self.assertLess(INSTALLER.index("install -m 755 \"$HERE/keepalive-proxy.py\""),
+                        INSTALLER.index("Environment=EMBED_UPSTREAM"))
+        self.assertIn('grep -q \'^EMBED_UPSTREAM\' "$HERE/keepalive-proxy.py"', INSTALLER)
+
+    def test_the_proxy_is_not_in_conflict_with_a_text_lane(self):
+        self.assertFalse([ln for ln in UNIT.splitlines() if ln.startswith("Conflicts=")])
+        self.assertIn("--memory __EMBED_MEM_MAX__", LAUNCH)
+        self.assertIn("--cpuset-cpus __EMBED_CPUS__", LAUNCH)
+        self.assertIn("--max-batch-tokens __EMBED_BATCH_TOKENS__", LAUNCH)
+        self.assertIn("--served-model-name __EMBED_NAME__", LAUNCH)
+
+
+if __name__ == "__main__":
+    unittest.main()
