@@ -23,11 +23,13 @@ TEXT_PORT = 30000
 #   installer  the script that installs it
 #   flags      whether install.sh installs it, --with-<lane> and --no-<lane> (the speech lane is
 #              installed by its own script only: "./install.sh does not run this", install-speech.sh)
-#   kind       what it serves: text, image, video or speech
+#   kind       what it serves: text, image, video, speech or embedding
 #   engine     sglang (lmsysorg/sglang images), vllm (the installers that source vllm-lane.sh),
 #              llamacpp (llama.cpp's own llama-server image, the installers that source
 #              llamacpp-lane.sh), diffusion (SGLang Diffusion's wheel in the lane's own venv), own
-#              (this repo's speech-server.py, in front of llama.cpp's llama-server and Kokoro)
+#              (a lane this repo runs itself: speech-server.py in front of llama.cpp's llama-server
+#              and Kokoro, and the embedding lane's Text Embeddings Inference container, which the
+#              cockpit does not drive and which serves no chat)
 #   b12x       whether its vLLM engine runs NVIDIA's b12x kernels, as its installer says
 #   targets    the switch targets of the lane (switch-model.sh, boxmem.TARGETS), in boxmem.TARGETS' order
 #   heavy_64   those of its targets a 64 GB DGX Spark does not take although the lane fits it
@@ -113,6 +115,13 @@ LANES = {
                "targets": (), "heavy_64": (),
                "served": None, "provider": None, "ports": (30024, 30025), "fits_64": True,
                "title": None},
+    # install-embed.sh: TEI on the CPU beside any lane, PORT 30026 (EMBED_PORT), behind the proxy's
+    # /v1/embeddings; no switch target, and no chat model to name for a client
+    "embedding": {"unit": "qwen38-embed.service", "installer": "install-embed.sh", "flags": False,
+                  "kind": "embedding", "engine": "own", "b12x": False,
+                  "targets": (), "heavy_64": (),
+                  "served": None, "provider": None, "ports": (30026,), "fits_64": True,
+                  "title": "PPLX Embed v1 0.6B"},
 }
 
 

@@ -86,6 +86,10 @@ eval "$uline"
 # SPEECH_ASR, read below one at a time; Kokoro's files are assets of a GitHub release.
 spline="$(grep -E '^(LLAMA_CPP_PIN|KOKORO_URL|KOKORO_MODEL_FILE|KOKORO_VOICES_FILE)=' "$REPO_DIR/install-speech.sh")"
 eval "$spline"
+# The embedding lane's: the TEI image by its digest, and Perplexity's checkpoint at the revision
+# its index pins (a moving main changes the vectors).
+eline="$(grep -E '^(EMBED_IMAGE|EMBED_MODEL|EMBED_REV)=' "$REPO_DIR/install-embed.sh")"
+eval "$eline"
 ASR_SIZES="$(sed -n 's/^  \([0-9][0-9.]*b\))$/\1/p' "$REPO_DIR/install-speech.sh")"
 KOKORO_GH="${KOKORO_URL#https://github.com/}"
 KOKORO_TAG="${KOKORO_GH##*/releases/download/}"; KOKORO_GH="${KOKORO_GH%%/releases/download/*}"
@@ -468,6 +472,8 @@ for size in $ASR_SIZES; do
 done
 check_asset  speech-kokoro  "$KOKORO_GH" "$KOKORO_TAG" "$KOKORO_MODEL_FILE"  "$KOKORO_MODEL_SHA"  undigested
 check_asset  speech-voices  "$KOKORO_GH" "$KOKORO_TAG" "$KOKORO_VOICES_FILE" "$KOKORO_VOICES_SHA" undigested
+echo "Embedding lane"
+check_model  pplx-embed     "$EMBED_MODEL" "$EMBED_REV"
 
 echo "Images"
 img="$(grep -E '^(IMAGE|FLASH_IMAGE)=' "$REPO_DIR/install.sh")"
@@ -478,6 +484,7 @@ check_image kolibri-base   "$KOLIBRI_BASE_IMAGE"
 check_image nemotron-base  "$NEMOTRON_BASE_IMAGE"
 check_image flash-local    "$FLASH_LOCAL_IMAGE"
 check_image flash-unsloth  "$FLASH_UNSLOTH_IMAGE"
+check_image embed-tei      "$EMBED_IMAGE"
 
 echo
 if [ "$FAIL" -eq 0 ]; then

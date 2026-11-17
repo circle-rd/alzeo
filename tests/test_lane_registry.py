@@ -69,10 +69,10 @@ def among(lanes, keep):
     return [x for x in lanes if x in keep]
 
 
-# The lanes that take the GPU in turn, each unit in Conflicts= with the others: all but the speech lane,
-# which runs on the CPU beside any of them (install-speech.sh, "WHY THE CPU"), and which the cockpit,
-# the sudoers and the switch do not drive.
-TURNS = [x for x in LANES if LANES[x]["kind"] != "speech"]
+# The lanes that take the GPU in turn, each unit in Conflicts= with the others: all but the speech and
+# embedding lanes, which run on the CPU beside any of them (install-speech.sh and install-embed.sh) and
+# which the cockpit, the sudoers and the switch do not drive.
+TURNS = [x for x in LANES if LANES[x]["kind"] not in ("speech", "embedding")]
 # the lanes install.sh's --with-<lane> and --no-<lane> name
 FLAGGED = family(flags=True)
 # among them the side lanes, each installed by its own installer, which install.sh runs (it installs
@@ -867,7 +867,7 @@ class TheRegistryIsWellFormed(unittest.TestCase):
         for lane, f in LANES.items():
             with self.subTest(lane):
                 self.assertEqual(set(f), fields)
-                self.assertIn(f["kind"], ("text", "image", "video", "speech"))
+                self.assertIn(f["kind"], ("text", "image", "video", "speech", "embedding"))
                 self.assertIn(f["engine"], ("sglang", "vllm", "llamacpp", "diffusion", "own"))
                 self.assertTrue(set(f["heavy_64"]) <= set(f["targets"]))
                 self.assertTrue(f["fits_64"] or not f["heavy_64"], "a lane that does not fit has no heavy target")
@@ -1538,7 +1538,7 @@ class TheCiAndTheTestsSayTheSame(unittest.TestCase):
                        f"{rel}: for lane in (...)", lambda n: isinstance(n.target, ast.Name) and n.target.id == "lane")
         p.same(f"{rel}:{loop.lineno} for lane in (...)", ast.literal_eval(loop.iter), among(SIDE, NOT_64))
         rel = "tests/test_boxmem.py"
-        for fn, want in (("test_the_64_gb_class_takes_the_27b_bolt_and_speech_only", family(fits_64=True)),
+        for fn, want in (("test_the_64_gb_class_takes_the_27b_bolt_and_the_cpu_lanes_only", family(fits_64=True)),
                          ("test_a_64_gb_box_takes_the_27b_in_nvfp4_only",
                           [t for t, x in TARGET_LANE.items() if LANES[x]["fits_64"] and t not in LANES[x]["heavy_64"]])):
             lit = py_find(py_function(rel, fn), ast.Call, f"{rel}: {fn}'s assertEqual(got, {{...}})",

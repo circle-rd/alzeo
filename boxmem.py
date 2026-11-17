@@ -25,14 +25,15 @@ MIN_128_GIB = 110
 # MemTotal from which a box is of the 64 GB class; below it nothing here fits with room to spare.
 MIN_64_GIB = 48
 # The lanes of the 64 GB class, by the names install.sh gives them: the 27B (23.5 GB of weights
-# and drafter on disk), Nemotron 3.5 Bolt (24.1 GiB in memory) and the speech lane, on the CPU.
+# and drafter on disk), Nemotron 3.5 Bolt (24.1 GiB in memory), the speech lane and the embedding
+# lane, both on the CPU and both under a host-memory cap of a few GiB.
 # The text lanes left out weigh 45.8 GB (Kolibri) to 135.3 GB (the flash); the video lane peaks
 # at 75 to 80 GiB (docs/video-lane.md); the image lane waits for its own measurement on a 64 GB
 # budget; MiniMax-H3-Image peaked at 92.3 GB and its recipe asks 106 GiB free at its start
 # (docs/image-h3-lane.md).
-FITS_64 = ("27b", "nemotron", "speech")
+FITS_64 = ("27b", "nemotron", "speech", "embedding")
 LANES = ("27b", "flash", "image", "video", "kolibri", "nemotron", "nemotron-super", "flash-local",
-         "ornith-122b", "flash-unsloth", "image-h3", "speech")
+         "ornith-122b", "flash-unsloth", "image-h3", "speech", "embedding")
 # Each target switch-model.sh and MODEL_CHOICE name, and its lane.
 TARGETS = {"stock": "27b", "uncensored": "27b", "fp8": "27b", "uncensored-fp8": "27b", "arete": "27b",
            "flash": "flash", "flash-nvda": "flash", "flash-uncensored": "flash",

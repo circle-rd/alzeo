@@ -1581,17 +1581,19 @@ unsloth_clients_follow(){
 too_big(){ local l; for l in ${TOO_BIG[@]+"${TOO_BIG[@]}"}; do [ "$l" = "$1" ] && return 0; done; return 1; }   # $1 a lane
 if [ "${#TOO_BIG[@]}" -gt 0 ]; then
   # the lanes that fit, as boxmem.py decides them, rather than a second list of them here (review,
-  # 2026-10-23); the speech lane is installed by its own script
-  _fit=(); _speech=""
+  # 2026-10-23); the speech and embedding lanes are installed by their own scripts
+  _fit=(); _speech=""; _embed=""
   for _l in $(fitting_lanes); do
-    if [ "$_l" = speech ]; then _speech=", and the speech lane (./install-speech.sh)"; else _fit+=("$(lane_title "$_l")"); fi
+    if [ "$_l" = speech ]; then _speech=", and the speech lane (./install-speech.sh)"
+    elif [ "$_l" = embedding ]; then _embed=", and the embedding lane (./install-embed.sh)"
+    else _fit+=("$(lane_title "$_l")"); fi
   done
   _fits=""; for _i in "${!_fit[@]}"; do
     if [ "$_i" -eq 0 ]; then _fits="${_fit[$_i]}"; elif [ "$_i" -eq $((${#_fit[@]} - 1)) ]; then _fits+=" and ${_fit[$_i]}"; else _fits+=", ${_fit[$_i]}"; fi
   done
   _big=""; for _l in "${TOO_BIG[@]}"; do _big+="${_big:+, }$(lane_title "$_l")"; done
-  echo "This box is a 64 GB DGX Spark: the lanes that fit it are the $_fits here$_speech. Left out, as they need a 128 GB one: $_big."
-  unset _big _l _fit _fits _speech _i
+  echo "This box is a 64 GB DGX Spark: the lanes that fit it are the $_fits here$_speech$_embed. Left out, as they need a 128 GB one: $_big."
+  unset _big _l _fit _fits _speech _embed _i
 fi
 
 # The image, video, Kolibri and Nemotron lanes are installed on demand: a run puts in their units

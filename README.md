@@ -52,8 +52,8 @@ alone on code, 82 at 4 streams), NVIDIA's **FP4-Local** build of the Flash-Next 
 flash lane's quality in about half its disk, with twice its KV cache), Ornith AI's **Ornith 1.5 122B**,
 a mixture of experts with vision and a 1M-token window (42 tok/s alone, 90 in all at 8 streams),
 **MiniMax-H3** video with sound, opt-in **speech** on the CPU (Qwen3-ASR hears 30
-languages, Kokoro speaks seven), and a **System One** endpoint that answers with calibrated
-probabilities instead of text.
+languages, Kokoro speaks seven), **PPLX Embed v1 0.6B** embeddings on the CPU, and a
+**System One** endpoint that answers with calibrated probabilities instead of text.
 
 Used and cited by others: [Kevin Welter's write-up](https://kevinwelter.com/en/blog/qwen-3-8-lokal)
 of running Qwen3.8 on a DGX Spark follows this recipe,
@@ -138,6 +138,7 @@ The README is the entry point. Everything longer lives next to it, one subject p
 | Where the two Qwen text lanes stand against upstream SGLang, re-checked in the images | [docs/upstream.md](docs/upstream.md) |
 | Typed decisions in full: the contract, the four levers, the refusals, the load | [docs/systemone.md](docs/systemone.md) |
 | The speech lane: install, use, the languages, the long recordings, what it was measured with | [docs/speech-lane.md](docs/speech-lane.md) |
+| The embedding lane: PPLX Embed v1 0.6B on the CPU, `/v1/embeddings`, the memory budget | [docs/embedding-lane.md](docs/embedding-lane.md) |
 | The `lean` reasoning level: method, numbers, negative results | [LEAN.md](LEAN.md) |
 | What changed in every release, with the measurement behind each change | [CHANGELOG.md](CHANGELOG.md) |
 | The layout, the state files, the invariants CI holds | [ARCHITECTURE.md](ARCHITECTURE.md) |
@@ -230,6 +231,7 @@ a 64 GB box it installs what fits it, nothing else, and ends its first install o
 | Nemotron 3.5 Bolt | the lane it serves, with a memory share of its own: 667,874 tokens of KV (2.55 times its 262,144-token window), 110.8 tok/s greedy median on `bench.sh` |
 | Qwen3.8-27B in NVFP4 | a Load away, its native window in a unit sized for 64 GB: two requests at a time, 59,625 tokens of KV, 67.2 tok/s greedy median |
 | Speech (`./install-speech.sh`) | as on any box, on the CPU |
+| Embeddings (`./install-embed.sh`) | as on any box, on the CPU, 2.5 GiB at the default batch |
 | the flash lane, `CONTEXT_MODE=1m`, the FP8 targets, images, video, Kolibri-1, Nemotron 3.5 Super VL, Qwen3.8 Flash-Next FP4-Local, Ornith 1.5 122B | refused, as they need a 128 GB DGX Spark |
 
 Each refusal comes before a byte is fetched or pulled: in `install.sh`, in each lane's installer, in
@@ -701,6 +703,23 @@ decode did not move (47.5 tok/s).
 It reads any audio ffmpeg reads (a phone's m4a, a browser's webm), cuts long recordings
 into pieces of 30 s at their quiet moments, and answers the official OpenAI SDK as it
 is. The languages, every number and the limits: **[docs/speech-lane.md](docs/speech-lane.md)**.
+
+## Embeddings: PPLX Embed v1 0.6B, on the CPU, behind `/v1/embeddings`
+
+Opt-in too: Perplexity's `pplx-embed-v1-0.6b` in Text Embeddings Inference, 1024
+dimensions, behind the proxy's OpenAI-compatible `/v1/embeddings` and the box's own key.
+It runs on the small CPU cores beside any lane. The defaults matter: at 2048-token batches
+it held 2.5 GiB and answered a short request in 59 ms, where TEI's 16384-token defaults
+held 22.4 GiB and took the flash lane's load down with them.
+
+```bash
+./install-embed.sh              # from a clone, after ./install.sh: proved before it ends
+EMBED_BOOT=1 ./install-embed.sh # start it now, and with the box
+```
+
+TEI clamps the longest input to the batch budget, so chunk a codebase at or below 2048
+tokens. Every number, the wiring, the key and the alternatives:
+**[docs/embedding-lane.md](docs/embedding-lane.md)**.
 
 ## The 1M context mode
 
