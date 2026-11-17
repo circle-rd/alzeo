@@ -200,13 +200,16 @@ if [ "$CHANGED" -eq 1 ] && systemctl is-active --quiet qwen38-keepalive.service;
   sudo systemctl restart qwen38-keepalive.service
   echo "keepalive proxy restarted: /v1/embeddings now reaches the embedding lane"
 fi
-if [ "${EMBED_BOOT:-0}" = "1" ]; then sudo systemctl enable --now "$UNIT" >/dev/null 2>&1; echo "enabled at boot and running (EMBED_BOOT=1)"; fi
-
-if [ "$SMOKE" -eq 0 ]; then step "Done (round trip skipped)"; exit 0; fi
+if [ "$SMOKE" -eq 0 ]; then
+  if [ "${EMBED_BOOT:-0}" = "1" ]; then sudo systemctl enable --now "$UNIT" >/dev/null 2>&1; echo "enabled at boot and running (EMBED_BOOT=1)"; fi
+  step "Done (round trip skipped)"; exit 0
+fi
 
 step "4/5 Proving the lane serves"
 WAS_ACTIVE=0; systemctl is-active --quiet "$UNIT" && WAS_ACTIVE=1
-KEEP=$WAS_ACTIVE; [ "${EMBED_BOOT:-0}" = "1" ] && KEEP=1
+# Left as it was found until the proof ends: a lane that fails its round trip is not
+# enabled at boot, and not left running unless it already was.
+KEEP=$WAS_ACTIVE
 SMOKE_DIR="$(mktemp -d)"
 cleanup(){
   rm -f "$RENDER_UNIT" "$RENDER_LAUNCH" "$RENDER_DROPIN"; rm -rf "$SMOKE_DIR"
@@ -249,6 +252,10 @@ print(f"   proxy : {len(rows)} vectors of {len(rows[0]['embedding'])} dimensions
 PY
 else
   echo "   proxy : skipped, qwen38-keepalive.service is not running"
+fi
+
+if [ "${EMBED_BOOT:-0}" = "1" ]; then
+  sudo systemctl enable "$UNIT" >/dev/null 2>&1 && { KEEP=1; echo "   enabled at boot"; }
 fi
 
 step "5/5 Done"
