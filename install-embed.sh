@@ -138,6 +138,17 @@ echo "image ready: $EMBED_IMAGE"
 step "3/5 Service and proxy wiring"
 CHANGED=0
 mkdir -p "$CONFIG_DIR"
+# The route lives in this branch's proxy, and the box runs the copy install.sh put in
+# CONFIG_DIR, not the clone's: a git update alone left the old proxy in memory and the
+# route reached the text engine, which answered 400 (seen on the reference box, 2026-11-17).
+# Install only when the deployed copy has no route at all, and leave every other difference
+# to ./install.sh, which owns that file.
+[ -f "$CONFIG_DIR/keepalive-proxy.py" ] || die "no proxy at $CONFIG_DIR/keepalive-proxy.py: run ./install.sh first."
+grep -q '^EMBED_UPSTREAM' "$HERE/keepalive-proxy.py" || die "this branch's keepalive-proxy.py has no embedding route."
+if ! grep -q '^EMBED_UPSTREAM' "$CONFIG_DIR/keepalive-proxy.py"; then
+  install -m 755 "$HERE/keepalive-proxy.py" "$CONFIG_DIR/keepalive-proxy.py"; CHANGED=1
+  echo "proxy updated from this branch: it carries the /v1/embeddings route"
+fi
 # The key the lane checks is the box's own: one key opens the text engine and the
 # embedding lane, and the proxy already holds it. The file is private, and the proxy's
 # drop-in reads it so the two cannot disagree about which key is current.
