@@ -792,7 +792,7 @@ UPSTREAM      = os.environ.get("UPSTREAM", "http://127.0.0.1:30000")
 # that wrote it the other way, and both reach the same upstream route.
 EMBED_UPSTREAM = os.environ.get("EMBED_UPSTREAM", "").strip().rstrip("/")
 EMBED_API_KEY = os.environ.get("EMBED_API_KEY", "")
-EMBED_TIMEOUT_S = float(os.environ.get("EMBED_TIMEOUT_S", "60"))
+EMBED_TIMEOUT_S = float(os.environ.get("EMBED_TIMEOUT_S", "900"))
 EMBED_ROUTES = frozenset({"/v1/embeddings", "/v1/embedding"})
 KEEPALIVE_S   = float(os.environ.get("KEEPALIVE_S", "10"))
 MAX_SILENCE_S = float(os.environ.get("MAX_SILENCE_S", "3600"))

@@ -172,7 +172,7 @@ RENDER_UNIT="$(mktemp)"; RENDER_LAUNCH="$(mktemp)"; RENDER_DROPIN="$(mktemp)"
 trap 'rm -f "$RENDER_UNIT" "$RENDER_LAUNCH" "$RENDER_DROPIN"' EXIT
 render "$HERE/qwen38-embed.service.template" > "$RENDER_UNIT"
 render "$HERE/qwen38-embed-launch.sh.template" > "$RENDER_LAUNCH"
-printf '[Service]\nEnvironment=EMBED_UPSTREAM=http://127.0.0.1:%s\nEnvironmentFile=-%s\n' "$PORT" "$ENVFILE" > "$RENDER_DROPIN"
+printf '[Service]\nEnvironment=EMBED_UPSTREAM=http://127.0.0.1:%s\nEnvironment=EMBED_TIMEOUT_S=900\nEnvironmentFile=-%s\n' "$PORT" "$ENVFILE" > "$RENDER_DROPIN"
 for f in "$RENDER_UNIT" "$RENDER_LAUNCH" "$RENDER_DROPIN"; do
   grep -q '__[A-Z][A-Z0-9_]*__' "$f" && die "a template still holds an unsubstituted placeholder: $(grep -o '__[A-Z][A-Z0-9_]*__' "$f" | sort -u | tr '\n' ' ')"
 done
