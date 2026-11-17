@@ -1,25 +1,61 @@
-# The embedding lane: PPLX Embed v1 0.6B on the CPU, behind `/v1/embeddings`
+# The embedding lane: PPLX Embed v1 0.6B, on the GPU or the CPU, behind `/v1/embeddings`
 
-Perplexity's `pplx-embed-v1-0.6b` in Text Embeddings Inference (TEI), on the CPU beside
-whichever text lane serves, behind the keepalive proxy's OpenAI-compatible
-`/v1/embeddings` and the same API key. Opt-in, and not in the one command yet:
+Perplexity's `pplx-embed-v1-0.6b`, behind the keepalive proxy's OpenAI-compatible
+`/v1/embeddings` and the same API key. Two engines serve it:
+
+- **llama.cpp on the GPU**, the default: 21,000 tokens/s for 512-token chunks, an 8K
+  context, 2.6 GB of device memory, measured beside Flash-Next.
+- **Text Embeddings Inference on the CPU**, the fallback: 382 tokens/s, 2.5 GiB of host
+  memory, no GPU.
+
+Only one runs at a time: they serve the same checkpoint, and the CPU lane costs 2.9 GiB of
+host memory for nothing when the GPU one is there. Opt-in, and not in the one command yet:
 `./install-embed.sh` installs it, from a clone, on a box where `./install.sh` ran.
 
 ```bash
-./install-embed.sh                  # TEI, the model, the unit and the proxy route, proved before it ends
-EMBED_BOOT=1 ./install-embed.sh     # start it now, and with the box
-./install-embed.sh --uninstall      # the unit and the wiring; the model cache stays
+./install-embed.sh                    # llama.cpp on the GPU, the default
+EMBED_BOOT=1 ./install-embed.sh       # start it now, and with the box
+./install-embed.sh --engine tei       # the CPU fallback
+./install-embed.sh --uninstall        # the unit and the wiring; the model stays
 ```
 
-It needs Docker and about 6 GiB free. The image is a 117 MB pull, the model 2.3 GB. The
+The GPU mode needs Docker, a GPU and about 4 GiB free: the 1.2 GB F16 GGUF and the
+llama.cpp image. The CPU mode needs about 6 GiB: TEI's 2.3 GB checkpoint and its image. The
 installer proves the lane twice: directly on `127.0.0.1:30026`, then through the proxy on
-its own port, both with the box's key, and checks two 1024-dimension vectors.
+its own port, both with the box's key, and checks two 1024-dimension vectors. In GPU mode
+it also verifies the GGUF's pinned sha256 before the first start.
 
-## Why the CPU, and why 2048-token batches
+## The default: llama.cpp on the GPU
 
-The box serves one GPU lane at a time, and Flash-Next holds almost all of the unified
-memory. On 2026-11-17, with Flash-Next loading, TEI's defaults were measured on the
-reference box:
+Measured on 2026-11-17 with the Flash-Next lane running, the pinned llama.cpp image
+(`ghcr.io/ggml-org/llama.cpp@sha256:a5600a59...`, b12316) and the F16 GGUF of
+`bowang0911/pplx-embed-v1-0.6b-gguf` (sha256 `08ba3d20...`), all 29 layers on the GB10:
+
+```bash
+llama-server -m pplx-embed-v1-0.6b-f16.gguf \
+  --embedding --pooling mean \
+  --override-kv qwen3.attention.causal=bool:false \
+  -c 8192 -b 8192 -ub 8192 -ngl 999 -fa on
+```
+
+Two flags are mandatory, and one of them is not in `llama-server`'s help:
+
+- `--pooling mean`: the GGUF's own pooling is `-1`; without it the vector is wrong.
+- `--override-kv qwen3.attention.causal=bool:false`: the GGUF records causal attention
+  (`causal attn = 1` in llama.cpp's log), but PPLX is a bidirectional encoder. `llama-server`
+  has no `--attention` option; that flag belongs to `llama-embedding` only. With the GGUF as
+  published, causal attention gives cosine 0.58 against TEI; with the override, raw float
+  gives 0.9994, and after the model's own int8 step (`round(tanh(x) * 127)`, then L2) gives
+  **0.99996**. The vectors match the reference.
+
+The launcher adds `--embd-normalize 2`, `--api-key-file` (the box's key), `-t 4` and the
+small cores. The 8K context is the co-residency setting: it keeps the GPU footprint at
+2.6 GB, and a request may carry up to 8192 tokens, for example 16 chunks of 512.
+
+## The CPU fallback: TEI, and why 2048-token batches
+
+The fallback exists for a box whose GPU is busy or absent. TEI's defaults were measured on
+the reference box on 2026-11-17, with Flash-Next loading:
 
 | settings | memory | note |
 |---|---|---|
@@ -37,10 +73,10 @@ overloaded", on the first index run (2026-11-17). The installer sets 64, so one 
 send a full 64-input batch; several clients sending batches at once want a multiple of
 that. `max_client_batch_size` is 64 to match.
 
-The lane keeps to the ten Cortex-A725 cores (CPUs 0-4 and 10-14), as the speech lane does,
-with Docker's `--memory` cap at 4 GiB by default. A container's cgroup is Docker's, not the
-systemd unit's, so the cap is on `docker run`; a unit `MemoryMax` would watch the client
-alone.
+The CPU lane keeps to the ten Cortex-A725 cores (CPUs 0-4 and 10-14), as the speech lane
+does, with Docker's `--memory` cap at 4 GiB by default. A container's cgroup is Docker's,
+not the systemd unit's, so the cap is on `docker run`; a unit `MemoryMax` would watch the
+client alone.
 
 ## Using it
 
@@ -55,18 +91,21 @@ r = client.embeddings.create(model="pplx-embed-v1-0.6b", input=["def main():", "
 print(len(r.data), len(r.data[0].embedding))     # 2 1024
 ```
 
-- **1024 dimensions**, always. The model supports Matryoshka truncation, but TEI exposes
-  the full vector only: do not send `dimensions`.
-- **Unnormalized, int8-quantized vectors**, as Perplexity trained them. Compare with
-  cosine similarity, not inner product.
+- **1024 dimensions**, always. The model supports Matryoshka truncation, but neither
+  engine exposes it: do not send `dimensions`.
+- **Compare with cosine similarity.** The CPU/TEI lane returns the model's int8 step,
+  L2-normalized; the GPU lane returns an L2-normalized float vector, 0.9994 cosine from
+  TEI. Both are unnormalized in the model's own terms; do not use inner product.
 - **No instruction prefix** is needed or added.
-- **`model` is ignored by TEI**; name `pplx-embed-v1-0.6b` for the reader's sake.
+- **`model` is ignored by both engines**; name `pplx-embed-v1-0.6b` for the reader's sake.
 - The plural `/v1/embeddings` is OpenAI's spelling. `/v1/embedding` is kept as an alias
   for a client that wrote it the other way.
 
-The model revision is pinned in `install-embed.sh`
-(`2c4d510dd4a732063c31a0f70193e35067b51fd8`). Store it beside an index: a moving `main`
-changes the vectors, and vectors from two revisions do not compare.
+The checkpoint revision is pinned in `install-embed.sh`
+(`2c4d510dd4a732063c31a0f70193e35067b51fd8`); the GPU GGUF adds its repository revision
+(`ab95a3d1...`) and file sha256 (`08ba3d20...`). Store them beside an index: a moving
+`main` changes the vectors, and vectors from two revisions do not compare. Keep one engine
+per index, or re-embed the whole corpus when switching.
 
 ## The wiring
 
@@ -75,7 +114,7 @@ client :30001
    |
 keepalive-proxy
    |-- /v1/chat/completions, /v1/messages... -> 127.0.0.1:30000  (the text lane)
-   `-- /v1/embeddings, /v1/embedding         -> 127.0.0.1:30026  (TEI)
+   `-- /v1/embeddings, /v1/embedding         -> 127.0.0.1:30026  (llama.cpp or TEI)
 ```
 
 `install-embed.sh` writes `qwen38-embed.service`, its launcher, and a systemd drop-in for
@@ -85,6 +124,7 @@ the proxy:
 # /etc/systemd/system/qwen38-keepalive.service.d/embed.conf
 [Service]
 Environment=EMBED_UPSTREAM=http://127.0.0.1:30026
+Environment=EMBED_TIMEOUT_S=900
 EnvironmentFile=-/home/<user>/.config/qwen38/embed.env
 ```
 
@@ -98,14 +138,15 @@ the copy `install.sh` put in `~/.config/qwen38/keepalive-proxy.py`, not the clon
 `/v1/embeddings` reached the text engine, which answered 400 with SGLang's
 "does not appear to be an embedding model" (seen on the reference box, 2026-11-17).
 
-The lane itself has no `Conflicts=` with the text lanes: it never touches the GPU. It is
-not started at boot unless `EMBED_BOOT=1`, as the speech lane is not: at rest it holds
-2.5 GiB of host memory that a flash lane's long prompts also want.
+The lane has no `Conflicts=` with the text lanes: it is meant to run beside whichever one
+serves, and the co-residency measurement is below. It is not started at boot unless
+`EMBED_BOOT=1`, as the speech lane is not.
 
 The same key opens both doors. `embed.env` holds `EMBED_API_KEY`, read from the box's own
-`~/.config/qwen38/api-key` (0600), and the launcher gives TEI that key in its environment,
-never on its command line. The proxy validates the client's key as it always does, then
-signs its call to TEI with the same value.
+`~/.config/qwen38/api-key` (0600). The TEI launcher passes it in the environment; the
+llama.cpp launcher mounts the key file read-only for `--api-key-file`. Neither puts it on a
+command line. The proxy validates the client's key as it always does, then signs its call
+to the lane with the same value.
 
 ## Throughput, measured on the reference box
 
@@ -145,33 +186,7 @@ For a query, the lane is fast: 60 ms for two short texts. Bulk indexing is the s
 At 382 tokens/s, 10M tokens take 7.3 hours, 100M take 73 hours, and 1B take 30 days; on all
 twenty cores, 3.8 hours, 37.5 hours and 15.6 days.
 
-### The same model in llama.cpp, on the GPU
-
-Measured on 2026-11-17 with the Flash-Next lane stopped, the pinned llama.cpp image
-(`ghcr.io/ggml-org/llama.cpp@sha256:a5600a59...`, b12316) and the F16 GGUF of
-`bowang0911/pplx-embed-v1-0.6b-gguf` (sha256 `08ba3d20...`), all 29 layers on the GB10:
-
-```bash
-llama-server -m pplx-embed-v1-0.6b-f16.gguf \
-  --embedding --pooling mean \
-  --override-kv qwen3.attention.causal=bool:false \
-  -c 8192 -b 8192 -ub 8192 -ngl 999 -fa on
-```
-
-Two flags are mandatory, and one of them is not in `llama-server`'s help:
-
-- `--pooling mean`: the GGUF's own pooling is `-1`; without it the vector is wrong.
-- `--override-kv qwen3.attention.causal=bool:false`: the GGUF records causal attention
-  (`causal attn = 1` in llama.cpp's log), but PPLX is a bidirectional encoder. `llama-server`
-  has no `--attention` option; that flag belongs to `llama-embedding` only. With the GGUF as
-  published, causal attention gives cosine 0.58 against TEI; with the override, raw float
-  gives 0.9994, and after the model's own int8 step (`round(tanh(x) * 127)`, then L2) gives
-  **0.99996**. The vectors match the reference.
-
-  That last number used `--embd-normalize -1`, which returns the raw float vector so the
-  model's own int8 step can be applied. `llama-server`'s default normalizes the float vector
-  instead, which is 0.9994 against TEI and different bytes for the same text. A lane that
-  mixes the two must either post-process the float or keep one source per index.
+### GPU throughput
 
 | context | inputs | tokens | time | tokens/s | device memory (llama.cpp's projection) |
 |---:|---:|---:|---:|---:|---:|
@@ -187,13 +202,10 @@ That is **56 times** the CPU lane for 512-token chunks (21,176 against 382 token
 beside a text lane; the 32K context costs 8.4 GB and fits only while the text lane leaves
 room.
 
-Two caveats remain before this is a lane:
-
-- **The GGUF is a community conversion**, not an official one: llama.cpp's converter still
-  rejects `PPLXQwen3Model` (`ggml-org/llama.cpp#20055`, closed as not planned). The project
-  should either pin this file and its hash, or convert the official checkpoint with a
-  patched converter that writes `causal_attention=false` and check the vectors as above.
-- **A GPU lane beside the text lane costs decode.** Measured below.
+The GGUF is a community conversion, not an official one: llama.cpp's converter still
+rejects `PPLXQwen3Model` (`ggml-org/llama.cpp#20055`, closed as not planned). The lane pins
+the file, its revision and its sha256; a conversion from the official checkpoint with a
+patched converter that writes `causal_attention=false` would be preferable when it exists.
 
 ### Both at once: Flash-Next and llama.cpp embeddings
 
@@ -259,8 +271,8 @@ with no batching across clients, and the CPU is the limit.
 
 ## What follows
 
-- **Queries belong on the box.** 60 ms for a short query beats the cloud's 180 ms P50, and
-  the vectors never leave the network.
+- **Queries belong on the box.** 20 ms on the GPU lane, 60 ms on the CPU one, against the
+  cloud's 180 ms P50, and the vectors never leave the network.
 - **Bulk indexing does not, unless privacy or offline use decides it.** Use the cloud for a
   one-off index of a large codebase, or llama.cpp on the GPU if it can have the GPU: 10M
   tokens in 8 minutes, against 7.3 hours on the CPU lane. The cloud and both local paths
@@ -272,15 +284,13 @@ with no batching across clients, and the CPU is the limit.
 
 ## Why not another server
 
-- **SGLang `--is-embedding`** is the fastest on a GPU, but the GPU is the text lane's.
-  Beside Flash-Next, a new CUDA context can fail to start, and a busy GPU side lane took
-  45% of the flash lane's decode in the speech measurement. It would be right on a second
-  box, or with the text lane stopped.
+- **SGLang `--is-embedding`** would need a second full CUDA context beside the text lane.
+  llama.cpp's 2.6 GB is the measured co-residency path; SGLang's mode is for a box where
+  the embedding model is the only GPU tenant.
 - **vLLM on the CPU** adds its scheduler and image for no measured gain on an embedding
   model; TEI is the server the model card names.
-- **llama.cpp GGUF** is now measured: F16, 2.6 GB of GPU at 8K context, 21,000 tokens/s,
-  and 0.99996 cosine against TEI once the causal-attention metadata is overridden. It is no
-  longer a "not a promise" path, but it needs a pinned community GGUF or a patched official
-  conversion, and the co-residency question above.
+- **llama.cpp GGUF** is the lane's default: F16, 2.6 GB of GPU at 8K context, 21,000
+  tokens/s, and 0.99996 cosine against TEI once the causal-attention metadata is
+  overridden. It needs a pinned community GGUF, or a patched official conversion.
 - **ONNX Runtime int8** would be leaner, but the official TEI image for it is amd64 only,
   and this box is arm64.
