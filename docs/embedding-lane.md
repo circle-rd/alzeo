@@ -193,9 +193,50 @@ Two caveats remain before this is a lane:
   rejects `PPLXQwen3Model` (`ggml-org/llama.cpp#20055`, closed as not planned). The project
   should either pin this file and its hash, or convert the official checkpoint with a
   patched converter that writes `causal_attention=false` and check the vectors as above.
-- **Co-residency with a text lane is not measured.** The speech lane's measurement showed a
-  GPU side lane can cost 45% of the text lane's decode. The embedding lane is bursty and
-  small, but that needs a run with Flash-Next active before promising both at once.
+- **A GPU lane beside the text lane costs decode.** Measured below.
+
+### Both at once: Flash-Next and llama.cpp embeddings
+
+Measured on 2026-11-17 with the SGLang Flash-Next lane (`qwen38-flash.service`) and the
+llama.cpp embedding server above, the latter at an 8K context and 2.6 GB of device memory.
+
+| load order | Flash ready | available at ready | chat alone | chat + 1 x 16x512 | chat + 4 x 8x512 | embeddings alone |
+|---|---:|---:|---:|---:|---:|---:|
+| Flash first, then embeddings | 840 s | 12.4 GiB | 36.7 tok/s | 29.7 tok/s | 22.5 tok/s | 21.3k tok/s |
+| embeddings first, then Flash | 780 s | 12.1 GiB | 28.4 tok/s | 30.9 tok/s | 21.7 tok/s | 21.2k tok/s |
+
+Both orders work at 8K and 2.6 GB; the order is not the deciding factor. The safe default is
+still **Flash first**: its load is the sensitive one (the box's 6.9 GiB floor), and starting
+the small lane after `/health` leaves the most headroom. In the reverse order the embedding
+server added about 3.7 GiB of used memory before the load, and Flash still reached ready.
+
+The cost is in decode when both are busy: a single 16x512 embedding request took chat from
+36.7 to 29.7 tok/s (-19%), and four concurrent 8x512 requests took it to 22.5 tok/s (-39%).
+Embedding aggregate throughput fell from 21.3k to 7.0-9.5k tok/s while chat was decoding.
+That is acceptable for background indexing and not for latency-sensitive chat: index in
+bursts, or stop indexing while an agent is talking.
+
+A 32K embedding context costs 8.4 GB and would leave 110 + 8.4 = 118.4 GB of the 124 GB
+unified pool, with the Flash load peak close to the floor. Do not use 32K beside a loading
+text lane; the 8K context is the co-residency setting.
+
+### Idle memory, and what the 5.7 GB is
+
+Measured with Flash stopped and the CPU/TEI embedding lane running: `free -m` showed
+**used 4.9 GiB, available 119.6 GiB**. The resident processes were:
+
+| process | RSS |
+|---|---:|
+| `text-embeddings` (the TEI lane) | 2.9 GiB |
+| `nvidia-persistenced` | 0.6 GiB |
+| cockpit, opencode, docker, containerd, other services | about 1.4 GiB |
+
+The 11 GiB of `buff/cache` is reclaimable and is already counted in `available`; it is not
+pressure. The useful lever is the TEI lane: it and the GPU llama.cpp lane serve the same
+checkpoint, so running both duplicates 2.9 GiB for nothing. With it stopped the idle used
+memory is about 2 GiB. `nvidia-persistenced` can be disabled for another 0.6 GiB, at the
+cost of slower GPU initialisation; the rest is the OS and the cockpit. During a Flash load
+the floor is 6.9 GiB, so the 2.9 GiB from TEI is exactly the kind of headroom that matters.
 
 ## Against Perplexity's cloud
 
