@@ -708,7 +708,7 @@ is. The languages, every number and the limits: **[docs/speech-lane.md](docs/spe
 
 Opt-in too: Perplexity's `pplx-embed-v1-0.6b`, 1024 dimensions, behind the proxy's
 OpenAI-compatible `/v1/embeddings` and the box's own key. The default is **llama.cpp on the
-GPU**: an 8K context, 2.6 GB of device memory, **21,000 tokens/s**, measured beside
+GPU**: an 8K context, 2.6 GB of device memory, **18,000 to 21,000 tokens/s**, measured beside
 Flash-Next. The CPU fallback is TEI: 382 tokens/s and 2.5 GiB of host memory, no GPU.
 
 ```bash

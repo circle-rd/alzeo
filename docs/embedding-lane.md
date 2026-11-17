@@ -3,8 +3,8 @@
 Perplexity's `pplx-embed-v1-0.6b`, behind the keepalive proxy's OpenAI-compatible
 `/v1/embeddings` and the same API key. Two engines serve it:
 
-- **llama.cpp on the GPU**, the default: 21,000 tokens/s for 512-token chunks, an 8K
-  context, 2.6 GB of device memory, measured beside Flash-Next.
+- **llama.cpp on the GPU**, the default: 18,000 to 21,000 tokens/s for 512-token
+  chunks, an 8K context, 2.6 GB of device memory, measured beside Flash-Next.
 - **Text Embeddings Inference on the CPU**, the fallback: 382 tokens/s, 2.5 GiB of host
   memory, no GPU.
 
@@ -196,11 +196,16 @@ twenty cores, 3.8 hours, 37.5 hours and 15.6 days.
 | 32K | 64 x 512 | 32,765 | 1.53 s | 21,407 | 8.4 GB |
 | 32K | 8 x 2048 | 16,384 | 0.97 s | 16,835 | 8.4 GB |
 
-That is **56 times** the CPU lane for 512-token chunks (21,176 against 382 tokens/s), and a
-64-chunk batch in 1.5 s instead of 86 s. At 21,000 tokens/s, 10M tokens take 7.9 minutes,
-100M take 79 minutes. The 8K context keeps the GPU footprint to 2.6 GB, small enough to sit
-beside a text lane; the 32K context costs 8.4 GB and fits only while the text lane leaves
-room.
+That is **47 to 56 times** the CPU lane for 512-token chunks (18,153 to 21,176 against 382
+tokens/s), and a 64-chunk batch in 1.5 s instead of 86 s. At 18,000 tokens/s, 10M tokens
+take 9.3 minutes, 100M take 93 minutes. The 8K context keeps the GPU footprint to 2.6 GB,
+small enough to sit beside a text lane; the 32K context costs 8.4 GB and fits only while
+the text lane leaves room.
+
+The 21,176 figure is the test server's 20-thread run; the lane's launcher bounds tokenisation
+to 4 threads on the small cores to leave Flash-Next's CPU work alone, and measured **18,153
+tokens/s** for 16x512 beside Flash-Next. Eight threads did not improve it (17,721), so the
+GPU, not tokenisation, is the limit.
 
 The GGUF is a community conversion, not an official one: llama.cpp's converter still
 rejects `PPLXQwen3Model` (`ggml-org/llama.cpp#20055`, closed as not planned). The lane pins
