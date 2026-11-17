@@ -81,7 +81,7 @@ docker_session bash "$REPO_DIR/${BASH_SOURCE[0]##*/}" "$@"
 # digest: a digest pull leaves no tag behind.
 LOCAL_IMAGE_REPOS="qwen38-dflash2 qwen38-flash qwen38-pinned qwen38-kolibri qwen38-nemotron"  # qwen38-dflash2 is the pre-v1.14 27B overlay, retired but still deletable; qwen38-pinned (v1.18.6) tags the digest pulls; qwen38-kolibri is the Kolibri lane's vLLM image with Aleph Alpha's plugin (install-kolibri.sh); qwen38-nemotron is the Nemotron lane's vLLM nightly with b12x (install-nemotron.sh)
 BASE_IMAGES="lmsysorg/sglang:v0.5.22 lmsysorg/sglang@sha256:e3a4f06001a29542fc4a8638536d9ffc5eb9c9942b08603c09b19a56eae4a1ae lmsysorg/sglang:v0.5.21 lmsysorg/sglang@sha256:b1259f3ea3275f66237c498ea388919729018bc9f01c3d638391e06e2cf3f469 lmsysorg/sglang:v0.5.19 lmsysorg/sglang@sha256:d6e7288627be8b02be88e4bba38e73f6d50e2826869f753c13a4c4385ab3eda9 lmsysorg/sglang:qwen38-27b lmsysorg/sglang@sha256:febfb971c7352570fc445c466ebd6ffc9d896024958e544a60f2137fd85856b1 lmsysorg/sglang:qwen38flashnext lmsysorg/sglang@sha256:12d3392bdc8be8d35e9a95f191df6aef99c5114bdbefd41bfdc7e760e6d25ec1 lmsysorg/sglang@sha256:9d2a843c706c74bc259c0d9abf360551eb2734e1e7d255ab012a6965f10480b6 lmsysorg/sglang@sha256:cb6ed363800a5bea98ac90b4c6447e9ba66cef7db881ac1f108046b6622d22b8 lmsysorg/sglang@sha256:3e79541d1e2a6818979c4aa9ca1fa63d6961d7bc50120867953ea6baaf1d8f62 lmsysorg/sglang@sha256:616a3e97f45191af975896cfa644279096cb31bd408a071c2e99ca7209c3cafe vllm/vllm-openai:qwen38-flash-next vllm/vllm-openai@sha256:fc120ece0a388cc0aa1caad4a9f1cd92113484ab7ec2fd0efadd62585be05bf8 vllm/vllm-openai@sha256:18372a7224938643461b846fb64c5c9d3d6e9727e82caf2dc3043e620c9d4d7a vllm/vllm-openai@sha256:1ee85ca80e0fc110017d79ea2081a0cbef9a208a05d7f22724801bcf6a956620 eugr/spark-vllm-b12x@sha256:03a956544e9f9b4b7ba91690469fbe7848bdbef29a7d2e0f5788368467bb3595 ghcr.io/ggml-org/llama.cpp@sha256:a5600a59c704208491adbb96505454a8d3d4cd3a9db48b03cf2760b660b7fd16 ghcr.io/huggingface/text-embeddings-inference:cpu-arm64-1.9@sha256:798cd7615e060a72ccbdf19aa0ada52289c6a0147490195bafaece6ce04d70f1 ghcr.io/huggingface/text-embeddings-inference@sha256:798cd7615e060a72ccbdf19aa0ada52289c6a0147490195bafaece6ce04d70f1"
-HF_REPOS="RadixArk/Qwen3.8-27B-NVFP4 edp1096/Huihui-RadixArk-Qwen3.8-27B-abliterated-NVFP4 Qwen/Qwen3.8-27B-FP8 edp1096/Huihui-Qwen3.8-27B-abliterated-FP8 atakans/Arete-27B-NVFP4 RadixArk/Qwen3.8-27B-DSpark z-lab/Qwen3.8-27B-DFlash2 maurienne-ai/Qwen3.8-27B-DFlash2-NVFP4-RTNcal RadixArk/Qwen3.8-Flash-Next-NVFP4 nvidia/Qwen3.8-Flash-Next-NVFP4 dealignai/Qwen3.8-Flash-Next-ABLITERATED-NVFP4 Qwen/Qwen-Image-2.1 Qwen/Qwen-Image-2.1-Turbo MiniMaxAI/MiniMax-H3 larryvrh/MiniMax-H3-Turbo-Lora Aleph-Alpha/Kolibri-1 Quantinine/Kolibri-1-NVFP4A16-FP8 nvidia/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-24GB nvidia/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-24GB-LiLiCorr nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-NVFP4 nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-NVFP4-LiLiCorr nvidia/Qwen3.8-Flash-Next-FP4-Local ornith-ai/Ornith-1.5-122B-NVFP4 unsloth/Qwen3.8-Flash-Next-GGUF ggml-org/Qwen3.8-Flash-Next-GGUF MiniMaxAI/MiniMax-H3-Image perplexity-ai/pplx-embed-v1-0.6b"
+HF_REPOS="RadixArk/Qwen3.8-27B-NVFP4 edp1096/Huihui-RadixArk-Qwen3.8-27B-abliterated-NVFP4 Qwen/Qwen3.8-27B-FP8 edp1096/Huihui-Qwen3.8-27B-abliterated-FP8 atakans/Arete-27B-NVFP4 RadixArk/Qwen3.8-27B-DSpark z-lab/Qwen3.8-27B-DFlash2 maurienne-ai/Qwen3.8-27B-DFlash2-NVFP4-RTNcal RadixArk/Qwen3.8-Flash-Next-NVFP4 nvidia/Qwen3.8-Flash-Next-NVFP4 dealignai/Qwen3.8-Flash-Next-ABLITERATED-NVFP4 Qwen/Qwen-Image-2.1 Qwen/Qwen-Image-2.1-Turbo MiniMaxAI/MiniMax-H3 larryvrh/MiniMax-H3-Turbo-Lora Aleph-Alpha/Kolibri-1 Quantinine/Kolibri-1-NVFP4A16-FP8 nvidia/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-24GB nvidia/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-24GB-LiLiCorr nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-NVFP4 nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-NVFP4-LiLiCorr nvidia/Qwen3.8-Flash-Next-FP4-Local ornith-ai/Ornith-1.5-122B-NVFP4 unsloth/Qwen3.8-Flash-Next-GGUF ggml-org/Qwen3.8-Flash-Next-GGUF MiniMaxAI/MiniMax-H3-Image perplexity-ai/pplx-embed-v1-0.6b bowang0911/pplx-embed-v1-0.6b-gguf"
 
 FOUND_IMAGES=()   # "ref|size|every ref", deduplicated by image ID (a tag and its digest are one image)
 # Every reference Docker keeps for one image. A digest-pulled image carries its digest
@@ -158,11 +158,12 @@ if [ -d "$SPEECH_LANE_DIR/venv" ] || [ -d "$SPEECH_LANE_DIR/llama.cpp" ]; then
   echo "  runtime   $SPEECH_LANE_DIR (speech lane venv + llama.cpp CPU build)"
 fi
 [ -d "$SPEECH_LANE_DIR/models" ] && echo "  weights   $SPEECH_LANE_DIR/models ($(dir_size "$SPEECH_LANE_DIR/models"), speech lane: Qwen3-ASR and Kokoro)"
-# The embedding lane (install-embed.sh, EMBED_LANE_DIR) keeps TEI's model cache in its own
-# folder, which stays like every other checkpoint.
+# The embedding lane (install-embed.sh, EMBED_LANE_DIR) keeps its model caches in its own
+# folders, TEI's /hf and llama.cpp's /models, which stay like every other checkpoint.
 EMBED_LANE_DIR="${EMBED_LANE_DIR:-$({ grep -m1 -E '^WorkingDirectory=' "$SYSTEMD_DIR/qwen38-embed.service" 2>/dev/null || true; } | cut -d= -f2- | tr -s /)}"
 EMBED_LANE_DIR="${EMBED_LANE_DIR:-$HOME/.local/share/qwen38-embed}"
-[ -d "$EMBED_LANE_DIR/hf" ] && echo "  weights   $EMBED_LANE_DIR/hf ($(dir_size "$EMBED_LANE_DIR/hf"), embedding lane: PPLX Embed v1 0.6B)"
+[ -d "$EMBED_LANE_DIR/hf" ] && echo "  weights   $EMBED_LANE_DIR/hf ($(dir_size "$EMBED_LANE_DIR/hf"), embedding lane: PPLX Embed v1 0.6B, TEI)"
+[ -d "$EMBED_LANE_DIR/models" ] && echo "  weights   $EMBED_LANE_DIR/models ($(dir_size "$EMBED_LANE_DIR/models"), embedding lane: PPLX Embed v1 0.6B, llama.cpp GGUF)"
 for f in "$CONFIG_DIR"/*.bak-preupdate; do
   [ -f "$f" ] && echo "  backup    $f (pre-update unit backup)"
 done
@@ -330,7 +331,7 @@ fi
 # launcher and env file are this box's config.
 rm -f "$CONFIG_DIR/launch-embed.sh" "$CONFIG_DIR/embed.env"
 if [ -d "$EMBED_LANE_DIR" ] && { [ "$PRIV" -eq 0 ] || [ "$PRIV_DONE" -eq 1 ]; }; then
-  [ -d "$EMBED_LANE_DIR/hf" ] || rmdir "$EMBED_LANE_DIR" 2>/dev/null \
+  { [ -d "$EMBED_LANE_DIR/hf" ] || [ -d "$EMBED_LANE_DIR/models" ]; } || rmdir "$EMBED_LANE_DIR" 2>/dev/null \
     || echo "kept $EMBED_LANE_DIR: it holds files the embedding lane did not put there"
 fi
 # The oc and claude-local launchers, only if they are ours (never a foreign oc binary)
@@ -412,7 +413,10 @@ if [ -d "$SPEECH_LANE_DIR/models" ]; then
   echo "  rm -rf '$SPEECH_LANE_DIR/models'    # $(dir_size "$SPEECH_LANE_DIR/models"), speech lane models"
 fi
 if [ -d "$EMBED_LANE_DIR/hf" ]; then
-  echo "  rm -rf '$EMBED_LANE_DIR/hf'    # $(dir_size "$EMBED_LANE_DIR/hf"), embedding lane model cache"
+  echo "  rm -rf '$EMBED_LANE_DIR/hf'    # $(dir_size "$EMBED_LANE_DIR/hf"), embedding lane TEI model cache"
+fi
+if [ -d "$EMBED_LANE_DIR/models" ]; then
+  echo "  rm -rf '$EMBED_LANE_DIR/models'    # $(dir_size "$EMBED_LANE_DIR/models"), embedding lane llama.cpp GGUF"
 fi
 while IFS= read -r p; do
   # an if, not an && list: as the last command of the script, a false test made the whole

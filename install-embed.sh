@@ -1,23 +1,28 @@
 #!/usr/bin/env bash
-# Install the embedding lane: PPLX Embed v1 0.6B in Text Embeddings Inference, on the CPU,
-# behind the box's own OpenAI-compatible /v1/embeddings route and the same API key.
-# Idempotent, and safe to run alone.
+# Install the embedding lane: PPLX Embed v1 0.6B, behind the box's own OpenAI-compatible
+# /v1/embeddings route and the same API key. Idempotent, and safe to run alone.
 #
-#   ./install-embed.sh                 first install, or update in place
-#   ./install-embed.sh --no-smoke      skip the round trip at the end
-#   ./install-embed.sh --uninstall     remove the unit and the wiring (the model cache stays)
+#   ./install-embed.sh                    llama.cpp on the GPU (default)
+#   ./install-embed.sh --engine tei       Text Embeddings Inference on the CPU
+#   ./install-embed.sh --no-smoke         skip the round trip at the end
+#   ./install-embed.sh --uninstall        remove the unit and the wiring (the model stays)
 #
-# Variables: EMBED_PORT (30026), EMBED_BOOT=1 (start it with the box, off by default),
-# EMBED_LANE_DIR (~/.local/share/qwen38-embed), EMBED_BATCH_TOKENS (2048, which is also
-# the longest input it takes), EMBED_CONCURRENCY (64), EMBED_MEM_MAX (4g), EMBED_CPUS.
+# Variables: EMBED_ENGINE (llamacpp or tei), EMBED_PORT (30026), EMBED_BOOT=1 (start it
+# with the box, off by default), EMBED_LANE_DIR (~/.local/share/qwen38-embed),
+# EMBED_CTX (8192 for llama.cpp), EMBED_THREADS (4 for llama.cpp, the small-core count for
+# TEI), EMBED_MEM_MAX (8g for llama.cpp, 4g for TEI), EMBED_CPUS. TEI also reads
+# EMBED_BATCH_TOKENS (2048), EMBED_CONCURRENCY (64) and EMBED_TOKENIZER_WORKERS (2).
 #
-# WHY THE CPU. The box serves one GPU lane at a time, and the flash lane holds almost all
-# of the unified memory. Measured on the reference box on 2026-11-17: TEI's defaults
-# (--max-batch-tokens 16384, 512 concurrent requests, 19 tokenizers) held 22.4 GiB and
-# 33.8 GiB at peak, enough to take the flash lane's load down; at 2048 batch tokens, 64
-# concurrent requests and 2 tokenizers, the same model held 2.5 GiB, answered a short
-# request in 59 ms and a 64-input batch in 1.9 s. TEI clamps max_input_length to the batch budget, so 2048 tokens is
-# the longest text this lane takes: chunk a codebase at or below it.
+# WHY TWO ENGINES. The CPU/TEI lane is the fallback: 382 tokens/s and 2.5 GiB of host
+# memory, no GPU. The GPU/llama.cpp lane is the default: 21,000 tokens/s at an 8K context
+# and 2.6 GiB of device memory, measured beside Flash-Next. Both serve the same route and
+# key; only one should run, since they serve the same checkpoint and the TEI lane costs
+# 2.9 GiB of host memory for nothing when the GPU one is there.
+#
+# The llama.cpp GGUF needs two mandatory settings: --pooling mean, and
+# --override-kv qwen3.attention.causal=bool:false. The GGUF records causal attention, and
+# without the override the cosine against the reference is 0.58; with it, 0.9994 raw and
+# 0.99996 after the model's int8 step.
 #
 # NOT IN THE ONE COMMAND YET. ./install.sh does not run this: the lane is installed on
 # purpose, by this script. It is not started at boot unless EMBED_BOOT=1.
@@ -37,13 +42,17 @@ if [ "$(id -u)" = "0" ] && [ "${ALLOW_ROOT:-0}" != "1" ]; then
   die "run this as the user who will use the box, not as root (everything it installs is addressed from \$HOME)."
 fi
 
-SMOKE=1; ACTION=install
-for a in "$@"; do case "$a" in
+SMOKE=1; ACTION=install; ENGINE_ARG=""
+while [ "$#" -gt 0 ]; do a="$1"; case "$a" in
   --no-smoke) SMOKE=0 ;;
   --uninstall) ACTION=uninstall ;;
+  --engine) shift; ENGINE_ARG="${1:-}"; [ -n "$ENGINE_ARG" ] || die "--engine needs llamacpp or tei" ;;
+  --engine=*) ENGINE_ARG="${a#--engine=}" ;;
   -h|--help) awk 'NR == 1 { next } /^#/ { print; next } { exit }' "$0"; exit 0 ;;
   *) die "unknown option: $a" ;;
-esac; done
+esac; shift; done
+EMBED_ENGINE="${ENGINE_ARG:-${EMBED_ENGINE:-llamacpp}}"
+case "$EMBED_ENGINE" in llamacpp|tei) : ;; *) die "EMBED_ENGINE must be llamacpp or tei (got $EMBED_ENGINE)" ;; esac
 
 installed(){ { grep -m1 -E "^$1=" "$INSTALLED" 2>/dev/null || true; } | cut -d= -f2-; }
 CONFIG_DIR="$HOME/.config/qwen38"
@@ -52,22 +61,33 @@ ENVFILE="$CONFIG_DIR/embed.env"
 launcher_flag(){ { grep -oE -- "$1 [^ \\\\]+" "$LAUNCHER" 2>/dev/null || true; } | awk '{print $2}' | tail -1; }
 LANE_DIR="${EMBED_LANE_DIR:-$(installed WorkingDirectory | tr -s /)}"; LANE_DIR="${LANE_DIR:-$HOME/.local/share/qwen38-embed}"
 PORT="${EMBED_PORT:-$(launcher_flag --port)}"; PORT="${PORT:-30026}"
-CACHE="$LANE_DIR/hf"
+if [ "$EMBED_ENGINE" = llamacpp ]; then CACHE="$LANE_DIR/models"; else CACHE="$LANE_DIR/hf"; fi
 
-# The pins. TEI 1.9.4 is the first release the model card names for this checkpoint, and
-# the model revision is what an index must name: a moving main changes the vectors.
+# The pins. The TEI image is the CPU fallback; the llama.cpp image is the same one the
+# flash-unsloth lane uses, and the GGUF is the community conversion checked on 2026-11-17:
+# F16, mean pooling, and 0.99996 cosine against TEI after the int8 step once the causal
+# attention metadata is overridden. The revision and the file hash are the index's
+# provenance; a moving main changes the vectors.
 EMBED_IMAGE="${EMBED_IMAGE:-ghcr.io/huggingface/text-embeddings-inference:cpu-arm64-1.9@sha256:798cd7615e060a72ccbdf19aa0ada52289c6a0147490195bafaece6ce04d70f1}"
 EMBED_MODEL="${EMBED_MODEL:-perplexity-ai/pplx-embed-v1-0.6b}"
 EMBED_REV="${EMBED_REV:-2c4d510dd4a732063c31a0f70193e35067b51fd8}"
+EMBED_LLAMA_IMAGE="${EMBED_LLAMA_IMAGE:-ghcr.io/ggml-org/llama.cpp@sha256:a5600a59c704208491adbb96505454a8d3d4cd3a9db48b03cf2760b660b7fd16}"
+EMBED_GGUF_REPO="${EMBED_GGUF_REPO:-bowang0911/pplx-embed-v1-0.6b-gguf}"
+EMBED_GGUF_REV="${EMBED_GGUF_REV:-ab95a3d1159624bed3ff10ae4821ff2ae2ada2ce}"
+EMBED_GGUF_FILE="${EMBED_GGUF_FILE:-pplx-embed-v1-0.6b-f16.gguf}"
+EMBED_GGUF_SHA="${EMBED_GGUF_SHA:-08ba3d20e89fe98cd8d129381424dfba1951d35de32a7ec7869fd77733c300eb}"
 EMBED_NAME="${EMBED_NAME:-pplx-embed-v1-0.6b}"
 EMBED_DTYPE="${EMBED_DTYPE:-float32}"
 EMBED_BATCH_TOKENS="${EMBED_BATCH_TOKENS:-2048}"
 EMBED_CONCURRENCY="${EMBED_CONCURRENCY:-64}"   # TEI's semaphore is per INPUT, not per request: a 64-input batch needs 64 permits
 EMBED_CLIENT_BATCH="${EMBED_CLIENT_BATCH:-64}"
 EMBED_TOKENIZER_WORKERS="${EMBED_TOKENIZER_WORKERS:-2}"
-EMBED_MEM_MAX="${EMBED_MEM_MAX:-4g}"
-MODEL_GB=3
-RUNTIME_GB=2
+EMBED_CTX="${EMBED_CTX:-8192}"
+if [ "$EMBED_ENGINE" = llamacpp ]; then
+  EMBED_MEM_MAX="${EMBED_MEM_MAX:-8g}"; MODEL_GB=2; RUNTIME_GB=3
+else
+  EMBED_MEM_MAX="${EMBED_MEM_MAX:-4g}"; MODEL_GB=3; RUNTIME_GB=2
+fi
 
 if [ "$ACTION" = uninstall ]; then
   step "Removing the embedding lane"
@@ -86,12 +106,13 @@ if [ "$ACTION" = uninstall ]; then
   fi
   docker rm -f qwen38-embed >/dev/null 2>&1 || true
   rm -f "$LAUNCHER" "$ENVFILE"
-  if [ -d "$CACHE" ]; then
-    echo "the model cache is left in $CACHE ($(du -sh "$CACHE" 2>/dev/null | cut -f1)); delete it yourself if you want the space:"
-    echo "  rm -rf $CACHE && rmdir $LANE_DIR 2>/dev/null || true"
-  else
-    rmdir "$LANE_DIR" 2>/dev/null || echo "kept $LANE_DIR: it holds files the embedding lane did not put there"
-  fi
+  for d in "$LANE_DIR/hf" "$LANE_DIR/models"; do
+    if [ -d "$d" ]; then
+      echo "the model cache is left in $d ($(du -sh "$d" 2>/dev/null | cut -f1)); delete it yourself if you want the space:"
+      echo "  rm -rf $d"
+    fi
+  done
+  rmdir "$LANE_DIR" 2>/dev/null || echo "kept $LANE_DIR: it holds files the embedding lane did not put there"
   exit 0
 fi
 
@@ -126,14 +147,33 @@ CORES="${EMBED_CPUS:-$(lscpu -e=CPU,MAXMHZ 2>/dev/null | tail -n +2 | small_core
 read -r -a CORE_LIST <<< "$CORES"
 [ "${#CORE_LIST[@]}" -ge 2 ] || die "could not read the CPUs' frequencies (lscpu -e=CPU,MAXMHZ); set EMBED_CPUS."
 EMBED_CPUS="$(printf '%s\n' "${CORE_LIST[@]}" | paste -sd, -)"
-EMBED_THREADS="${EMBED_THREADS:-${#CORE_LIST[@]}}"
+if [ -n "${EMBED_THREADS:-}" ]; then :; elif [ "$EMBED_ENGINE" = llamacpp ]; then EMBED_THREADS=4; else EMBED_THREADS=${#CORE_LIST[@]}; fi
 [ "$EMBED_THREADS" -le "${#CORE_LIST[@]}" ] || EMBED_THREADS=${#CORE_LIST[@]}
-echo "OK: $(uname -m), $EMBED_MODEL at ${EMBED_REV:0:12}, on CPUs $EMBED_CPUS, batch $EMBED_BATCH_TOKENS tokens"
+echo "OK: $(uname -m), $EMBED_MODEL with $EMBED_ENGINE, on CPUs $EMBED_CPUS, $EMBED_THREADS threads"
 
 step "2/5 Image and model cache"
 mkdir -p "$CACHE"
-docker pull --platform linux/arm64 "$EMBED_IMAGE" >/dev/null || die "could not pull $EMBED_IMAGE. Check the network and the image pin."
-echo "image ready: $EMBED_IMAGE"
+if [ "$EMBED_ENGINE" = llamacpp ]; then
+  docker pull --platform linux/arm64 "$EMBED_LLAMA_IMAGE" >/dev/null || die "could not pull $EMBED_LLAMA_IMAGE. Check the network and the image pin."
+  GGUF="$CACHE/$EMBED_GGUF_FILE"
+  if [ -f "$GGUF" ] && printf '%s  %s\n' "$EMBED_GGUF_SHA" "$GGUF" | sha256sum -c - >/dev/null 2>&1; then
+    echo "model ready: $GGUF (pinned hash verified)"
+  else
+    echo "downloading $EMBED_GGUF_REPO/$EMBED_GGUF_FILE at ${EMBED_GGUF_REV:0:12} (1.2 GB, once)"
+    TMP="$CACHE/.$EMBED_GGUF_FILE.part"
+    rm -f "$TMP"
+    curl -L --fail --retry 2 -o "$TMP" \
+      "https://huggingface.co/$EMBED_GGUF_REPO/resolve/$EMBED_GGUF_REV/$EMBED_GGUF_FILE" \
+      || { rm -f "$TMP"; die "could not download the GGUF from $EMBED_GGUF_REPO at $EMBED_GGUF_REV"; }
+    printf '%s  %s\n' "$EMBED_GGUF_SHA" "$TMP" | sha256sum -c - \
+      || { rm -f "$TMP"; die "the GGUF does not match the pinned sha256 $EMBED_GGUF_SHA"; }
+    mv "$TMP" "$GGUF"
+    echo "model ready: $GGUF (pinned hash verified)"
+  fi
+else
+  docker pull --platform linux/arm64 "$EMBED_IMAGE" >/dev/null || die "could not pull $EMBED_IMAGE. Check the network and the image pin."
+  echo "image ready: $EMBED_IMAGE"
+fi
 
 step "3/5 Service and proxy wiring"
 CHANGED=0
@@ -166,12 +206,18 @@ render(){  # $1 template: every placeholder this lane fills
       -e "s|__EMBED_DTYPE__|$EMBED_DTYPE|g" -e "s|__EMBED_BATCH_TOKENS__|$EMBED_BATCH_TOKENS|g" \
       -e "s|__EMBED_CONCURRENCY__|$EMBED_CONCURRENCY|g" -e "s|__EMBED_CLIENT_BATCH__|$EMBED_CLIENT_BATCH|g" \
       -e "s|__EMBED_TOKENIZER_WORKERS__|$EMBED_TOKENIZER_WORKERS|g" \
+      -e "s|__EMBED_LLAMA_IMAGE__|$EMBED_LLAMA_IMAGE|g" -e "s|__EMBED_GGUF_FILE__|$EMBED_GGUF_FILE|g" \
+      -e "s|__EMBED_CTX__|$EMBED_CTX|g" \
       "$1"
 }
 RENDER_UNIT="$(mktemp)"; RENDER_LAUNCH="$(mktemp)"; RENDER_DROPIN="$(mktemp)"
 trap 'rm -f "$RENDER_UNIT" "$RENDER_LAUNCH" "$RENDER_DROPIN"' EXIT
 render "$HERE/qwen38-embed.service.template" > "$RENDER_UNIT"
-render "$HERE/qwen38-embed-launch.sh.template" > "$RENDER_LAUNCH"
+if [ "$EMBED_ENGINE" = llamacpp ]; then
+  render "$HERE/qwen38-embed-llamacpp-launch.sh.template" > "$RENDER_LAUNCH"
+else
+  render "$HERE/qwen38-embed-launch.sh.template" > "$RENDER_LAUNCH"
+fi
 printf '[Service]\nEnvironment=EMBED_UPSTREAM=http://127.0.0.1:%s\nEnvironment=EMBED_TIMEOUT_S=900\nEnvironmentFile=-%s\n' "$PORT" "$ENVFILE" > "$RENDER_DROPIN"
 for f in "$RENDER_UNIT" "$RENDER_LAUNCH" "$RENDER_DROPIN"; do
   grep -q '__[A-Z][A-Z0-9_]*__' "$f" && die "a template still holds an unsubstituted placeholder: $(grep -o '__[A-Z][A-Z0-9_]*__' "$f" | sort -u | tr '\n' ' ')"
@@ -261,6 +307,7 @@ fi
 step "5/5 Done"
 echo "  embeddings : curl http://127.0.0.1:${PROXY_PORT:-30001}/v1/embeddings -H 'Authorization: Bearer <api-key>' \\"
 echo "                 -H 'Content-Type: application/json' -d '{\"input\":[\"hello\"]}'"
+echo "  engine     : $EMBED_ENGINE ($([ "$EMBED_ENGINE" = llamacpp ] && echo "GPU, 8K context, 2.6 GB" || echo "CPU, 2048-token batches"))"
 echo "  model      : $EMBED_MODEL, 1024 dimensions, cosine similarity"
 echo "  start/stop : sudo systemctl start $UNIT   (and stop; EMBED_BOOT=1 ./install-embed.sh starts it with the box)"
 if [ "$KEEP" -eq 0 ]; then echo "  left stopped, as it was: the proxy's /v1/embeddings answers 503 until it is started"; fi

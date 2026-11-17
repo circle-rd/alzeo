@@ -8,7 +8,6 @@ old copy in memory. install-embed.sh now installs this branch's proxy when the d
 one has no route at all. These are the static facts that keep that from regressing.
 """
 import pathlib
-import re
 import unittest
 
 REPO = pathlib.Path(__file__).resolve().parents[1]
@@ -16,6 +15,7 @@ INSTALLER = (REPO / "install-embed.sh").read_text()
 PROXY = (REPO / "keepalive-proxy.py").read_text()
 UNIT = (REPO / "qwen38-embed.service.template").read_text()
 LAUNCH = (REPO / "qwen38-embed-launch.sh.template").read_text()
+LLAMA = (REPO / "qwen38-embed-llamacpp-launch.sh.template").read_text()
 
 
 class TheRouteAndTheProxy(unittest.TestCase):
@@ -47,10 +47,34 @@ class TheRouteAndTheProxy(unittest.TestCase):
         self.assertIn("--max-client-batch-size __EMBED_CLIENT_BATCH__", LAUNCH)
         self.assertIn("--max-concurrent-requests __EMBED_CONCURRENCY__", LAUNCH)
 
+    def test_the_llamacpp_lane_is_the_default_and_tei_the_fallback(self):
+        self.assertIn('EMBED_ENGINE="${ENGINE_ARG:-${EMBED_ENGINE:-llamacpp}}"', INSTALLER)
+        self.assertIn("--engine tei", INSTALLER)
+        self.assertIn("llamacpp|tei", INSTALLER)
+
+    def test_the_llamacpp_launcher_has_the_two_mandatory_settings(self):
+        # the GGUF records causal attention and pooling -1; both overrides are verified
+        self.assertIn("--embedding", LLAMA)
+        self.assertIn("--pooling mean", LLAMA)
+        self.assertIn("--override-kv qwen3.attention.causal=bool:false", LLAMA)
+        self.assertIn("-c __EMBED_CTX__ -b __EMBED_CTX__ -ub __EMBED_CTX__", LLAMA)
+        self.assertIn("-ngl 999 -fa on", LLAMA)
+        self.assertIn("--api-key-file /out/api-key", LLAMA)
+        self.assertIn("--host 127.0.0.1 --port __EMBED_PORT__", LLAMA)
+        self.assertIn("--embd-normalize 2", LLAMA)
+
+    def test_the_gguf_is_pinned_by_repository_revision_and_hash(self):
+        self.assertIn('EMBED_GGUF_REPO="${EMBED_GGUF_REPO:-bowang0911/pplx-embed-v1-0.6b-gguf}"', INSTALLER)
+        self.assertIn('EMBED_GGUF_REV="${EMBED_GGUF_REV:-ab95a3d1159624bed3ff10ae4821ff2ae2ada2ce}"', INSTALLER)
+        self.assertIn('EMBED_GGUF_SHA="${EMBED_GGUF_SHA:-08ba3d20e89fe98cd8d129381424dfba1951d35de32a7ec7869fd77733c300eb}"', INSTALLER)
+        self.assertIn('sha256sum -c -', INSTALLER)
+        self.assertIn('resolve/$EMBED_GGUF_REV/$EMBED_GGUF_FILE', INSTALLER)
+
     def test_the_proxy_is_not_in_conflict_with_a_text_lane(self):
         self.assertFalse([ln for ln in UNIT.splitlines() if ln.startswith("Conflicts=")])
-        self.assertIn("--memory __EMBED_MEM_MAX__", LAUNCH)
-        self.assertIn("--cpuset-cpus __EMBED_CPUS__", LAUNCH)
+        for launch in (LAUNCH, LLAMA):
+            self.assertIn("--memory __EMBED_MEM_MAX__", launch)
+            self.assertIn("--cpuset-cpus __EMBED_CPUS__", launch)
         self.assertIn("--max-batch-tokens __EMBED_BATCH_TOKENS__", LAUNCH)
         self.assertIn("--served-model-name __EMBED_NAME__", LAUNCH)
 

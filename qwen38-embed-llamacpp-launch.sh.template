@@ -1,0 +1,34 @@
+#!/bin/bash
+# The embedding lane's llama.cpp container, started by qwen38-embed.service. Rendered by
+# install-embed.sh from qwen38-embed-llamacpp-launch.sh.template: edit the template, not
+# this file.
+#
+# The GGUF records causal attention and a pooling type of -1, but pplx-embed is a
+# bidirectional encoder with mean pooling. Both flags are mandatory: without the override
+# the cosine against Text Embeddings Inference is 0.58; with it, 0.9994 raw and 0.99996
+# after the model's int8 step. --attention is not a llama-server option (it belongs to
+# llama-embedding), so the metadata override is the way.
+set -u
+KEY_FILE="__CONFIG_DIR__/api-key"
+MODEL="__EMBED_LANE_DIR__/models/__EMBED_GGUF_FILE__"
+[ -f "$KEY_FILE" ] || { echo "no serving key at $KEY_FILE" >&2; exit 1; }
+[ -f "$MODEL" ] || { echo "no embedding model at $MODEL: run ./install-embed.sh" >&2; exit 1; }
+# --network host and --host 127.0.0.1: the engine listens on this box's loopback only, at
+# the port the proxy's drop-in names. --memory caps the host side of the unified memory;
+# the GPU allocation is llama.cpp's, as on the text lanes. -t bounds tokenisation to the
+# small cores; the model itself is on the GPU.
+exec docker run --rm --name qwen38-embed --gpus all --network host \
+  --memory __EMBED_MEM_MAX__ --memory-swap __EMBED_MEM_MAX__ \
+  --cpuset-cpus __EMBED_CPUS__ --cpu-shares 128 \
+  -v "__EMBED_LANE_DIR__/models:/models:ro" \
+  --mount type=bind,source=__CONFIG_DIR__/api-key,target=/out/api-key,readonly \
+  __EMBED_LLAMA_IMAGE__ \
+  -m /models/__EMBED_GGUF_FILE__ \
+  --embedding --pooling mean \
+  --override-kv qwen3.attention.causal=bool:false \
+  -c __EMBED_CTX__ -b __EMBED_CTX__ -ub __EMBED_CTX__ \
+  -ngl 999 -fa on -t __EMBED_THREADS__ \
+  --embd-normalize 2 \
+  --api-key-file /out/api-key \
+  --host 127.0.0.1 --port __EMBED_PORT__ \
+  --metrics --no-ui

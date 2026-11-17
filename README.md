@@ -704,24 +704,24 @@ It reads any audio ffmpeg reads (a phone's m4a, a browser's webm), cuts long rec
 into pieces of 30 s at their quiet moments, and answers the official OpenAI SDK as it
 is. The languages, every number and the limits: **[docs/speech-lane.md](docs/speech-lane.md)**.
 
-## Embeddings: PPLX Embed v1 0.6B, on the CPU, behind `/v1/embeddings`
+## Embeddings: PPLX Embed v1 0.6B, on the GPU or the CPU, behind `/v1/embeddings`
 
-Opt-in too: Perplexity's `pplx-embed-v1-0.6b` in Text Embeddings Inference, 1024
-dimensions, behind the proxy's OpenAI-compatible `/v1/embeddings` and the box's own key.
-It runs on the small CPU cores beside any lane. The defaults matter: at 2048-token batches
-it held 2.5 GiB and answered a short request in 59 ms, where TEI's 16384-token defaults
-held 22.4 GiB and took the flash lane's load down with them.
+Opt-in too: Perplexity's `pplx-embed-v1-0.6b`, 1024 dimensions, behind the proxy's
+OpenAI-compatible `/v1/embeddings` and the box's own key. The default is **llama.cpp on the
+GPU**: an 8K context, 2.6 GB of device memory, **21,000 tokens/s**, measured beside
+Flash-Next. The CPU fallback is TEI: 382 tokens/s and 2.5 GiB of host memory, no GPU.
 
 ```bash
-./install-embed.sh              # from a clone, after ./install.sh: proved before it ends
+./install-embed.sh              # llama.cpp on the GPU, from a clone after ./install.sh
 EMBED_BOOT=1 ./install-embed.sh # start it now, and with the box
+./install-embed.sh --engine tei # the CPU fallback
 ```
 
-TEI clamps the longest input to the batch budget, so chunk a codebase at or below 2048
-tokens. The same checkpoint in llama.cpp on the GPU measured 21,000 tokens/s at 2.6 GB of
-device memory with an 8K context, 56 times this CPU lane; its GGUF needs `--pooling mean`
-and `--override-kv qwen3.attention.causal=bool:false`, or the vectors are wrong. Every
-number, the wiring, the key and the alternatives:
+The GPU GGUF needs `--pooling mean` and `--override-kv qwen3.attention.causal=bool:false`,
+or its vectors are wrong (cosine 0.58 against the reference instead of 0.99996 after the
+int8 step). One request may carry 8192 tokens, for example 16 chunks of 512. Both engines
+work beside Flash-Next at 8K; while both are busy, chat loses 19% with one embedding
+request and 39% with four. Every number, the wiring, the key and the alternatives:
 **[docs/embedding-lane.md](docs/embedding-lane.md)**.
 
 ## The 1M context mode
