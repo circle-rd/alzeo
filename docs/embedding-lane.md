@@ -107,14 +107,74 @@ The same key opens both doors. `embed.env` holds `EMBED_API_KEY`, read from the 
 never on its command line. The proxy validates the client's key as it always does, then
 signs its call to TEI with the same value.
 
-## Measured, and not
+## Throughput, measured on the reference box
 
-Measured on the reference box on 2026-11-17: the two memory rows above, one short request
-at 59 ms, 1024 dimensions, `/v1/embeddings` on TEI 1.9.4, and the proxy's relay with the
-box's key. Not measured: throughput on a real codebase, batches of 32 to 64 chunks, long
-inputs at 4096 or 8192 tokens, and what a concurrent indexing run costs the text lane.
-Those need a run on the box, and the answer to the second decides whether 2048 is the
-right ceiling.
+Measured on 2026-11-17, Flash-Next running and idle, through TEI on `127.0.0.1:30026`.
+The inputs were 512-token chunks of this repository's `keepalive-proxy.py`, tokenized with
+the checkpoint's own tokenizer, sent as one request of 8, 16, 32 or 64 inputs. One run per
+row after a warmup. The lane as `install-embed.sh` starts it, on the ten Cortex-A725 cores:
+
+| inputs | tokens | time | chunks/s | tokens/s |
+|---:|---:|---:|---:|---:|
+| 2 short texts | 11 | 0.06 s | 33 | 180 |
+| 64 tiny code lines | 812 | 2.17 s | 29 | 374 |
+| 8 x 512 | 4,096 | 10.7 s | 0.75 | 382 |
+| 16 x 512 | 8,192 | 21.5 s | 0.74 | 381 |
+| 32 x 512 | 16,384 | 42.8 s | 0.75 | 383 |
+| 64 x 512 | 32,765 | 85.8 s | 0.75 | 382 |
+| 8 x 1024 | 8,192 | 24.8 s | 0.32 | 330 |
+| 8 x 2048 | 16,384 | 62.2 s | 0.13 | 264 |
+
+The same binary on all twenty cores, for comparison, with `EMBED_CPUS` and
+`EMBED_THREADS` raised:
+
+| inputs | tokens | time | tokens/s |
+|---:|---:|---:|---:|
+| 8 x 512 | 4,096 | 5.9 s | 697 |
+| 16 x 512 | 8,192 | 11.3 s | 725 |
+| 32 x 512 | 16,384 | 22.2 s | 740 |
+| 8 x 2048 | 16,384 | 32.5 s | 505 |
+
+The small cores reach about 380 tokens/s, the whole box about 740: 1.9 times, not 2, because
+the model is memory-bandwidth bound. A 0.6B model is 1.2 GFLOP per token, so 380 tokens/s is
+about 460 GFLOP/s, close to what ten A725 cores can do in f32. Chunks of 512 tokens are the
+fastest per token; 2048-token chunks lose a third because attention grows with the square of
+the input.
+
+For a query, the lane is fast: 60 ms for two short texts. Bulk indexing is the slow part.
+At 382 tokens/s, 10M tokens take 7.3 hours, 100M take 73 hours, and 1B take 30 days; on all
+twenty cores, 3.8 hours, 37.5 hours and 15.6 days.
+
+## Against Perplexity's cloud
+
+Perplexity's Embeddings API publishes, for `pplx-embed-v1-0.6b`:
+
+- **price**: $0.004 per million input tokens, so 10M tokens cost $0.04 and 1B costs $4.00
+- **request shape**: up to 512 texts per request, 120,000 tokens per request, 32K per text
+- **rate limits**: 85 QPS on Tier 0, 170 on Tiers 1-3, 335 on Tiers 4-5
+- **latency**: OpenRouter measures Perplexity at 0.18 s P50 and 0.23 s average for a small request
+
+The rate limit alone allows 85 x 120,000 = 10.2M tokens/s at Tier 0 if every request were
+full; that is a ceiling, not a promise, but it is the scale of the service. The local lane
+does 382 tokens/s, or about 4.4 orders of magnitude less; even at a conservative 100,000
+tokens/s from the cloud, it is 260 times less. For 10M tokens of code, the local small cores
+take 7.3 hours where the cloud bills $0.04 and answers in seconds to a few minutes.
+
+That is the whole difference: the cloud runs a 0.6B model on GPUs with continuous batching
+across customers, at $0.004 per million tokens. The box runs it on ten ARM cores in f32,
+with no batching across clients, and the CPU is the limit.
+
+## What follows
+
+- **Queries belong on the box.** 60 ms for a short query beats the cloud's 180 ms P50, and
+  the vectors never leave the network.
+- **Bulk indexing does not, unless privacy or offline use decides it.** Use the cloud for a
+  one-off index of a large codebase, or run the local lane on all twenty cores overnight.
+  The cloud and the local lane serve the same checkpoint, but pin the revision and compare
+  one batch before mixing vectors from both.
+- **Chunk at 512 tokens, not 2048**, when the content allows: 45% more tokens per second.
+- **Do not expect CPU tuning to close the gap.** int8 weights or an ARM64 ONNX Runtime image
+  could give a factor of 2 to 4; the cloud's gap is three to four orders of magnitude.
 
 ## Why not another server
 
