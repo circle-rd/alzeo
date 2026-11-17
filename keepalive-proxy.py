@@ -6069,7 +6069,7 @@ class H(BaseHTTPRequestHandler):
             self._plain(e.code, {"Content-Type": e.headers.get("Content-Type", "application/json")},
                         data or json.dumps({"error": {"type": "engine_error",
                                                       "message": f"keepalive-proxy: the embedding lane answered HTTP {e.code}"}}).encode())
-            self._done("502 embed upstream")
+            self._done("502 embed upstream" if e.code >= 500 else "embed upstream refused")
         except (urllib.error.URLError, OSError) as e:
             log(f"{self._peer} the embedding lane behind {EMBED_UPSTREAM} is not answering ({e})")
             self._plain(503, {"Content-Type": "application/json", "Retry-After": "15"},

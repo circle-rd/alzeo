@@ -817,6 +817,7 @@ class FeedOutcomes(unittest.TestCase):
         # v6.58, the embedding side lane: the answer was relayed; its upstream refused; it does not answer
         "ok embed": "ok",
         "502 embed upstream": "fail",
+        "embed upstream refused": "fail",
         "503 embed unreachable": "fail",
         "CLIENT GONE on write": "gone",
         "CLIENT TOO SLOW": "fail",           # v1.44.0: its client read nothing while 32 MiB waited
