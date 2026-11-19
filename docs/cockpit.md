@@ -58,7 +58,7 @@ that script with `AGENT_BIND=`.
 
 ![The Lanes view: each lane with its maker's mark, every version it can load in one row of buttons with the one serving marked in green, its Load or Stop button, its facts and its last five boots](img/cockpit-lanes.png)
 
-*Lanes: each lane with what it serves, what its boots took on this box and the KV pool each one won, and one button that loads it: switch, stop, start, each step asking first and showing its command.*
+*Lanes: each lane with what it serves, what its boots took on this box and the KV pool each one won, and one button that loads it: switch, stop, start, asked once and run as one server-owned job (a sign-out or a closed tab no longer stops it between two steps). The side lanes, Speech and Embedding, have their own cards below: they run on the CPU beside the lane that serves and never take its place.*
 
 A lane installed on demand says so on its card (built at its first Load): its Load builds it first,
 as you, with no sudo (`./prepare-lane.sh <lane>`, with the target it loads for the two Qwen lanes,

@@ -51,6 +51,13 @@ every route but `/health`), the same trust model the proxy port's whole surface
 already assumes (trusted network: loopback, tailnet; see SECURITY.md), and it
 arrives at your next `./install.sh` re-run and engine start.
 
+**Loading a lane from a script.** The page's Load and the CLI both ask the cockpit for
+the same plan and start the same server-owned job: `./lane-load.py <target>` logs in
+with `~/.config/qwen38/api-key`, shows the steps, and follows the job. The cockpit must
+be running. Signing out of the page, closing the tab or dropping the session no longer
+stops the chain between two steps; the server keeps the job's lock to its end. Use
+`./lane-load.py --plan <target>` to print the steps without starting anything.
+
 ## Extras (opt-in)
 
 Five field-tested pieces from the reference box, deliberately not part of the default

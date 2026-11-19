@@ -103,6 +103,17 @@ const U27 = 'qwen38-sglang.service', UFLASH = 'qwen38-flash.service', IMAGE_UNIT
 // the order of the Now view's rack and the Lanes view's cards: Ornith before Kolibri and the Nemotron lanes (Hasan, 2026-10-22);
 // the flash model's builds side by side, Unsloth's GGUF after NVIDIA's FP4-Local (v1.48)
 const LANE_UNITS = [U27, UFLASH, FLASH_LOCAL_UNIT, FLASH_UNSLOTH_UNIT, ORNITH_UNIT, KOLIBRI_UNIT, NEMOTRON_UNIT, NEMOTRON_SUPER_UNIT, IMAGE_UNIT, IMAGE_H3_UNIT, VIDEO_UNIT];
+// The optional lanes run on the CPU beside the lane that serves: they take no place in the
+// pool, so their Start and Stop never stop it. They are not in LANE_UNITS (the rack and the
+// Load journey), and their cards live in their own block on Lanes.
+const SPEECH_UNIT = 'qwen38-speech.service', EMBED_UNIT = 'qwen38-embed.service';
+const SIDE_UNITS = [SPEECH_UNIT, EMBED_UNIT];
+const SIDE_META = {
+  [SPEECH_UNIT]: {title: 'Speech', desc: 'Speech to text and text to speech, beside any lane. Two local servers on the CPU; no GPU memory, no switch target.',
+                  ports: '30024 speech, 30025 recognition', install: './install-speech.sh', boot: 'manual start'},
+  [EMBED_UNIT]: {title: 'Embedding', desc: 'PPLX Embed v1 0.6B, behind the proxy’s /v1/embeddings. A Text Embeddings Inference container on the CPU; no GPU memory, no switch target.',
+                 ports: '30027 embeddings', install: './install-embed.sh', boot: 'manual start'},
+};
 // the image lanes, Qwen-Image 2.1 and MiniMax-H3-Image: one Image view addresses the one that serves (image.js, imgUnit)
 const isImageLane = u => u === IMAGE_UNIT || u === IMAGE_H3_UNIT;
 // the two Nemotron lanes, Bolt and Super VL: one vLLM image, the same routes and the same limits
@@ -898,6 +909,8 @@ const clientsStep = (unit, target) => ({name: 'switch', params: {target}, title:
 const clientsOnlyStep = (unit, target) => ({name: 'clients', params: {target}, title: `Set the clients for ${LANE_NAME[unit]}’s window`,
   desc: 'Sets the limits of opencode, pi and claude-local, and the lane’s name in opencode, for the window its unit starts with; the boot and '
     + 'opencode’s default model stay where they are, and the lane does not restart. ' + AGENT_RESTART});
+// The step list the window shows. It is a preview only: the cockpit builds the authoritative
+// plan (lane_plan.py) and runs it as one job, and the page posts that one action (runJourney).
 function laneJourneySteps(target){
   const unit = TARGET_UNIT(target);
   const steps = [];
@@ -1028,46 +1041,46 @@ const jobLast = cur => String((cur.lines || []).slice(-1)[0] || '').replace(/\x1
 async function runJourney(){
   const S = SHEET; S.running = true;
   $('sh-go').disabled = true; setText($('sh-cancel'), 'Hide'); journeyChanged();
-  // A step that fails stops the chain, said in one place: the window comes back over whatever was open
-  // (the menu, the image viewer), with the focus on its status line, never on a button, and deaf to Escape
-  // and to a click outside it for a second (justBack): a key or a click the person aimed elsewhere can
-  // neither run the step again nor dismiss why it failed.
+  // One action, run by the cockpit: the page no longer sends the steps one by one, so a
+  // sign-out, a closed tab or a lost session cannot stop the chain between two of them.
+  // The plan is still shown here, and the job's own lines say how far it got.
   let fail = null;
   try {
-    for (let i = S.idx; i < S.steps.length; i++){
-      S.at = i;
-      const st = S.steps[i]; jStep(i, 'run');
-      setText('sh-status', `Step ${i + 1} of ${S.steps.length}: ${st.title}…`);
-      let r;
-      try { r = await runAction(st.name, st.params); } catch(e){ r = {ok: false, status: 0, out: {error: e.message}}; }
-      if (!r.ok){
-        const why = r.out.reasons ? r.out.reasons.join('; ') : r.out.error || r.out.message || 'HTTP ' + r.status;
-        fail = {i, text: `Step ${i + 1} refused: ` + why + (F.config.dry_run && r.out.reasons ? ' (dry run: the steps above changed nothing on the box, so the gate still reads the state as it was)' : '')};
-        break;
-      }
+    S.at = 0; jStep(0, 'run');
+    setText('sh-status', `Step 1 of ${S.steps.length}: ${S.steps[0].title}…`);
+    let r;
+    try { r = await runAction('lane_load', {target: S.target}); } catch(e){ r = {ok: false, status: 0, out: {error: e.message}}; }
+    if (!r.ok){
+      const why = r.out.reasons ? r.out.reasons.join('; ') : r.out.error || r.out.message || 'HTTP ' + r.status;
+      fail = {i: 0, text: `Step 1 refused: ` + why + (F.config.dry_run && r.out.reasons ? ' (dry run: the steps above changed nothing on the box, so the gate still reads the state as it was)' : '')};
+    } else {
       const id = r.out.job || r.out.id; S.jobId = id;
-      const res = await waitJob(id, cur => { const last = jobLast(cur); jLive(i, fmtDur(cur.elapsed) + ' so far' + (last ? ': ' + last : '')); });
+      const res = await waitJob(id, cur => {
+        const last = jobLast(cur);
+        const m = last.match(/\[step (\d+)\/(\d+)\]/);
+        if (m){
+          const n = Math.min(Number(m[1]) - 1, S.steps.length - 1);
+          for (let i = 0; i < n; i++) if (i !== S.at){ jLive(i, null); jStep(i, 'done'); }
+          if (n !== S.at){ jLive(S.at, null); jStep(n, 'run'); S.at = n; }
+          setText('sh-status', `Step ${n + 1} of ${S.steps.length}: ${S.steps[n].title}…`);
+        }
+        const rest = last.replace(/^\[step \d+\/\d+\]\s*/, '');
+        if (rest) jLive(S.at, fmtDur(cur.elapsed) + ' so far' + (m ? '' : ': ' + rest));
+      });
       S.jobId = null;
-      if (!res.ok){
-        fail = {i, text: `Step ${i + 1} ${res.why}. ` + (res.lost ? 'The Now view and Logs say where the lane is before anything is retried.' : 'Its log is in the dock.')};
-        break;
-      }
-      jLive(i, null);
-      jStep(i, 'done');
-      if (st.name === 'unit' && st.params.verb !== 'start'){
-        if (isImageLane(st.params.unit)) IMG_INTERRUPTED_AT.t = Date.now();
-        if (st.params.unit === VIDEO_UNIT) VID_INTERRUPTED_AT.t = Date.now();
-        // the next start is refused until the stopped lane reads down: wait for it.
-        // A dry run never moves the engine state, so the wait would burn its whole
-        // budget on every stop step and read as a stuck journey.
-        if (!F.config.dry_run) await waitFor(() => { const e = engines()[st.params.unit]; return !e || UNIT_DOWN.has(e.state); }, 90000);
-      }
+      if (!res.ok) fail = {i: S.at, text: `Step ${S.at + 1} ${res.why}. ` + (res.lost ? 'The Now view and Logs say where the lane is before anything is retried.' : 'Its log is in the dock.')};
+    }
+    if (!fail){
+      S.steps.forEach((_, i) => { jLive(i, null); jStep(i, 'done'); });
+      const unit = TARGET_UNIT(S.target);
+      if (isImageLane(unit)) IMG_INTERRUPTED_AT.t = Date.now();
+      if (unit === VIDEO_UNIT) VID_INTERRUPTED_AT.t = Date.now();
     }
   } catch (e) {   // an error in the page itself: the chain stops where it was, said like a failed step
     fail = {i: S.at || 0, text: `Step ${(S.at || 0) + 1} stopped on an error in the page (${e && e.message ? e.message : e}). The Now view and Logs say where the lane is before anything is retried.`};
   }
   if (fail){
-    jStep(fail.i, 'fail'); S.running = false; S.idx = fail.i; S.jobId = null;
+    jStep(fail.i, 'fail'); S.running = false; S.idx = 0; S.jobId = null;
     $('sh-status').className = 'status err'; setText('sh-status', fail.text);
     $('sh-go').disabled = false; setText($('sh-cancel'), 'Cancel'); setText($('sh-go'), 'Retry from here');
     if (S.hidden && SHEET === S){

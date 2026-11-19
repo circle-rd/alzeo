@@ -279,13 +279,12 @@ class ALoadThatEndedOffersToCloseItsWindow(unittest.TestCase):
         from test_page_behaviour import TheLoadWindowFollowsAStepToItsEnd as T
         r = run(self, T.BODY + r"""
         const done = (id, name) => ({id, action: name, status: 'done', rc: 0, elapsed: 31});
-        job(null, [done('j1', 'switch')]); await __advance(2000); await __settle(); await __advance(1000);
-        job(null, [done('j2', 'unit'), done('j1', 'switch')]); await __advance(500); await __settle();
+        job(null, [done('j1', 'lane_load')]); await __advance(500); await __settle();
         const end = {status: txt('sh-status'), label: txt('sh-cancel'), open: !$('scrim').hidden, actions: state().actions};
-        await __advance(1500); await __settle();
+        await __advance(2000); await __settle();
         report({end, after: {open: !$('scrim').hidden, view: activeView}});
         """)
-        self.assertEqual(r["end"]["actions"], ["switch", "unit"], r)
+        self.assertEqual(r["end"]["actions"], ["lane_load"], r)
         self.assertIn("Done. The lane is booting", r["end"]["status"])
         self.assertTrue(r["end"]["open"], "seen before it closes itself")
         self.assertEqual(r["end"]["label"], "Close")

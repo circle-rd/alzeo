@@ -1890,7 +1890,7 @@ class TheLoadWindowFollowsAStepToItsEnd(unittest.TestCase):
         self.assertNotIn("\x1b", r["at25"]["live"][0])
         self.assertEqual(r["after"]["cls"][0], "done", r["after"])
         self.assertEqual(r["after"]["live"][0], "", "the live line goes once the step is done")
-        self.assertEqual(r["after"]["actions"], ["switch", "unit"], "the step after the download ran")
+        self.assertEqual(r["after"]["actions"], ["lane_load"], "one server-owned action ran the whole chain")
 
     def test_a_failed_step_says_so_and_stops_the_chain(self):
         r = run(self, self.BODY + r"""
@@ -1902,7 +1902,7 @@ class TheLoadWindowFollowsAStepToItsEnd(unittest.TestCase):
         """)
         self.assertEqual(r["after"]["cls"][0], "fail", r["after"])
         self.assertIn("Step 1 failed with exit code 1. Its log is in the dock.", r["after"]["status"])
-        self.assertEqual(r["after"]["actions"], ["switch"], "nothing ran after the failed step")
+        self.assertEqual(r["after"]["actions"], ["lane_load"], "the server owns the chain")
 
     def test_a_job_the_cockpit_forgot_is_said_unknown_not_failed(self):
         r = run(self, self.BODY + r"""
@@ -1917,7 +1917,7 @@ class TheLoadWindowFollowsAStepToItsEnd(unittest.TestCase):
         self.assertEqual(r["after"]["cls"][0], "fail", r["after"])
         self.assertIn("is no longer known to the cockpit (restarted?), so how it ended is unknown", r["after"]["status"])
         self.assertIn("The Now view and Logs say where the lane is", r["after"]["status"])
-        self.assertEqual(r["after"]["actions"], ["switch"], r["after"])
+        self.assertEqual(r["after"]["actions"], ["lane_load"], r["after"])
 
 
 class TheLoadWindowCanBeHiddenWhileItsStepsRun(unittest.TestCase):
@@ -1943,14 +1943,13 @@ class TheLoadWindowCanBeHiddenWhileItsStepsRun(unittest.TestCase):
         """)
         self.assertEqual(r["during"], {"label": "Hide", "disabled": False}, r)
         self.assertTrue(r["hidden"], "Hide puts the window away")
-        self.assertEqual(r["actions"], ["switch", "unit"], "the next step ran with the window hidden")
+        self.assertEqual(r["actions"], ["lane_load"], "the server-owned load ran on with the window hidden")
 
     def test_nothing_else_starts_while_a_hidden_load_runs(self):
         r = run(self, self.BODY + r"""
         running('j1', 30, 'downloading'); await __advance(1000);
         $('sh-cancel').click(); await __settle();
-        job(null, [done('j1', 'switch')]);              // between two steps: no job runs
-        await __advance(600); await __settle();
+        running('j1', 90, 'downloading'); await __advance(500);
         askAction('flush_cache', {});
         report({scrim: $('scrim').hidden, toast: toastText(), mode: SHEET && SHEET.mode});
         """)
@@ -1963,11 +1962,10 @@ class TheLoadWindowCanBeHiddenWhileItsStepsRun(unittest.TestCase):
         showView('library');
         running('j1', 30, 'downloading'); await __advance(1000);
         $('sh-cancel').click(); await __settle();
-        job(null, [done('j1', 'switch')]); await __advance(2000); await __settle(); await __advance(1000);
-        job(null, [done('j2', 'unit'), done('j1', 'switch')]); await __advance(2000); await __settle(); await __advance(2000);
+        job(null, [done('j1', 'lane_load')]); await __advance(2000); await __settle(); await __advance(1000);
         report({view: activeView, sheet: SHEET, scrim: $('scrim').hidden, toast: toastText(), actions: state().actions});
         """)
-        self.assertEqual(r["actions"], ["switch", "unit"], r)
+        self.assertEqual(r["actions"], ["lane_load"], r)
         self.assertEqual(r["view"], "library", "the page stays where the person went")
         self.assertIsNone(r["sheet"])
         self.assertTrue(r["scrim"])
@@ -1987,26 +1985,24 @@ class TheLoadWindowCanBeHiddenWhileItsStepsRun(unittest.TestCase):
         self.assertIn("Step 1 failed with exit code 1", r["status"])
         self.assertEqual((r["label"], r["go"]), ("Cancel", "Retry from here"))
 
-    def test_between_two_steps_the_job_button_stays_and_brings_the_window_back(self):
+    def test_while_the_job_runs_the_job_button_brings_the_window_back(self):
         r = run(self, self.BODY + r"""
         running('j1', 30, 'downloading'); await __advance(1000);
         $('sh-cancel').click(); await __settle();
-        job(null, [done('j1', 'switch')]);              // the next step is posted, its job not seen yet
-        await __advance(600); await __settle();
-        const between = {pip: !$('jobpip').hidden, what: txt('jobpip-what')};
+        running('j1', 90, 'downloading'); await __advance(500);
+        const during = {pip: !$('jobpip').hidden, what: txt('jobpip-what')};
         $('jobpip').click(); await __settle();
-        report({between, back: !$('scrim').hidden, pipAfter: !$('jobpip').hidden});
+        report({during, back: !$('scrim').hidden});
         """)
-        self.assertEqual(r["between"], {"pip": True, "what": "Load Qwen3.8 27B abliterated NVFP4 · edp1096: between steps"}, r)
+        self.assertTrue(r["during"]["pip"], r)
+        self.assertIn("Qwen3.8 27B abliterated NVFP4 · edp1096", r["during"]["what"], r)
         self.assertTrue(r["back"])
-        self.assertFalse(r["pipAfter"], "the window is back and no job runs: the button has nothing left to bring back")
 
     def test_the_job_button_goes_once_a_hidden_load_has_ended(self):
         r = run(self, self.BODY + r"""
         running('j1', 30, 'downloading'); await __advance(1000);
         $('sh-cancel').click(); await __settle();
-        job(null, [done('j1', 'switch')]); await __advance(2000); await __settle(); await __advance(1000);
-        job(null, [done('j2', 'unit'), done('j1', 'switch')]); await __advance(2000); await __settle(); await __advance(2000);
+        job(null, [done('j1', 'lane_load')]); await __advance(2000); await __settle(); await __advance(1000);
         report({pip: !$('jobpip').hidden, sheet: SHEET});
         """)
         self.assertFalse(r["pip"], "nothing runs and no load waits: no job button")
@@ -2129,17 +2125,19 @@ class TheLoadWindowCanBeHiddenWhileItsStepsRun(unittest.TestCase):
         """)
         self.assertTrue(r["done"], "a predicate that threw twice, then held, ended the wait")
 
-    def test_a_refused_step_says_the_refusal_not_an_error(self):
-        r = run(self, self.BODY + r"""
-        // step 1 was posted by the body already: the next action, step 2, is refused by a gate
+    def test_a_refused_load_says_the_refusal_not_an_error(self):
+        r = run(self, r"""
         __fetch = async url => url === '/api/csrf' ? __response(200, {token: 't'})
           : url === '/api/action' ? __response(409, {reasons: ['the gate says no']})
           : new Promise(() => {});
-        """ + self.HIDE + r"""
-        job(null, [done('j1', 'switch')]); await __advance(2000); await __settle(); await __advance(1000);
+        const units = JSON.parse(JSON.stringify(UNITS));
+        feed({config: CONFIG, units, lifecycle: life({'qwen38-sglang.service': eng('stopped', {target: 'stock'}),
+                                                      'qwen38-flash.service': eng('stopped', {target: 'flash'})})});
+        askJourney('uncensored');
+        $('sh-go').click(); await __settle();
         report({status: txt('sh-status'), back: !$('scrim').hidden});
         """)
-        self.assertEqual(r["status"], "Step 2 refused: the gate says no", r)
+        self.assertEqual(r["status"], "Step 1 refused: the gate says no", r)
         self.assertTrue(r["back"])
 
     def test_going_to_the_login_does_not_ask(self):
@@ -2684,7 +2682,7 @@ class TheBoxItIs(unittest.TestCase):
                     box: {cls: %s, name: 'ASUS Ascent GX10', fits, targets}, cpu_pct: {cpu: 1}, load: [0, 0, 0], disks: {}}});
     const notes = BIG.map(u => BAYS.get(u).note.textContent);
     showView('lanes');
-    const install = [...document.querySelectorAll('#view-lanes dt')].filter(d => d.textContent === 'Install').map(d => d.nextSibling.textContent);
+    const install = [...document.querySelectorAll('#lanes-list dt')].filter(d => d.textContent === 'Install').map(d => d.nextSibling.textContent);
     BAYS.get('qwen38-flash.service').root.click();
     const toast = toastText();
     // the 27B card's versions, and the Image and Video views of a box without those lanes
@@ -3059,6 +3057,54 @@ class EachLaneSaysItsEngine(unittest.TestCase):
         self.assertNotIn("Engine", r["card27"])
         self.assertNotIn("undefined", r["card27"] + r["bay27"] + r["sub"])
         self.assertEqual(r["pinned"], "lmsysorg/sglang@e3a4f06001a2…")
+
+
+class TheSideLanesRunBesideTheOneThatServes(unittest.TestCase):
+    """Speech and embedding hold no place in the pool: their cards live beside the lanes
+    that take turns in it, and their Start and Stop are the plain unit action. A load
+    owns the box's actions while its chain runs, and the side lanes wait with it."""
+
+    def test_their_cards_start_and_stop_them_without_touching_the_serving_lane(self):
+        r = run(self, r"""
+        __fetch = async url => url === '/api/csrf' ? __response(200, {token: 't'})
+          : url === '/api/action' ? __response(202, {job: 'j1'})
+          : new Promise(() => {});
+        const units = JSON.parse(JSON.stringify(UNITS));
+        units.units['qwen38-speech.service'] = {active: 'inactive', enabled: 'disabled'};
+        units.units['qwen38-embed.service'] = {active: 'active', enabled: 'disabled'};
+        feed({config: CONFIG, units, lifecycle: life({'qwen38-sglang.service': eng('ready')})});
+        showView('lanes');
+        const cards = [...document.querySelectorAll('#side-lanes .lane-panel')].map(c => ({
+          h: c.querySelector('h2').textContent, cap: c.querySelector('.cap').textContent,
+          buttons: [...c.querySelectorAll('button')].map(b => ({t: b.textContent, hidden: b.hidden}))}));
+        const speech = [...document.querySelectorAll('#side-lanes .lane-panel')][0];
+        speech.querySelector('button').click(); await __settle(); $('sh-go').click(); await __settle();
+        report({cards, actions: __fetches.filter(f => f.url === '/api/action').map(f => JSON.parse(f.init.body))});
+        """)
+        self.assertEqual([c["h"].split(',')[0] for c in r["cards"]], ["Speech", "Embedding"], r["cards"])
+        self.assertEqual([c["cap"] for c in r["cards"]], ["stopped", "running"], r["cards"])
+        self.assertFalse([b["hidden"] for b in r["cards"][0]["buttons"]][0], "a stopped lane offers Start")
+        self.assertFalse([b["hidden"] for b in r["cards"][1]["buttons"]][1], "a running lane offers Stop")
+        self.assertEqual(r["actions"][0]["name"], "unit", r)
+        self.assertEqual(r["actions"][0]["params"], {"verb": "start", "unit": "qwen38-speech.service"}, r)
+
+    def test_a_load_running_keeps_their_buttons_waiting(self):
+        r = run(self, r"""
+        const units = JSON.parse(JSON.stringify(UNITS));
+        units.units['qwen38-speech.service'] = {active: 'inactive', enabled: 'disabled'};
+        units.units['qwen38-embed.service'] = {active: 'inactive', enabled: 'disabled'};
+        feed({config: CONFIG, units, lifecycle: life({'qwen38-sglang.service': eng('ready')})});
+        showView('lanes');
+        SHEET = {mode: 'journey', target: 'stock', steps: [{name: 'switch'}], idx: 0, running: true, hidden: true};
+        renderSideLanes();
+        report([...document.querySelectorAll('#side-lanes .lane-panel')].map(c =>
+          [...c.querySelectorAll('button')].filter(b => !b.hidden).map(b => [b.textContent, b.disabled, b.title])));
+        """)
+        for card in r:
+            for text, disabled, title in card:
+                if text.startswith(("Start", "Stop")):
+                    self.assertTrue(disabled, (text, card))
+                    self.assertIn("A load is running", title, (text, title))
 
 
 if __name__ == "__main__":

@@ -70,9 +70,11 @@ def among(lanes, keep):
 
 
 # The lanes that take the GPU in turn, each unit in Conflicts= with the others: all but the speech and
-# embedding lanes, which run on the CPU beside any of them (install-speech.sh and install-embed.sh) and
-# which the cockpit, the sudoers and the switch do not drive.
+# embedding lanes, which run on the CPU beside any of them (install-speech.sh and install-embed.sh).
+# The switch does not drive those two; the cockpit starts and stops them as units of their own.
 TURNS = [x for x in LANES if LANES[x]["kind"] not in ("speech", "embedding")]
+# the optional lanes: their own units and cards, beside the turns in the pool
+SIDE_LANES = [x for x in LANES if LANES[x]["kind"] in ("speech", "embedding")]
 # the lanes install.sh's --with-<lane> and --no-<lane> name
 FLAGGED = family(flags=True)
 # among them the side lanes, each installed by its own installer, which install.sh runs (it installs
@@ -762,7 +764,7 @@ def js_strings(text):
 def js_units(rel="dashboard/static/js/base.js"):
     """{constant: unit} of the page's unit constants (const U27 = 'qwen38-sglang.service', ...)."""
     return floor(dict(re.findall(r"\b([A-Z][A-Z0-9_]*)\s*=\s*'(qwen38-[a-z0-9-]+\.service)'", text_of(rel))),
-                 f"{rel}: the units' constants", len(TURNS))
+                 f"{rel}: the units' constants", len(TURNS) + len(SIDE_LANES))
 
 
 def js_resolve(value, consts, where):
@@ -1405,7 +1407,8 @@ class TheCockpitSaysTheSame(unittest.TestCase):
     def test_its_page(self):
         p, rel = Problems(), self.JS
         consts = js_units(rel)
-        p.same(f"{rel} its units' constants (const U27 = ..., ...)", set(consts.values()) - {"qwen38-keepalive.service"}, units_of(TURNS))
+        p.same(f"{rel} its units' constants (const U27 = ..., ...)", set(consts.values()) - {"qwen38-keepalive.service"},
+               units_of(TURNS) + units_of(SIDE_LANES))
         value, line = js_const(rel, "LANE_UNITS")
         p.same(f"{rel}:{line} LANE_UNITS", js_resolve(value, consts, rel), units_of(TURNS))
         value, line = js_const(rel, "LANE_NAME")
@@ -1490,7 +1493,7 @@ class TheCockpitSaysTheSame(unittest.TestCase):
         for verb in ("start", "stop", "restart", "enable", "disable"):
             units, where = finds(rel, text, rf"^__USER__ ALL=\(root\) NOPASSWD: /usr/bin/systemctl {verb} (qwen38-[a-z0-9-]+\.service)$")
             p.same(f"{where} systemctl {verb}", [u for u in floor(units, f"{rel} systemctl {verb}") if u != "qwen38-keepalive.service"],
-                   units_of(TURNS))
+                   units_of(TURNS) + units_of(SIDE_LANES))
         p.check(self)
 
 

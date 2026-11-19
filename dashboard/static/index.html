@@ -203,6 +203,11 @@
         <div class="vhead-title"><h1 id="h-lanes">Lanes</h1><p>The lanes share one pool, so one serves at a time. Loading a lane hands it the whole box: the one serving stops first, and nothing restarts by itself.</p></div>
       </div>
       <div class="stack" id="lanes-list"></div>
+      <section class="panel" id="lanes-side" data-src="units" style="margin-top:var(--s-5)">
+        <header><h2>Side lanes</h2><span class="aside">beside the lane that serves</span></header>
+        <p class="muted">The speech and embedding lanes run on the CPU beside the lane serving. They take no place in the pool, so starting or stopping one never stops the other lane.</p>
+        <div class="grid g2" id="side-lanes" style="margin-top:var(--s-4)"></div>
+      </section>
       <div class="grid g2" style="margin-top:var(--s-5)">
         <section class="panel" data-src="engine_info,lifecycle" id="lanes-engine">
           <header><h2>Text engine</h2><span class="aside age"></span></header>
