@@ -928,6 +928,26 @@ class TheTopBarCanEndTheSession(unittest.TestCase):
         self.assertEqual(r["asked"], [{"csrf": "t"}])
         self.assertEqual(r["href"], "/")
 
+    def test_the_button_is_disabled_while_a_load_runs_and_enabled_after(self):
+        r = run(self, r"""
+        __fetch = async (url) => url === '/api/csrf' ? __response(200, {token: 't'})
+          : url === '/api/logout' ? __response(200, {ok: true}) : new Promise(() => {});
+        const b = $('logoutbtn');
+        SHEET = {mode: 'journey', target: 'stock', steps: [{name: 'switch'}], idx: 0, running: true, hidden: true};
+        journeyChanged();
+        const during = {disabled: b.disabled, title: b.title};
+        SHEET.running = false; journeyChanged();
+        const after = {disabled: b.disabled, title: b.title};
+        b.click(); await __settle();
+        report({during, after, asked: __fetches.filter(f => f.url === '/api/logout').length, href: location.href});
+        """)
+        self.assertTrue(r["during"]["disabled"], "a running load disables sign out instead of opening a toast")
+        self.assertIn("A load is running", r["during"]["title"])
+        self.assertFalse(r["after"]["disabled"], "the button comes back when the load ends")
+        self.assertEqual(r["after"]["title"], "Sign out")
+        self.assertEqual(r["asked"], 1, "a click after the load ends still signs out")
+        self.assertEqual(r["href"], "/")
+
     def test_a_refused_or_failed_logout_stays_on_the_page_and_says_so(self):
         r = run(self, r"""
         const out = {};

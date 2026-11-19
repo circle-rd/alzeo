@@ -32,21 +32,26 @@ class EveryActionButtonIsWired(unittest.TestCase):
         feed({config: CONFIG, units: UNITS, lifecycle: life({'qwen38-sglang.service': eng('ready')}),
               engine_fast: {load: [{num_reqs: 0}], healthy: true}});
         openMenu();
-        const seen = [];
+        const seen = [], direct = [];
         for (const b of document.querySelectorAll('[data-act]')){
-          const act = b.dataset.act; b.disabled = false; b.click();
+          const act = b.dataset.act; b.disabled = false;
+          if (b.hasAttribute('data-direct')){ direct.push({act, id: b.id}); continue; }
+          b.click();
           seen.push({act, opened: !$('scrim').hidden, title: txt('sh-title'), cmd: txt('sh-cmd')});
           closeSheet();
         }
-        report(seen);
+        report({seen, direct});
         """)
-        acts = {s["act"] for s in r}
+        seen, direct = r["seen"], r["direct"]
+        acts = {s["act"] for s in seen}
         self.assertTrue({"smoke", "flush_cache", "abort_all", "diag_bundle", "fit_opencode", "gpu_clock"} <= acts, acts)
-        for s in r:
+        for s in seen:
             with self.subTest(act=s["act"]):
                 self.assertTrue(s["opened"], f"{s['act']} does nothing when pressed")
                 self.assertNotIn("_", s["title"], "a title of its own, not the action's wire name")
                 self.assertTrue(s["cmd"], "the sheet shows the command")
+        by_id = {d["id"]: d["act"] for d in direct}
+        self.assertEqual(by_id, {"logoutbtn": "logout"}, "the direct controls are exactly those with their own listener")
 
     def test_every_action_the_server_knows_has_a_title_a_verb_and_an_explanation(self):
         base = JS["base.js"]
