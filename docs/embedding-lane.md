@@ -21,7 +21,7 @@ EMBED_BOOT=1 ./install-embed.sh       # start it now, and with the box
 
 The GPU mode needs Docker, a GPU and about 4 GiB free: the 1.2 GB F16 GGUF and the
 llama.cpp image. The CPU mode needs about 6 GiB: TEI's 2.3 GB checkpoint and its image. The
-installer proves the lane twice: directly on `127.0.0.1:30026`, then through the proxy on
+installer proves the lane twice: directly on `127.0.0.1:30027`, then through the proxy on
 its own port, both with the box's key, and checks two 1024-dimension vectors. In GPU mode
 it also verifies the GGUF's pinned sha256 before the first start.
 
@@ -114,7 +114,7 @@ client :30001
    |
 keepalive-proxy
    |-- /v1/chat/completions, /v1/messages... -> 127.0.0.1:30000  (the text lane)
-   `-- /v1/embeddings, /v1/embedding         -> 127.0.0.1:30026  (llama.cpp or TEI)
+   `-- /v1/embeddings, /v1/embedding         -> 127.0.0.1:30027  (llama.cpp or TEI)
 ```
 
 `install-embed.sh` writes `qwen38-embed.service`, its launcher, and a systemd drop-in for
@@ -123,7 +123,7 @@ the proxy:
 ```ini
 # /etc/systemd/system/qwen38-keepalive.service.d/embed.conf
 [Service]
-Environment=EMBED_UPSTREAM=http://127.0.0.1:30026
+Environment=EMBED_UPSTREAM=http://127.0.0.1:30027
 Environment=EMBED_TIMEOUT_S=900
 EnvironmentFile=-/home/<user>/.config/qwen38/embed.env
 ```
@@ -150,7 +150,7 @@ to the lane with the same value.
 
 ## Throughput, measured on the reference box
 
-Measured on 2026-11-17, Flash-Next running and idle, through TEI on `127.0.0.1:30026`.
+Measured on 2026-11-17, Flash-Next running and idle, through TEI on `127.0.0.1:30027`.
 The inputs were 512-token chunks of this repository's `keepalive-proxy.py`, tokenized with
 the checkpoint's own tokenizer, sent as one request of 8, 16, 32 or 64 inputs. One run per
 row after a warmup. The lane as `install-embed.sh` starts it, on the ten Cortex-A725 cores:
