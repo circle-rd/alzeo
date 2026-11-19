@@ -7,7 +7,7 @@
 #   ./install-embed.sh --no-smoke         skip the round trip at the end
 #   ./install-embed.sh --uninstall        remove the unit and the wiring (the model stays)
 #
-# Variables: EMBED_ENGINE (llamacpp or tei), EMBED_PORT (30026), EMBED_BOOT=1 (start it
+# Variables: EMBED_ENGINE (llamacpp or tei), EMBED_PORT (30027), EMBED_BOOT=1 (start it
 # with the box, off by default), EMBED_LANE_DIR (~/.local/share/qwen38-embed),
 # EMBED_CTX (8192 for llama.cpp), EMBED_THREADS (4 for llama.cpp, the small-core count for
 # TEI), EMBED_MEM_MAX (8g for llama.cpp, 4g for TEI), EMBED_CPUS. TEI also reads
@@ -60,7 +60,7 @@ LAUNCHER="$CONFIG_DIR/launch-embed.sh"
 ENVFILE="$CONFIG_DIR/embed.env"
 launcher_flag(){ { grep -oE -- "$1 [^ \\\\]+" "$LAUNCHER" 2>/dev/null || true; } | awk '{print $2}' | tail -1; }
 LANE_DIR="${EMBED_LANE_DIR:-$(installed WorkingDirectory | tr -s /)}"; LANE_DIR="${LANE_DIR:-$HOME/.local/share/qwen38-embed}"
-PORT="${EMBED_PORT:-$(launcher_flag --port)}"; PORT="${PORT:-30026}"
+PORT="${EMBED_PORT:-$(launcher_flag --port)}"; PORT="${PORT:-30027}"
 if [ "$EMBED_ENGINE" = llamacpp ]; then CACHE="$LANE_DIR/models"; else CACHE="$LANE_DIR/hf"; fi
 
 # The pins. The TEI image is the CPU fallback; the llama.cpp image is the same one the

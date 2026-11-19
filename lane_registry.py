@@ -115,12 +115,13 @@ LANES = {
                "targets": (), "heavy_64": (),
                "served": None, "provider": None, "ports": (30024, 30025), "fits_64": True,
                "title": None},
-    # install-embed.sh: TEI on the CPU beside any lane, PORT 30026 (EMBED_PORT), behind the proxy's
-    # /v1/embeddings; no switch target, and no chat model to name for a client
+    # install-embed.sh: TEI on the CPU beside any lane, PORT 30027 (EMBED_PORT), behind the proxy's
+    # /v1/embeddings; no switch target, and no chat model to name for a client (30026 is the
+    # MiniMax-H3-Image lane's, so the embedding lane takes the next one)
     "embedding": {"unit": "qwen38-embed.service", "installer": "install-embed.sh", "flags": False,
                   "kind": "embedding", "engine": "own", "b12x": False,
                   "targets": (), "heavy_64": (),
-                  "served": None, "provider": None, "ports": (30026,), "fits_64": True,
+                  "served": None, "provider": None, "ports": (30027,), "fits_64": True,
                   "title": "PPLX Embed v1 0.6B"},
 }
 
