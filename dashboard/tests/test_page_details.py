@@ -1122,7 +1122,7 @@ class LoadingALaneIsOneJourney(unittest.TestCase):
         self.assertEqual(len(r["after"]), 1, "switched and nothing serving: one step left")
         self.assertIn("start qwen38-video.service", r["after"][0])
 
-    def test_it_runs_each_step_after_the_last_one_finished(self):
+    def test_it_starts_one_server_owned_job_instead_of_posting_each_step(self):
         r = run(self, r"""
         const jobs = []; let n = 0;
         __fetch = async (url, init) => {
@@ -1141,9 +1141,9 @@ class LoadingALaneIsOneJourney(unittest.TestCase):
         await __advance(1200); await __settle();
         report({afterFirst, afterSecond, names: jobs.map(j => j.name + ':' + (j.params.verb || j.params.target))});
         """)
-        self.assertEqual(r["afterFirst"], 1, "the second step waits for the first job to finish")
-        self.assertEqual(r["afterSecond"], 2)
-        self.assertEqual(r["names"], ["switch:video", "unit:stop", "unit:start"])
+        self.assertEqual(r["afterFirst"], 1, "the whole load is one action")
+        self.assertEqual(r["afterSecond"], 1, "the server owns the chain: the page posts no next step")
+        self.assertEqual(r["names"], ["lane_load:video"])
 
 
 class AClientIsToldWhereToSendItsRequests(unittest.TestCase):

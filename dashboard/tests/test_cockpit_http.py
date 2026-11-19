@@ -615,6 +615,66 @@ class StaticFiles(Base):
             self.assertEqual(hdrs.get("Referrer-Policy"), "no-referrer", path)
 
 
+class TheLaneLoadJob(Base):
+    """One chain, run by the server. The page no longer sends each step, so a sign-out
+    or a closed tab cannot stop it between two of them; these tests pin the order and
+    the stop on the first failure."""
+
+    class FakeJob:
+        def __init__(self, target="stock"):
+            self.params = {"target": target}
+            self.lines = []
+            self.started, self.timeout = time.time(), 10800
+
+        def append(self, line):
+            self.lines.append(line)
+
+    def setUp(self):
+        super().setUp()
+        self.seen = []
+        self.original_plan, self.original_step = self.cp.lane_load_plan, self.cp._run_lane_step
+
+    def tearDown(self):
+        self.cp.lane_load_plan, self.cp._run_lane_step = self.original_plan, self.original_step
+        super().tearDown()
+
+    def test_its_steps_run_in_order_and_it_says_so(self):
+        self.cp.lane_load_plan = lambda target: [
+            {"name": "switch", "params": {"target": target}, "title": "Point the boot"},
+            {"name": "unit", "params": {"verb": "stop", "unit": "qwen38-sglang.service"}, "title": "Stop 27B"},
+            {"name": "unit", "params": {"verb": "start", "unit": "qwen38-flash.service"}, "title": "Start flash"}]
+        self.cp._run_lane_step = lambda job, step: self.seen.append(step["name"]) or 0
+        job = self.FakeJob()
+        ok, lines, result = self.cp.job_lane_load(job)
+        self.assertTrue(ok, result)
+        self.assertEqual(self.seen, ["switch", "unit", "unit"])
+        self.assertEqual([s["name"] for s in result["steps"]], self.seen)
+        self.assertTrue(any("lane load done" in line for line in job.lines), job.lines)
+
+    def test_a_failed_step_stops_the_chain(self):
+        self.cp.lane_load_plan = lambda target: [
+            {"name": "switch", "params": {"target": target}, "title": "Point the boot"},
+            {"name": "unit", "params": {"verb": "stop", "unit": "qwen38-sglang.service"}, "title": "Stop 27B"},
+            {"name": "unit", "params": {"verb": "start", "unit": "qwen38-flash.service"}, "title": "Start flash"}]
+        self.cp._run_lane_step = lambda job, step: (self.seen.append(step["name"]), 1)[1] if step["name"] == "unit" else 0
+        job = self.FakeJob()
+        ok, lines, result = self.cp.job_lane_load(job)
+        self.assertFalse(ok)
+        self.assertEqual(self.seen, ["unit"], "nothing ran after the failed stop")
+        self.assertEqual(result["failed_step"], 2)
+        self.assertTrue(any("failed (exit 1)" in line for line in job.lines), job.lines)
+
+    def test_a_lane_already_serving_starts_no_step(self):
+        self.cp.lane_load_plan = lambda target: []
+        self.cp._run_lane_step = lambda job, step: self.seen.append(step["name"]) or 0
+        job = self.FakeJob()
+        ok, lines, result = self.cp.job_lane_load(job)
+        self.assertTrue(ok)
+        self.assertEqual(self.seen, [])
+        self.assertEqual(result, {"ok": True, "steps": []})
+        self.assertTrue(any("already serving" in line for line in lines), lines)
+
+
 class ReadRoutes(Base):
     """The whole GET surface. Every one of these was uncovered, and one of them
     is a boundary: /api/logs/<name> takes a name from the URL and hands it to a
@@ -645,6 +705,17 @@ class ReadRoutes(Base):
             self.assertEqual(set(spec), {"danger", "params"}, name)
         self.assertNotIn("sudo", json.dumps(body))
         self.assertNotIn("systemctl", json.dumps(body))
+
+    def test_the_lane_plan_endpoint_answers_the_plan_the_server_will_run(self):
+        """The page shows the steps it was given; it never builds or posts them itself."""
+        cookie = self.login()
+        st, body = self.get("/api/lane-plan?target=stock", cookie)
+        self.assertEqual(st, 200)
+        self.assertEqual(body["target"], "stock")
+        self.assertEqual([s["name"] for s in body["steps"]],
+                         [s["name"] for s in self.cp.lane_load_plan("stock")])
+        st, body = self.get("/api/lane-plan?target=not-a-lane", cookie)
+        self.assertEqual(st, 400)
 
     def test_the_state_endpoint_returns_the_sampler_state(self):
         cookie = self.login()
@@ -779,7 +850,8 @@ class ReadRoutes(Base):
             "qwen38-video.service", "qwen38-kolibri.service", "qwen38-nemotron.service",
             "qwen38-nemotron-super.service", "qwen38-flash-local.service", "qwen38-ornith-122b.service",
             "qwen38-flash-unsloth.service", "qwen38-image-h3.service", "qwen38-transcribe.service", "qwen38-lfm25.service",
-            "qwen38-lfm3.service", "qwen38-keepalive.service", "opencode-web.service"})
+            "qwen38-lfm3.service", "qwen38-keepalive.service", "qwen38-speech.service", "qwen38-embed.service",
+            "opencode-web.service"})
 
     def test_a_known_log_source_answers_with_bounded_lines(self):
         cookie = self.login()

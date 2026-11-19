@@ -271,5 +271,55 @@ function renderProxy(){
   b.onclick = () => askAction('unit', {verb: onl ? 'stop' : 'start', unit: PROXY_UNIT},
     onl ? ['Agent clients on :30001 lose the proxy until it is back; the engine itself keeps running.'] : []);
 }
-afterApply(() => { renderLanes(); renderEngineFacts(); renderProxy(); });
-on('busy', () => { if (LCARDS.size) renderLanes(); });
+// The optional lanes: cards of their own, because they are beside the lane that serves, not
+// one of the lanes that take turns in the pool. Start and Stop are the plain unit action;
+// there is no Load journey and no switch target.
+const SCARDS = new Map();
+function sideCard(unit){
+  let c = SCARDS.get(unit); if (c) return c;
+  const meta = SIDE_META[unit];
+  const root = el('section', 'panel lane-panel'); root.dataset.src = 'units';
+  const head = el('header'); const h = el('h2', null, meta.title); const state = el('span', 'cap', '…');
+  head.append(h, state);
+  const desc = el('p', 'muted', meta.desc);
+  const factsBox = el('dl', 'facts'); factsBox.style.marginTop = 'var(--s-4)';
+  const actions = el('div', 'btn-row'); actions.style.marginTop = 'var(--s-4)';
+  const start = el('button', 'btn primary', `Start ${meta.title}`); start.type = 'button';
+  const stop = el('button', 'btn danger', `Stop ${meta.title}`); stop.type = 'button';
+  const logs = el('button', 'btn ghost', 'Journal'); logs.type = 'button';
+  actions.append(start, stop, logs);
+  root.append(head, desc, factsBox, actions);
+  c = {root, h, state, factsBox, start, stop, logs};
+  start.addEventListener('click', () => askAction('unit', {verb: 'start', unit}, []));
+  stop.addEventListener('click', () => askAction('unit',
+    {verb: 'stop', unit}, [`Clients of ${meta.title} lose it until it is started again; the lane that serves is not stopped.`]));
+  logs.addEventListener('click', () => { LOGS_WANT.src = unit; showView('logs'); });
+  SCARDS.set(unit, c); $('side-lanes').append(root);
+  return c;
+}
+function renderSideLanes(){
+  const why = busyWhy(), load = loadRunning();
+  SIDE_UNITS.forEach(unit => {
+    const c = sideCard(unit), u = F.units[unit] || {}, meta = SIDE_META[unit];
+    const has = installed(unit), active = u.active || '?';
+    const on = active === 'active', moving = active === 'activating' || active === 'deactivating';
+    setText(c.h, meta.title + (on ? ', running' : ''));
+    cap(c.state, !has ? 'not installed' : on ? 'running' : moving ? (u.sub || active) : active === 'failed' ? 'failed' : 'stopped',
+        !has ? '' : on ? 'ok' : active === 'failed' ? 'err' : moving ? 'warn' : '');
+    facts(c.factsBox, [
+      ['State', has ? (STATE_LABEL[active] || active) : null],
+      ['Ports', has ? meta.ports : null],
+      ['At boot', has ? (u.enabled === 'enabled' ? 'starts' : u.enabled === '?' ? 'unknown' : meta.boot) : null],
+      ['Beside', 'the lane that serves: this one holds no GPU memory'],
+      ['Install', has ? null : meta.install, 'code'],
+    ]);
+    c.start.hidden = !has || on || moving;
+    c.stop.hidden = !has || !on;
+    c.logs.hidden = !has;
+    // a load owns the box's actions for its whole chain; the side lanes wait like every
+    // other control (askAction refuses too, and says the same line)
+    [c.start, c.stop].forEach(b => { b.disabled = !!why || !!load || moving; b.title = why || (load ? LOAD_RUNNING : ''); });
+  });
+}
+afterApply(() => { renderLanes(); renderSideLanes(); renderEngineFacts(); renderProxy(); });
+on('busy', () => { if (LCARDS.size) renderLanes(); if (SCARDS.size) renderSideLanes(); });

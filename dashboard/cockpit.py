@@ -29,6 +29,7 @@ import signal
 import socket
 import stat
 import subprocess
+import sys
 import threading
 import time
 import urllib.error
@@ -47,6 +48,9 @@ import recipes as rp
 # ── Configuration (env-overridable, safe defaults) ──────────────────────────
 HERE = Path(__file__).resolve().parent
 REPO_DIR = Path(os.environ.get("COCKPIT_REPO_DIR", HERE.parent))
+if str(REPO_DIR) not in sys.path:
+    sys.path.insert(0, str(REPO_DIR))
+import lane_plan  # noqa: E402 (the repo's plan for a lane load, shared with the CLI)
 CONFIG_DIR = Path(os.environ.get("COCKPIT_CONFIG_DIR", Path.home() / ".config/qwen38"))
 # Every unit the cockpit READS departs from here: /etc/systemd/system on a box, and wherever
 # COCKPIT_SYSTEMD_DIR points a test or a local CI run (a runner has no units there; ci-local.sh
@@ -214,7 +218,10 @@ UNITS = ("qwen38-sglang.service", "qwen38-flash.service", "qwen38-image.service"
          "qwen38-video.service", "qwen38-kolibri.service", "qwen38-nemotron.service",
          "qwen38-nemotron-super.service", "qwen38-flash-local.service", "qwen38-ornith-122b.service",
          "qwen38-flash-unsloth.service", "qwen38-image-h3.service", "qwen38-transcribe.service",
-         "qwen38-lfm25.service", "qwen38-lfm3.service", "qwen38-keepalive.service")
+         "qwen38-lfm25.service", "qwen38-lfm3.service", "qwen38-keepalive.service",
+         # the optional side lanes: on the CPU beside the lane that serves, never in the
+         # pool, so their unit state is read here and Start/Stop are the plain unit action
+         "qwen38-speech.service", "qwen38-embed.service")
 JOURNAL_UNITS = UNITS + (AGENT_UNIT,)   # what the Logs tab may read (UNITS carries the image, video, Kolibri and Nemotron lanes)
 # The SGLang text engines' containers: what their scheduler lines and their abort contract
 # are read from (the Liquid AI LFM2.5 24B-A2B lane's too, SGLang on the 27B's image). The Kolibri and Nemotron
@@ -4264,6 +4271,9 @@ SERVING_UNITS = {"qwen38-sglang.service", "qwen38-flash.service",
                  "qwen38-nemotron-super.service", "qwen38-flash-local.service", "qwen38-ornith-122b.service",
                  "qwen38-flash-unsloth.service", "qwen38-image-h3.service", "qwen38-transcribe.service",
                  "qwen38-lfm25.service", "qwen38-lfm3.service", AGENT_UNIT}
+# The optional lanes, on the CPU beside the one that serves: the unit action starts and
+# stops them, and they never take part in the one-engine gates or the load plan.
+SIDE_UNITS = {"qwen38-speech.service", "qwen38-embed.service"}
 UNIT_VERBS = {"start", "stop", "restart"}
 
 def _lane_unit_texts() -> list[str]:
@@ -4286,7 +4296,7 @@ ACTIONS = {
     # dashboard/sudoers-cockpit.template)
     "unit": {
         "danger": "medium",
-        "params": {"verb": sorted(UNIT_VERBS), "unit": sorted(SERVING_UNITS)},
+        "params": {"verb": sorted(UNIT_VERBS), "unit": sorted(SERVING_UNITS | SIDE_UNITS)},
         "argv": lambda p: ["sudo", "-n", "/usr/bin/systemctl", p["verb"], p["unit"]],
         "timeout": 90,
     },
@@ -4429,6 +4439,16 @@ ACTIONS["prepare"] = {
     # 7200 s are for a checkpoint alone, and 5400 failed a first Load under about 30 MB/s
     # (found in review, 2026-10-15). Past it the job's process group is stopped (run_job); a
     # Load again resumes what came.
+    "timeout": 10800,
+}
+
+# One lane load, as one job on the server: the plan is built here and runs to its
+# end even when the browser that asked for it signs out or goes away. The page and
+# the CLI (lane-load.py) both start this action; neither chains the steps itself.
+ACTIONS["lane_load"] = {
+    "danger": "medium",
+    "params": {"target": sorted(lane_plan.TARGET_UNIT)},
+    "argv": None,  # python job, see JOB_FUNCS
     "timeout": 10800,
 }
 
@@ -4690,7 +4710,18 @@ def run_job(job: Job):
     recovery = None                       # (unit, its run) of a recovery restart this job marks (decision 1049)
     try:
         if DRY_RUN:
-            job.append(f"[dry run] would run: {' '.join(job.argv) if job.argv else job.action}")
+            if job.action == "lane_load":
+                try:
+                    steps = lane_load_plan(job.params.get("target", ""))
+                except Exception as e:  # noqa: BLE001 (a dry run must still answer)
+                    steps = []
+                    job.append(f"[dry run] the plan could not be built: {type(e).__name__}: {e}")
+                for i, step in enumerate(steps, 1):
+                    argv = _lane_step_argv(step)
+                    job.append(f"[dry run] step {i}/{len(steps)}: {step['title']}")
+                    job.append("[dry run] would run: " + " ".join(argv))
+            else:
+                job.append(f"[dry run] would run: {' '.join(job.argv) if job.argv else job.action}")
             time.sleep(2.0)
             job.rc = 0
             status = "done"
@@ -7353,11 +7384,149 @@ def gpu_clock_at_start():
     return code
 
 
+def lane_load_state() -> dict:
+    """The snapshot lane_plan.plan reads, from the collectors already in STATE.
+
+    The plan is built on the server so a load outlives the browser that asked for
+    it. Nothing here starts a process: it is the same state the page used to read
+    in ``laneJourneySteps``, gathered where the cockpit owns it.
+    """
+    with STATE_LOCK:
+        life = ((STATE.get("lifecycle") or {}).get("data") or {})
+        units_snap = ((STATE.get("units") or {}).get("data") or {})
+        ready = ((STATE.get("lanes_ready") or {}).get("data") or {})
+        startable = ((STATE.get("lanes_startable") or {}).get("data") or {})
+        update = ((STATE.get("update") or {}).get("data") or {})
+        info_snap = STATE.get("engine_info") or {}
+        info = info_snap.get("data") or {}
+        info_ts = info_snap.get("ts") or 0.0
+    engines = {unit: dict(e) for unit, e in (life.get("engines") or {}).items()}
+    if not engines:
+        life = collect_lifecycle() or {}
+        engines = {unit: dict(e) for unit, e in (life.get("engines") or {}).items()}
+    units = units_snap.get("units") or {}
+    # A load can be asked for before the first pass of a 30 s tier (a page opened on a
+    # cockpit that just started): read it once here rather than plan without it.
+    if not units:
+        units = ((collect_units() or {}).get("units") or {})
+    if not ready:
+        ready = collect_lanes_ready()
+    if not startable:
+        startable = collect_lanes_startable()
+    # The unit that holds the pool now, as the page reads it: not stopped, failed or
+    # orphan, or a failed boot systemd is already trying again.
+    serving = next((u for u, e in engines.items()
+                    if e.get("state") not in ("stopped", "failed", "orphan") or e.get("restarting")), None)
+    # The target a text engine serves, only from a read taken after it started: the
+    # 30 s tier keeps its answer through a restart, as base.js says.
+    if serving and serving not in lane_plan.DIFFUSION_UNITS \
+            and info.get("served_target") and info_ts \
+            and time.time() - info_ts < (engines.get(serving, {}).get("elapsed") or 0) + 1:
+        engines[serving]["served_target"] = info["served_target"]
+    boot = next((u for u in lane_plan.LANE_UNITS if (units.get(u) or {}).get("enabled") == "enabled"), None)
+    return {"engines": engines, "units": units, "serving": serving, "boot": boot,
+            "lanes_ready": ready, "lanes_startable": startable,
+            "update_owed": update.get("stale_engines") or {}}
+
+
+def lane_load_plan(target: str) -> list[dict]:
+    """The steps that load ``target`` now, from the server's own state."""
+    return lane_plan.plan(target, lane_load_state())
+
+
+def _lane_step_argv(step: dict) -> list[str]:
+    spec = ACTIONS.get(step.get("name"))
+    if not spec or not spec.get("argv"):
+        raise ValueError(f"lane load step {step.get('name')!r} has no argv")
+    return spec["argv"](step["params"])
+
+
+def _wait_lane_down(unit: str, limit: float = 90.0) -> None:
+    """Wait for a stopped lane to read down before the next start, as the page did."""
+    deadline = time.time() + limit
+    while time.time() < deadline:
+        raw = run(["systemctl", "show", unit, "-p", "ActiveState"], timeout=10)
+        state = next((ln.split("=", 1)[1] for ln in raw.splitlines()
+                      if ln.startswith("ActiveState=")), "")
+        if state in ("inactive", "failed", "dead", ""):
+            return
+        time.sleep(1.0)
+
+
+def _run_lane_step(job: Job, step: dict) -> int:
+    """Run one validated step of a lane plan, streaming its lines into the load's job."""
+    argv = _lane_step_argv(step)
+    job.append("$ " + " ".join(argv))
+    spec = ACTIONS[step["name"]]
+    proc = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+                            cwd=str(REPO_DIR), start_new_session=True)
+    assert proc.stdout is not None
+    expired = threading.Event()
+
+    def expire():
+        proc.poll()
+        try:
+            os.killpg(proc.pid, 0)
+        except ProcessLookupError:
+            return
+        except PermissionError:
+            pass
+        expired.set()
+        job.append(f"[cockpit] step timeout after {spec['timeout']:.0f} s: stopping its process group")
+        job.append(f"[cockpit] {_end_group(proc)}")
+
+    timer = threading.Timer(spec["timeout"], expire)
+    timer.daemon = True
+    timer.start()
+    try:
+        for line in proc.stdout:
+            job.append(line.rstrip())
+    finally:
+        timer.cancel()
+        proc.stdout.close()
+    rc = proc.wait(timeout=30)
+    return rc if not expired.is_set() else 1
+
+
+def job_lane_load(job: Job):
+    """Run a whole lane load as one server job: its steps are the plan's, in order.
+
+    The job holds JOB_LOCK for the whole chain, so no second action can interleave,
+    and it keeps running after the page that asked for it signs out or closes.
+    """
+    target = job.params.get("target", "")
+    try:
+        steps = lane_load_plan(target)
+    except Exception as e:  # noqa: BLE001 (one bad target must not kill the thread)
+        return False, [f"the plan could not be built: {type(e).__name__}: {e}"], {"ok": False}
+    if not steps:
+        return True, [f"{lane_plan.target_title(target)} is already serving."], {"ok": True, "steps": []}
+    job.append(f"lane load {lane_plan.target_title(target)}: {len(steps)} step(s), owned by the cockpit")
+    deadline = job.started + job.timeout
+    for i, step in enumerate(steps, 1):
+        if time.time() > deadline:
+            job.append(f"[step {i}/{len(steps)}] not started: the load's {job.timeout:.0f} s are spent")
+            return False, [], {"ok": False, "failed_step": i, "steps": steps}
+        job.append(f"[step {i}/{len(steps)}] {step['title']}")
+        try:
+            rc = _run_lane_step(job, step)
+        except Exception as e:  # noqa: BLE001 (a missing binary is this step's failure)
+            job.append(f"[cockpit] {type(e).__name__}: {e}")
+            rc = 1
+        if rc != 0:
+            job.append(f"[step {i}/{len(steps)}] failed (exit {rc}): the chain stops here")
+            return False, [], {"ok": False, "failed_step": i, "rc": rc, "steps": steps}
+        if step.get("name") == "unit" and step.get("params", {}).get("verb") == "stop":
+            _wait_lane_down(step["params"]["unit"])
+    job.append("lane load done: the lane is booting; the Now view and the dock follow it")
+    return True, [], {"ok": True, "steps": steps}
+
+
 JOB_FUNCS = {"flush_cache": job_flush_cache, "abort_all": job_abort_all,
              "smoke": job_smoke, "diag_bundle": job_diag_bundle,
              "delete_strays": job_delete_strays, "delete_repo": job_delete_repo,
              "delete_image": job_delete_image, "delete_runtime": job_delete_runtime, "apply_pending": job_apply_pending,
-             "gpu_clock": job_gpu_clock}
+             "gpu_clock": job_gpu_clock, "lane_load": job_lane_load}
 
 
 
@@ -7936,6 +8105,16 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self.send_json({n: {"danger": s["danger"],
                                        "params": s["params"]}
                                    for n, s in ACTIONS.items()})
+        if path == "/api/lane-plan":
+            # The page shows the same plan the server will run; it never chains the
+            # steps itself (a sign-out stopped a browser-owned chain between two of them).
+            try:
+                target = urllib.parse.parse_qs(query).get("target", [""])[0]
+                if target not in lane_plan.TARGET_UNIT:
+                    return self.send_json({"error": "unknown target"}, 400)
+                return self.send_json({"target": target, "steps": lane_load_plan(target)})
+            except Exception as e:  # noqa: BLE001 (isolated endpoint)
+                return self.send_json({"error": str(e)[:200]}, 500)
         if path == "/api/upstream":
             try:
                 return self.send_json(upstream_snapshot(max_age=0.0 if fresh else 3600.0))
