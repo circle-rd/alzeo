@@ -908,7 +908,9 @@ class ThePartialSourcesSayTheSame(unittest.TestCase):
                  .replace("qwen38-sglang-64.", "qwen38-sglang.") for t in templates}
         # the proxy's unit is no lane: it stands in front of the text lanes
         p.same("the unit templates qwen38-*.service.template on disk", sorted(units - {"qwen38-keepalive.service"}), UNIT.values())
-        installers = floor(sorted(x.name for x in REPO.glob("install-*.sh")), "install-*.sh", len(SIDE))
+        # install-raiversed.sh installs the reverse-agent, not a model lane
+        installers = floor(sorted(x.name for x in REPO.glob("install-*.sh") if x.name != "install-raiversed.sh"),
+                           "install-*.sh", len(SIDE))
         p.same("the installers install-*.sh on disk", installers, [f["installer"] for f in LANES.values() if f["installer"] != "install.sh"])
         for f in LANES.values():
             if f["installer"] != "install.sh":

@@ -16,14 +16,16 @@ MODEL="__EMBED_LANE_DIR__/models/__EMBED_GGUF_FILE__"
 # --network host and --host 127.0.0.1: the engine listens on this box's loopback only, at
 # the port the proxy's drop-in names. --memory caps the host side of the unified memory;
 # the GPU allocation is llama.cpp's, as on the text lanes. -t bounds tokenisation to the
-# small cores; the model itself is on the GPU.
+# small cores; the model itself is on the GPU. --alias is the id /v1/models reports:
+# without it llama-server announces the container path, which starts with a slash and
+# reverse-agent refuses it as a model name.
 exec docker run --rm --name qwen38-embed --gpus all --network host --no-healthcheck \
   --memory __EMBED_MEM_MAX__ --memory-swap __EMBED_MEM_MAX__ \
   --cpuset-cpus __EMBED_CPUS__ --cpu-shares 128 \
   -v "__EMBED_LANE_DIR__/models:/models:ro" \
   --mount type=bind,source=__CONFIG_DIR__/api-key,target=/out/api-key,readonly \
   __EMBED_LLAMA_IMAGE__ \
-  -m /models/__EMBED_GGUF_FILE__ \
+  -m /models/__EMBED_GGUF_FILE__ --alias __EMBED_NAME__ \
   --embedding --pooling mean \
   --override-kv qwen3.attention.causal=bool:false \
   -c __EMBED_CTX__ -b __EMBED_CTX__ -ub __EMBED_CTX__ \

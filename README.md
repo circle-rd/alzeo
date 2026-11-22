@@ -147,6 +147,7 @@ The README is the entry point. Everything longer lives next to it, one subject p
 | The speech lane: install, use, the languages, the long recordings, what it was measured with | [docs/speech-lane.md](docs/speech-lane.md) |
 | The NVIDIA Nemotron Transcribe lane: speech to text on the GPU, its port, its memory, its measures | [docs/transcribe-lane.md](docs/transcribe-lane.md) |
 | The embedding lane: PPLX Embed v1 0.6B on the CPU, `/v1/embeddings`, the memory budget | [docs/embedding-lane.md](docs/embedding-lane.md) |
+| reverse-agent beside the lanes: install, the device flow, which lanes it publishes | [docs/raiversed.md](docs/raiversed.md) |
 | The `lean` reasoning level: method, numbers, negative results | [LEAN.md](LEAN.md) |
 | What changed in every release, with the measurement behind each change | [CHANGELOG.md](CHANGELOG.md) |
 | The layout, the state files, the invariants CI holds | [ARCHITECTURE.md](ARCHITECTURE.md) |

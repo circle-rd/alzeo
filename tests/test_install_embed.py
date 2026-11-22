@@ -62,6 +62,8 @@ class TheRouteAndTheProxy(unittest.TestCase):
         self.assertIn("--api-key-file /out/api-key", LLAMA)
         self.assertIn("--host 127.0.0.1 --port __EMBED_PORT__", LLAMA)
         self.assertIn("--embd-normalize 2", LLAMA)
+        # the id /v1/models reports: reverse-agent refuses the container path
+        self.assertIn("--alias __EMBED_NAME__", LLAMA)
         # the image checks localhost:8080; this lane listens on 30027
         self.assertIn("--no-healthcheck", LLAMA)
 
